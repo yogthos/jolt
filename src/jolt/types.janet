@@ -240,9 +240,12 @@
     :namespaces — struct of {ns-symbol → {sym → value, ...}, ...}"
   [&opt opts]
   (default opts nil)
-  (let [env @{:namespaces @{}
+  (let [compile? (if opts (get opts :compile?) false)
+        env @{:namespaces @{}
               :class->opts @{}
-              :current-ns "user"}
+              :current-ns "user"
+              :compile? compile?
+              :compiled-cache @{}}
         # create the user namespace via a partial context
         _ (ctx-find-ns {:env env} "user")]
     # initialize from opts

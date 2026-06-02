@@ -1,6 +1,7 @@
-# jolt-dev
-
-Jolt development workflow — build, test, special form patterns, Janet gotchas
+---
+name: jolt-dev
+description: Jolt development workflow — build, test, special form patterns, Janet gotchas
+---
 
 # Jolt Development
 
@@ -12,6 +13,29 @@ jpm build           # produces build/jolt
 jpm test            # runs all tests
 janet test/foo.janet  # run a single test file from project root
 ```
+
+## Compiler Development
+
+See `jolt-compiler` skill for the Clojure→Janet source-to-source compiler workflow.
+
+## Janet Eval Pipeline (critical)
+
+Janet's `(parse s)` does NOT return a parsed form — it returns `[symbol, error-position]`.
+For evaluating Janet source strings, use the parser pipeline:
+
+```janet
+(def p (parser/new))
+(parser/consume p source)
+(parser/eof p)              # REQUIRED — otherwise produce returns nil
+(def form (parser/produce p))
+(eval form)
+```
+
+**Never** try `(eval [if true 1 2])` — Janet's `eval` doesn't recognize special forms in tuple data structures.
+
+## `var` vs `def`
+
+When you need to mutate a local with `set`, use `(var x nil)` not `(def x nil)`. `def` creates constants.
 
 ## Special Form Checklist
 
@@ -28,4 +52,25 @@ The match arm receives `ctx`, `bindings`, and `form` (the full list). Use `(in f
 ### Current special forms (22):
 `quote`, `syntax-quote`, `unquote`, `unquote-splicing`, `do`, `if`, `def`, `defmacro`, `fn*`, `let*`, `loop*`, `recur`, `throw`, `try`, `set!`, `var`, `locking`, `instance?`, `defmulti`, `defmethod`, `deftype`, `new`, `.`
 
-## Pers… (truncated, 34945 bytes total)
+## Persistent Data Structures
+
+Located in:
+- `src/jolt/clojure/lang/persistent_vector.clj`
+- `src/jolt/clojure/lang/persistent_hash_map.clj`
+
+Loaded at init time by `load-persistent-structures` in `api.janet`. Use `{:mutable? true}` to skip and use Janet-native types.
+
+### Implementation detail
+Simple array-based implementation (node-assoc/node-find/find-key-index), NOT HAMT bit-trie.
+HAMT failed because Janet uses 64-bit doubles and bit operations require 32-bit signed ints.
+
+## Janet Gotchas
+
+- Bit operations (brshift, brushift, band) use 32-bit signed integers. Hash values can exceed 32-bit range. Use `(band x 0xFFFFFFFF)` before shifting.
+- `deftype` creates tables, not structs. `struct?` returns false.
+- `(get child :key)` DOES follow table prototype chain — resolved and confirmed working.
+- Janet LSP produces many false positives on `.janet` files — safe to ignore.
+
+## Symbol representation
+
+Jolt symbols are `{:jolt/type :symbol :ns <string-or-nil> :name <string>}` as produced by the reader.

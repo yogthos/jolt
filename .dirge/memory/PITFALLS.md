@@ -1,5 +1,5 @@
-Bit operations in Janet (brshift, brushift, band, bor, bxor) use 32-bit signed integers. Values from (hash key) can exceed 32-bit range (>2^31). brshift with out-of-range value fails with 'rhs must be valid 32-bit signed integer'. Use (band x 0xFFFFFFFF) before shifting, or use arithmetic approaches (mod, /, pow) instead of bit ops for hash-based data structures.
-§
-`.clj` source files are loaded at init time by Jolt's own reader/evaluator. PersistentVector (17 forms) and PersistentHashMap (12 forms) live in `src/jolt/clojure/lang/persistent_*.clj`. api.janet's `init` calls `load-persistent-structures` which slurps and eval-forms each file, then swaps clojure.core bindings (vec, vector, vector?, hash-map) to the persistent versions. Pass `{:mutable? true}` to skip loading and use Janet-native types.
-§
 Janet LSP produces false positives on `.janet` files — it doesn't understand Janet syntax (thinks docstring lines are unresolved symbols, doesn't know `declare-project`/`declare-source` macros, etc.). These are pre-existing and should be ignored — they don't affect runtime correctness.
+§
+Janet `(parse s)` returns `[symbol, error-position]` for forms — e.g., `(parse "(+ 1 2)")` gives `[+ 1]`, not a parsed tuple. For proper evaluation of special forms, must use the parser pipeline: `parser/new` → `parser/consume` → `parser/eof` → `parser/produce` → `eval`. Without `parser/eof`, `produce` returns nil for simple forms like numbers. Janet's `eval` also doesn't support special forms natively in data structures — `(eval [if true 1 2])` fails with "unknown symbol if". Must parse strings, not eval tuples.
+§
+When you need to mutate a local with `set`, use `(var x nil)` not `(def x nil)`. `def` creates constants — `(set ns-name ...)` on a `def` fails with "cannot set constant". This hit us in loader.janet ns-name extraction loop.

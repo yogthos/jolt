@@ -93,3 +93,51 @@
 (print "  passed")
 
 (print "\nAll compiler Phase 2 tests passed!")
+
+# ============================================================
+# 9. Compile-and-eval round-trip (Phase 3)
+# ============================================================
+(print "9: compile-and-eval...")
+(use ../src/jolt/core)  # need core fns in scope for eval
+
+(defn compile-eval-str [s]
+  (let [form (parse-string s)]
+    (compile-and-eval form)))
+
+(assert (= 42 (compile-eval-str "42")) "eval literal")
+(assert (= 2 (compile-eval-str "(inc 1)")) "eval inc")
+(assert (= 3 (compile-eval-str "(+ 1 2)")) "eval +")
+(assert (= 6 (compile-eval-str "(+ (inc 1) (inc 3))")) "eval nested")
+(assert (= 2 (compile-eval-str "(do 1 2)")) "eval do")
+(assert (= 1 (compile-eval-str "(if true 1 2)")) "eval if true")
+(assert (= 2 (compile-eval-str "(if false 1 2)")) "eval if false")
+(assert (= 2 (compile-eval-str "(let* [x 1] (inc x))")) "eval let")
+(let [f (compile-eval-str "(fn* [x] (inc x))")]
+  (assert (function? f) "eval fn returns fn")
+  (assert (= 6 (f 5)) "eval fn works"))
+(print "  passed")
+
+# ============================================================
+# 10. Compile flag in context (Phase 3)
+# ============================================================
+(print "10: compile flag...")
+(use ../src/jolt/api)
+
+# Without compile flag
+(let [ctx (init)]
+  (assert (= 2 (eval-string ctx "(inc 1)")) "no-compile flag: inc works"))
+
+# With compile flag: pure expressions use compile-and-eval
+(let [ctx (init {:compile? true})]
+  (assert (= 2 (eval-string ctx "(inc 1)")) "compile flag: inc works")
+  (assert (= 3 (eval-string ctx "(+ 1 2)")) "compile flag: + works")
+  (assert (= 6 (eval-string ctx "(+ (inc 1) (inc 3))")) "compile flag: nested works"))
+
+# With compile flag: stateful forms fall back to interpreter
+(let [ctx (init {:compile? true})]
+  (eval-string ctx "(def foo 99)")
+  (assert (= 99 (eval-string ctx "foo")) "compile flag: def works"))
+
+(print "  passed")
+
+(print "\nAll compiler Phase 3 tests passed!")
