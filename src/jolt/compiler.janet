@@ -235,6 +235,90 @@
     name))
 
 # ============================================================
+# Syntax-quote expansion
+# ============================================================
+
+(defn- sq-list?
+  "Check if form is a (unquote ...) or (unquote-splicing ...) call."
+  [form]
+  (and (array? form) (> (length form) 0)
+       (struct? (first form)) (= :symbol ((first form) :jolt/type))
+       (or (= "unquote" ((first form) :name))
+           (= "unquote-splicing" ((first form) :name)))))
+
+(defn- sq-has-unquote?
+  "Check if any item in a collection is an unquote/unquote-splicing form."
+  [items]
+  (var found false) (var i 0)
+  (while (and (< i (length items)) (not found))
+    (if (sq-list? (in items i)) (set found true)) (++ i))
+  found)
+
+(defn- sq-resolve-sym
+  "Qualify an unqualified symbol with the current namespace."
+  [sym-s ctx]
+  (if (and ctx (nil? (sym-s :ns)))
+    {:jolt/type :symbol :ns (ctx-current-ns ctx) :name (sym-s :name)}
+    sym-s))
+
+(defn- syntax-quote-expand
+  "Expand a syntax-quoted form into a plain Clojure form.
+  Simple forms are wrapped in (quote ...). Forms with unquote produce
+  (concat (list ...) ...) calls."
+  [form ctx]
+  (cond
+    # unquote → just the inner expression
+    (and (array? form) (> (length form) 0)
+         (struct? (first form)) (= :symbol ((first form) :jolt/type))
+         (= "unquote" ((first form) :name)))
+    (in form 1)
+
+    # unquote-splicing → just the inner expression
+    (and (array? form) (> (length form) 0)
+         (struct? (first form)) (= :symbol ((first form) :jolt/type))
+         (= "unquote-splicing" ((first form) :name)))
+    (in form 1)
+
+    # Literals → (quote literal)
+    (or (nil? form) (= true form) (= false form)
+        (number? form) (string? form) (keyword? form))
+    [{:jolt/type :symbol :ns nil :name "quote"} form]
+
+    # Symbols → (quote resolved-symbol)
+    (and (struct? form) (= :symbol (form :jolt/type)))
+    [{:jolt/type :symbol :ns nil :name "quote"} (sq-resolve-sym form ctx)]
+
+    # Lists/arrays with unquote → (concat (list ...) (list ...) ...)
+    (array? form)
+    (if (sq-has-unquote? form)
+      (let [items (map |(syntax-quote-expand $ ctx) form)
+            concat-args @[]]
+        (each item items
+          (array/push concat-args
+            [{:jolt/type :symbol :ns nil :name "list"} item]))
+        (if (> (length concat-args) 1)
+          (tuple ;(array/insert concat-args 0
+            {:jolt/type :symbol :ns nil :name "concat"}))
+          (in concat-args 0)))
+      [{:jolt/type :symbol :ns nil :name "quote"} form])
+
+    # Vectors → (vec (concat (list ...) ...))
+    (tuple? form)
+    (if (sq-has-unquote? form)
+      (let [items (map |(syntax-quote-expand $ ctx) form)
+            concat-args @[]]
+        (each item items
+          (array/push concat-args
+            [{:jolt/type :symbol :ns nil :name "list"} item]))
+        [{:jolt/type :symbol :ns nil :name "vec"}
+         (tuple ;(array/insert concat-args 0
+           {:jolt/type :symbol :ns nil :name "concat"}))])
+      [{:jolt/type :symbol :ns nil :name "quote"} form])
+
+    # Default → (quote form)
+    [{:jolt/type :symbol :ns nil :name "quote"} form]))
+
+# ============================================================
 # Analyzer
 # ============================================================
 
@@ -553,8 +637,32 @@
 
 (defn- emit-map-str [form buf] (buffer/push buf (string form)))
 
+(defn- raw-form->janet
+  "Convert a Jolt reader form to a Janet data structure for quoting."
+  [form]
+  (cond
+    (and (struct? form) (= :symbol (form :jolt/type)))
+    (if (form :ns)
+      (symbol (string (form :ns) "/" (form :name)))
+      (symbol (form :name)))
+    (array? form)
+    (tuple/slice (tuple ;(map raw-form->janet form)))
+    (tuple? form)
+    (tuple/slice (tuple ;(map raw-form->janet form)))
+    form))
+
 (defn- emit-quote-str [expr buf]
-  (buffer/push buf "'") (emit-ast (analyze-form expr @{}) buf))
+  (buffer/push buf "'")
+  (def janet-val (raw-form->janet expr))
+  (cond
+    (symbol? janet-val) (buffer/push buf (string janet-val))
+    (number? janet-val) (buffer/push buf (string janet-val))
+    (string? janet-val) (do (buffer/push buf "\"") (buffer/push buf janet-val) (buffer/push buf "\""))
+    (keyword? janet-val) (do (buffer/push buf ":") (buffer/push buf (string janet-val)))
+    (nil? janet-val) (buffer/push buf "nil")
+    (= true janet-val) (buffer/push buf "true")
+    (= false janet-val) (buffer/push buf "false")
+    (buffer/push buf (string janet-val))))
 
 (set emit-ast
   (fn [ast buf]
@@ -676,18 +784,6 @@
   (tuple/slice (tuple ;exprs)))
 
 (defn- emit-map-expr [form] form)
-
-(defn- raw-form->janet
-  "Convert a Jolt reader form to a Janet data structure for quoting."
-  [form]
-  (cond
-    (and (struct? form) (= :symbol (form :jolt/type)))
-    (symbol (form :name))
-    (array? form)
-    (tuple/slice (tuple ;(map raw-form->janet form)))
-    (tuple? form)
-    (tuple/slice (tuple ;(map raw-form->janet form)))
-    form))
 
 (defn- emit-quote-expr [expr]
   ['quote (raw-form->janet expr)])

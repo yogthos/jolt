@@ -1,7 +1,37 @@
 Janet's `eval` runs in Janet's default environment and does NOT have access to symbols imported via `(use ...)` in the calling file. `(eval '(core-inc 1))` fails with "unknown symbol core-inc" even when the file does `(use ./core)`. FIX: emit Janet data structures where function VALUES are embedded directly (e.g. `[core-inc 1]`) rather than source strings `"(core-inc 1)"`. The `core-fn-values` table resolves Janet symbol names to actual function values at compile time.
 §
-Jolt Compiler Architecture (Phases 1-6, dfa9874→c366963): Two-phase — analyze-form (Clojure form → annotated AST) → emit-ast (→ Janet source string) or emit-expr (→ Janet data structures for eval). analyze-form takes [form bindings &opt ctx]; ctx needed for macro expansion. Symbol classification: bindings first (:local), then core-renames (:core-symbol), then plain (:symbol). Two emitter paths: string (compile-form) and data structures (compile-ast). Core fn values resolved via core-fn-values table. compile-and-eval takes [form ctx]; pass nil for no macro ctx. Naming: Clojure - → core-sub. Key bugs found: emit-vector-expr must wrap with (tuple ...) — bare tuples eval as fn calls. make-symbol must treat / at pos 0 as unqualified. raw-form->janet converter for quote (don't re-analyze). core-renames entry for fn? was missing.
+Jolt Compiler Architecture (Phases 1-6, dfa9874→1de109f): Two-phase — analyze-form (Clojure form → annotated AST) → emit-ast (→ Janet source string) or emit-expr (→ Janet data structures for eval). analyze-form takes [form bindings &opt ctx]; ctx needed for macro expansion. Symbol classification: bindings first (:local), then core-renames (:core-symbol), then plain (:symbol). Two emitter paths: string (compile-form) and data structures (compile-ast). Core fn values resolved via core-fn-values table. compile-and-eval takes [form ctx]; pass nil for no macro ctx.
+
+Key naming/facts:
+- Clojure - → core-sub (NOT core--)
+- core-nth did not exist — had to add both the function and core-bindings entry
+- Missing from core-renames early: fn?, list, name, subs
+- Bare tuples in Janet eval → treated as function calls. Always emit (tuple ...) or ['tuple ...]
+- make-symbol: / at position 0 means unqualified symbol (was parsing empty ns)
+- raw-form->janet converter for quote: don't re-analyze quoted forms, pass through verbatim
+- emit-try-expr: Janet format is (try body ([err] handler)) not (try body (catch sym handler))
+- Loop compilation: (do (var _loop_N nil) (set _loop_N (fn [params] body)) (_loop_N init-vals...))
+- Recur compilation: rewrites to (loop-name arg1 arg2...) via :loop-name in AST
+
+eval-string dispatch: When :compile? true, stateful forms (defmacro, ns, deftype, defmulti, defmethod, require, in-ns) use interpreter. All others (def, macros like defn) go through compile-and-eval. Macros expanded at analyze time via resolve-macro.
+
+Remaining: syntax-quote, set! compiler support. deftype/defmulti/defmethod routed to interpreter.
 §
-eval-string dispatch (api.janet): When :compile? is true, stateful forms (defmacro, ns, deftype, defmulti, defmethod, require, in-ns) always use interpreter. All others (def, defn via macros, pure expressions) go through compile-and-eval. defn bug was caused by macros not being expanded — fixed in Phase 4 by routing macros through compiler's analyze-form which expands them at analyze time.
+Jolt Compiler Architecture (Phases 1-6, dfa9874→1de109f): Two-phase — analyze-form (Clojure form → annotated AST) → emit-ast (→ Janet source string) or emit-expr (→ Janet data structures for eval). analyze-form takes [form bindings &opt ctx]; ctx needed for macro expansion. Symbol classification: bindings first (:local), then core-renames (:core-symbol), then plain (:symbol). Two emitter paths: string (compile-form) and data structures (compile-ast). Core fn values resolved via core-fn-values table. compile-and-eval takes [form ctx]; pass nil for no macro ctx.
+
+Key naming/facts:
+- Clojure - → core-sub (NOT core--)
+- core-nth did not exist — had to add both the function and core-bindings entry
+- Missing from core-renames early: fn?, list, name, subs
+- Bare tuples in Janet eval → treated as function calls. Always emit (tuple ...) or ['tuple ...]
+- make-symbol: / at position 0 means unqualified symbol (was parsing empty ns)
+- raw-form->janet converter for quote: don't re-analyze quoted forms, pass through verbatim
+- emit-try-expr: Janet format is (try body ([err] handler)) not (try body (catch sym handler))
+- Loop compilation: (do (var _loop_N nil) (set _loop_N (fn [params] body)) (_loop_N init-vals...))
+- Recur compilation: rewrites to (loop-name arg1 arg2...) via :loop-name in AST
+
+eval-string dispatch: When :compile? true, stateful forms (defmacro, ns, deftype, defmulti, defmethod, require, in-ns) use interpreter. All others (def, macros like defn) go through compile-and-eval. Macros expanded at analyze time via resolve-macro.
+
+Remaining: syntax-quote, set! compiler support. deftype/defmulti/defmethod routed to interpreter. Git push needs manual approval.
 §
-Phase 6: 47 comprehensive compile-mode tests in test/phase6-final.janet. Collections, math, predicates, comparison, seq ops (map/filter/reduce/take/drop), special forms (let/if/loop/try/quote), macros (defn/when/and/or/fn/if-let), complex nesting. All 317 tests pass. Remaining: syntax-quote, set! compiler support. deftype, defmulti/defmethod routed to interpreter (stateful).
+Phase 6: 47 comprehensive compile-mode tests in test/phase6-final.janet. Collections, math, predicates, comparison, seq ops (map/filter/reduce/take/drop), special forms (let/if/loop/try/quote), macros (defn/when/and/or/fn/if-let), complex nesting. 58 assertions. All 317 tests pass, 0 failures. Remaining: syntax-quote, set! compiler support. deftype, defmulti/defmethod routed to interpreter (stateful).

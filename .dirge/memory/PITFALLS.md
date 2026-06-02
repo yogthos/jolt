@@ -1,5 +1,9 @@
-Janet eval data-structure constraints: (1) Bare tuples eval as fn calls — use `['tuple val1 val2]` not `[val1 val2]` for vector values. (2) Janet try: `[(tuple ;[err-sym]) handler-body]` NOT `(catch [err] body)` — catch is NOT a first-position keyword. (3) quote in compile-ast: use raw-form→janet converter (map Jolt reader structs → Janet symbols) — don't re-analyze. (4) eval runs in default env, doesn't see `use`-imported symbols. FIX: embed fn values directly via core-fn-values table.
-§
 When you need to mutate a local with `set`, use `(var x nil)` not `(def x nil)`. `def` creates constants — `(set ns-name ...)` on a `def` fails with "cannot set constant". This hit us in loader.janet ns-name extraction loop.
 §
 core-renames MUST match actual function names in core.janet. `"-"`→`core-sub` NOT `core--`. `"fn?"` was missing entirely (caused silent nil). Missing entries → symbol treated as unknown global, returns nil. When adding: grep core.janet for actual `(defn core-XXX)` name, add to BOTH core-renames (string table) and core-fn-values (fn value table).
+§
+Bare tuples in Janet's `eval` are function calls: `(eval [1 2 3])` tries to call `1` as function. Always emit `['tuple 1 2 3]` or `(tuple 1 2 3)` in data-structure emitter. Similarly, `(eval (try body (sym handler)))` fails because `catch` is not a Janet special form — must be `(try body ([sym] handler))`. Discovered during Phase 5/6 compiler work.
+§
+core-renames MUST match actual function names in core.janet. `"-"`→`core-sub` NOT `core--`. `"fn?"` was missing entirely (caused silent nil). Missing entries → symbol treated as unknown global, returns nil. When adding: grep core.janet for actual `(defn core-XXX)` name, add to BOTH core-renames (string table) and core-fn-values (fn value table).
+§
+Bare tuples in Janet's `eval` are function calls: `(eval [1 2 3])` tries to call `1` as function. Always emit `['tuple 1 2 3]` or `(tuple 1 2 3)` in data-structure emitter. Similarly, `(eval (try body (sym handler)))` fails because `catch` is not a Janet special form — must be `(try body ([sym] handler))`. Discovered during Phase 5/6 compiler work.

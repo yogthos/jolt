@@ -70,14 +70,55 @@ Functions that need special mapping (name differs):
 - `"-"` → `"core-sub"` (not `core--`)
 - `"some"` → `core-some?` (shared with `core-some?`)
 - `"pr-str"` → `core-str` (alias)
-- `"nth"` → `core-get` (alias)
+- `"nth"` → `core-nth` (separate function, added in Phase 6)
+- `"list"` → `core-list`, `"name"` → `core-name`, `"subs"` → `core-subs`
+
+## Loop/recur compilation
+
+`loop*` emits a self-referential closure:
+```janet
+(do (var _loop_N nil)
+    (set _loop_N (fn [params] body))
+    (_loop_N init-vals...))
+```
+
+`recur` saves `:loop-name` in the AST (looked up from bindings `:jolt/current-loop`), then `emit-recur-expr` rewrites to `(loop-name arg1 arg2...)`.
+
+In the string emitter, recur similarly emits `(loop-name arg ...)`.
+
+## Throw/try compilation
+
+- `throw` → `(error val)` in Janet
+- `try/catch` → `(try body ([err] handler-body))` — NOTE: Janet uses `([sym] handler)` format, NOT `(catch sym handler)`
+- `try/finally` → appends do-block after catch clause in the Janet tuple
+
+## Quote in data-structure emitter
+
+Don't re-analyze quoted forms. Use `raw-form->janet` to pass Jolt reader forms through verbatim to Janet's `quote`:
+```
+(emit-quote-expr expr) → ['quote (raw-form->janet expr)]
+```
+raw-form->janet converts symbols to Janet symbols, arrays/tuples recursively.
+
+## Remaining ops (interpreter only)
+
+`syntax-quote`, `set!`, `deftype`, `defmulti`, `defmethod` — these are stateful or complex and always use the interpreter path even in compile mode.
 
 ## Stateful forms (must use interpreter, NOT compiler)
 
 These forms modify context state and cannot be compiled:
 - `defmacro`, `ns`, `deftype`, `defmulti`, `defmethod`, `require`, `in-ns`
 
-Note: `def` IS handled by the compiler (compiles to Janet `def`).
+Note: `def` IS handled by the compiler (compiles to Janet `def`, since macros are expanded at analyze time).
+
+## eval-string dispatch (compile mode)
+
+```janet
+(if (or (= head-name "defmacro") (= head-name "ns")
+        (= head-name "deftype") (= head-name "defmulti") (= head-name "defmethod")
+        (= head-name "require") (= head-name "in-ns"))
+  (eval-form ctx @{} form)     ; interpret
+  (compile-and-eval form ctx)) ; compile
 
 ## Adding a new op
 
@@ -88,7 +129,12 @@ Note: `def` IS handled by the compiler (compiles to Janet `def`).
 5. Add `core-fn-values` entry (Janet string name → actual fn value)
 6. Add tests in `test/compiler-test.janet`
 
-## Test patterns
+## Test files
+
+- `test/compiler-test.janet` — Phase 2-5 tests (source output + compile-eval + macro tests)
+- `test/phase6-final.janet` — Phase 6 comprehensive compile-mode tests (47 assertions)
+
+Run: `janet test/compiler-test.janet` or `janet test/phase6-final.janet` or `jpm test`
 
 - Source output tests: `(assert (= "(expected)" (compile-str "(input)")) "label")`
 - Round-trip tests: `(assert (= val (compile-eval-str "(input)")) "label")`

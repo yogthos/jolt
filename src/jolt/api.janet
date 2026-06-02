@@ -56,7 +56,9 @@
                        nil)
             stateful? (or (= head-name "defmacro") (= head-name "ns")
                           (= head-name "deftype") (= head-name "defmulti") (= head-name "defmethod")
-                          (= head-name "require") (= head-name "in-ns"))]
+                          (= head-name "require") (= head-name "in-ns")
+                          (= head-name "syntax-quote") (= head-name "set!")
+                          (= head-name "var") (= head-name ".") (= head-name "new"))]
         (if stateful?
           (eval-form ctx @{} form)
           (compile-and-eval form ctx)))

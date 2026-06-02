@@ -44,6 +44,36 @@ When you need to mutate a local with `set`, use `(var x nil)` not `(def x nil)`.
 
 Key design decision: **compile-and-eval emits Janet DATA STRUCTURES, not source strings**, because Janet's `eval` doesn't see `use`-imported symbols. `core-fn-values` table resolves Janet names to actual function values at compile time.
 
+## Compiler Development
+
+### Adding a new op to the compiler
+
+1. Add match arm in `analyze-form` — maps Clojure form → AST node
+2. Add `emit-*-str` for source-to-source path, then arm in `emit-ast` dispatch
+3. Add `emit-*-expr` for data-structure path, then arm in `emit-expr` dispatch
+4. Add tests
+
+### Emitter patterns
+
+**String emitter**: `(buffer/push buf "...")` → source text  
+**Data-structure emitter**: `['keyword val1 val2]` → eval-able tuples
+
+### Janet eval gotchas
+
+- Bare tuples are function calls — always use `['tuple ...]` or `(tuple ...)`
+- `eval` scope: symbols from `(use ...)` not available — embed function VALUES
+- Janet `try`: `(try body ([err] handler))` — not `(catch sym handler)`
+- Core `-` maps to `core-sub` (NOT `core--`)
+
+### Loop compilation
+
+`(loop* [x 0] body-with-recur)` → `(do (var name nil) (set name (fn [x] body)) (name 0))`  
+Recur rewrites to `(loop-name arg...)` via `:jolt/current-loop` binding.
+
+### Quote: use `raw-form->janet` converter, never re-analyze
+
+### Macro expansion: pass ctx to `analyze-form`, check `resolve-macro`, expand + re-analyze
+
 ## Special Form Checklist
 
 To add a new special form to the evaluator AND compiler:
