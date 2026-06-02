@@ -534,6 +534,14 @@
           (array/push result (if (string? x) x (string x)))))
       (string/join result ""))))
 
+(defn core-name
+  "Returns the name string of a keyword, symbol, or string."
+  [x]
+  (if (keyword? x) (string x)
+    (if (and (struct? x) (= :symbol (x :jolt/type))) (x :name)
+      (if (string? x) x
+        ""))))
+
 (def core-subs
   (fn [& args]
     (case (length args)
@@ -601,6 +609,16 @@
 # Initialization — intern everything into a context's namespace
 # ============================================================
 
+(def gensym_counter @{:val 0})
+
+(defn gensym
+  "Returns a new symbol with a unique name."
+  [&opt prefix-string]
+  (default prefix-string "G__")
+  (def n (get gensym_counter :val))
+  (put gensym_counter :val (+ n 1))
+  {:jolt/type :symbol :ns nil :name (string prefix-string n)})
+
 (defn core-when
   "Macro: (when test & body) -> (if test (do body...))"
   [test & body]
@@ -663,16 +681,38 @@
       @[{:jolt/type :symbol :ns nil :name "some?"} form-sym]
       ;body]])
 
+(defn core-doto
+  "Macro: (doto obj (method args)...) → let obj, call methods, return obj"
+  [obj & forms]
+  (def sym (gensym "doto"))
+  (def result @[{:jolt/type :symbol :ns nil :name "let*"} 
+                 @[sym obj]])
+  (each f forms
+    (if (array? f)
+      (array/push result @[{:jolt/type :symbol :ns nil :name "."} sym (first f) ;(tuple/slice f 1)])
+      (array/push result @[{:jolt/type :symbol :ns nil :name "."} sym f])))
+  (array/push result sym)
+  result)
+
 (defn core-defn
-  "Macro: (defn name [args] body) -> (def name (fn* [args] body))"
-  [fn-name args-form & body]
-  (def fn-form @[])
-  (array/push fn-form {:jolt/type :symbol :ns nil :name "fn*"})
-  (array/push fn-form args-form)
-  (each b body (array/push fn-form b))
-  @[{:jolt/type :symbol :ns nil :name "def"}
-    fn-name
-    fn-form])
+  "Macro: (defn name [args] body) or (defn name ([args] body)...) 
+  -> (def name (fn* ...) )"
+  [fn-name & rest]
+  # Multi-arity if rest starts with list of [args] pairs
+  (if (and (> (length rest) 0) (array? (first rest)) (indexed? (first (first rest))))
+    (let [pairs rest]
+      (def fn-form @[])
+      (array/push fn-form {:jolt/type :symbol :ns nil :name "fn*"})
+      (each pair pairs (array/push fn-form pair))
+      @[{:jolt/type :symbol :ns nil :name "def"} fn-name fn-form])
+    # Single-arity: (defn name [args] body...)
+    (let [args-form (first rest)
+          body (tuple/slice rest 1)]
+      (def fn-form @[])
+      (array/push fn-form {:jolt/type :symbol :ns nil :name "fn*"})
+      (array/push fn-form args-form)
+      (each b body (array/push fn-form b))
+      @[{:jolt/type :symbol :ns nil :name "def"} fn-name fn-form])))
 
 # defn- stub — expands to defn
 (defn core-defn- [& args] @[{:jolt/type :symbol :ns nil :name "do"}])
@@ -711,6 +751,22 @@
 # comment macro — ignores body, returns nil
 (defn core-comment [& body]
   nil)
+
+# defrecord stub — emits constructor and factory functions
+(defn core-defrecord [name-sym fields-vec & body]
+  (def ctor-name-str (string "->" (name-sym :name)))
+  (def ctor-name-sym {:jolt/type :symbol :ns nil :name ctor-name-str})
+  (def fnames (map |(keyword ($ :name)) fields-vec))
+  (def ctor-body
+    @[{:jolt/type :symbol :ns nil :name "fn*"}
+      @[fields-vec]
+      @[{:jolt/type :symbol :ns nil :name "let*"}
+        @[{:jolt/type :symbol :ns nil :name "m"} @[{:jolt/type :symbol :ns nil :name "hash-map"} ;(interleave fnames fields-vec)]]
+        {:jolt/type :symbol :ns nil :name "m"}]])
+  # Emit (do (def TypeName <ctor-fn>))
+  @[{:jolt/type :symbol :ns nil :name "do"}
+    @[{:jolt/type :symbol :ns nil :name "def"} name-sym ctor-body]
+    @[{:jolt/type :symbol :ns nil :name "def"} ctor-name-sym ctor-body]])
 
 # prefer-method stub — multimethod preference ordering
 (defn core-prefer-method [multifn dispatch-val & dispatch-vals]
@@ -873,6 +929,7 @@
     "set" core-set
     "list" core-list
     "str" core-str
+    "name" core-name
     "subs" core-subs
     "print" core-print
     "println" core-println
@@ -890,6 +947,7 @@
     "when-let" core-when-let
     "if-some" core-if-some
     "when-some" core-when-some
+    "doto" core-doto
     "defn" core-defn
     "defn-" core-defn-
     "derive" core-derive
@@ -917,6 +975,7 @@
     "ThreadLocal" core-ThreadLocal
     "IllegalStateException" core-IllegalStateException
     "definterface" core-definterface
+    "defrecord" core-defrecord
     "comment" core-comment
     "prefer-method" core-prefer-method
     "resolve" core-resolve
@@ -940,7 +999,7 @@
 (defn core-macro-names
   "Set of core binding names that are macros."
   []
-  @{"when" true "when-not" true "if-let" true "when-let" true "if-some" true "when-some" true "defn" true "defn-" true "declare" true "fn" true "let" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "comment" true})
+  @{"when" true "when-not" true "if-let" true "when-let" true "if-some" true "when-some" true "doto" true "defn" true "defn-" true "declare" true "fn" true "let" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "comment" true})
 
 (def init-core!
   (fn [& args]

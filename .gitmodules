@@ -1,0 +1,3 @@
+[submodule "vendor/sci"]
+	path = vendor/sci
+	url = https://github.com/borkdude/sci.git
