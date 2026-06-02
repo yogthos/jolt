@@ -1,5 +1,5 @@
 (ns jolt.lang.persistent-hash-map
-  "PersistentHashMap: HAMT persistent hash map.")
+  "PersistentHashMap: HAMT implementation.")
 
 (def branch-factor 32)
 (def shift-increment 5)
@@ -7,129 +7,76 @@
 (deftype BitmapIndexedNode [bitmap array])
 (deftype PersistentHashMap [count root has-nil? nil-value _meta])
 
-(def not-found (Object.))
+(defn- mask [hash shift]
+  (int (bit-and (unsigned-bit-shift-right hash shift) 31)))
 
-(defn- hash-mix [h]
-  (mod h 1000000))
-(def EMPTY (PersistentHashMap. 0 nil false nil nil))
-
-(defn- mask [h sh]
-  (int (bit-and (unsigned-bit-shift-right h sh) 31)))
-
-(defn- bitpos [h sh]
-  (bit-shift-left 1 (mask h sh)))
+(defn- bitpos [hash shift]
+  (bit-shift-left 1 (mask hash shift)))
 
 (defn- bit-count [n]
-  (loop [n n c 0]
-    (if (zero? n) c (recur (bit-and n (dec n)) (inc c)))))
+  (let [n (- n (bit-and (unsigned-bit-shift-right n 1) 1431655765))
+        n (+ (bit-and n 858993459) (bit-and (unsigned-bit-shift-right n 2) 858993459))
+        n (bit-and (+ n (unsigned-bit-shift-right n 4)) 252645135)
+        n (+ n (unsigned-bit-shift-right n 8))
+        n (+ n (unsigned-bit-shift-right n 16))]
+    (int (bit-and n 63))))
 
 (defn- index [bm bit]
   (bit-count (bit-and bm (dec bit))))
 
-;; Copy entries before idx into new array
-(defn- copy-before [src dst idx]
-  (loop [i 0]
-    (if (< i idx)
-      (do (aset dst i (aget src i))
-          (aset dst (inc i) (aget src (inc i)))
-          (recur (+ i 2))))))
+(def not-found ::not-found)
+(def EMPTY (PersistentHashMap. 0 nil false nil nil))
 
-;; Copy entries from src-idx onwards into dst at shifted position 
-(defn- copy-after [src dst src-start dst-start end]
-  (loop [i src-start]
-    (if (< i end)
-      (do (aset dst (+ dst-start (- i src-start)) (aget src i))
-          (recur (inc i))))))
-
-(defn- bmn-assoc [node shift h key val added?]
-  (let [bit (bitpos h shift)
-        bm (.-bitmap node)
-        arr (.-array node)]
-    (if (zero? (bit-and bm bit))
-      ;; Insert new entry at this level
-      (let [idx (* 2 (index bm bit))
-            n (bit-count bm)
+(defn- bmn-assoc [node shift hash key val added?]
+  (let [bit (bitpos hash shift)
+        idx (* 2 (index (.-bitmap node) bit))]
+    (if (= 0 (bit-and (.-bitmap node) bit))
+      (let [n (bit-count (.-bitmap node))
             new-len (* 2 (inc n))
-            a (object-array new-len)]
+            a (object-array new-len)
+            new-bm (bit-or (.-bitmap node) bit)]
         (loop [i 0]
           (if (< i idx)
-            (do (aset a i (aget arr i))
-                (aset a (inc i) (aget arr (inc i)))
+            (do (aset a i (aget (.-array node) i))
+                (aset a (inc i) (aget (.-array node) (inc i)))
                 (recur (+ i 2)))))
         (loop [i idx]
           (if (< i (* 2 n))
-            (do (aset a (+ i 2) (aget arr i))
-                (aset a (+ i 3) (aget arr (inc i)))
+            (do (aset a (+ i 2) (aget (.-array node) i))
+                (aset a (+ i 3) (aget (.-array node) (inc i)))
                 (recur (+ i 2))))))
         (aset a idx key)
         (aset a (inc idx) val)
         (aset added? 0 true)
-        (BitmapIndexedNode. (bit-or bm bit) a))
-      ;; Position occupied — just replace value (no recursion for now)
-      (let [idx (* 2 (index bm bit))
-            ek (aget arr idx)]
+        (BitmapIndexedNode. new-bm a))
+      (let [ek (aget (.-array node) idx)]
         (if (identical? ek key)
-          (let [a (aclone arr)]
+          (let [a (aclone (.-array node))]
             (aset a (inc idx) val)
-            (BitmapIndexedNode. bm a))
-          ;; Different key at same position — use linear chaining in array
-          (let [n (bit-count bm)
-                new-len (* 2 (inc n))
-                a (object-array new-len)]
-            (loop [i 0]
-              (if (< i (* 2 n))
-                (do (aset a i (aget arr i))
-                    (recur (inc i)))))
-            (aset a (* 2 n) key)
-            (aset a (inc (* 2 n)) val)
+            (BitmapIndexedNode. (.-bitmap node) a))
+          (let [ev (aget (.-array node) (inc idx))
+                a (aclone (.-array node))
+                sub (BitmapIndexedNode. 0 (object-array 2))]
             (aset added? 0 true)
-            (BitmapIndexedNode. bm a))))))
+            (aset a idx nil)
+            (aset a (inc idx)
+                  (bmn-assoc (bmn-assoc sub (+ shift shift-increment)
+                                        (hash ek) ek ev added?)
+                             (+ shift shift-increment) hash key val added?))
+            (BitmapIndexedNode. (.-bitmap node a)))))))
 
-(defn- bmn-find [node shift h key]
-  (let [bit (bitpos h shift)
-        bm (.-bitmap node)
-        arr (.-array node)]
-    (if (zero? (bit-and bm bit))
+(defn- bmn-find [node shift hash key]
+  (let [bit (bitpos hash shift)]
+    (if (= 0 (bit-and (.-bitmap node) bit))
       not-found
-      (let [idx (* 2 (index bm bit))
-            k (aget arr idx)]
+      (let [idx (* 2 (index (.-bitmap node) bit))
+            k (aget (.-array node) idx)]
         (if (nil? k)
-          (bmn-find (aget arr (inc idx)) (+ shift shift-increment) h key)
+          (bmn-find (aget (.-array node) (inc idx))
+                    (+ shift shift-increment) hash key)
           (if (identical? k key)
-            (aget arr (inc idx))
+            (aget (.-array node) (inc idx))
             not-found))))))
-
-(defn- bmn-without [node shift h key]
-  (let [bit (bitpos h shift)
-        bm (.-bitmap node)
-        arr (.-array node)]
-    (if (zero? (bit-and bm bit))
-      node
-      (let [idx (* 2 (index bm bit))
-            k (aget arr idx)]
-        (if (nil? k)
-          (let [sub (aget arr (inc idx))
-                ns (bmn-without sub (+ shift shift-increment) h key)]
-            (if (identical? ns sub)
-              node
-              (let [a (aclone arr)]
-                (aset a (inc idx) ns)
-                (BitmapIndexedNode. bm a))))
-          (if (identical? k key)
-            (let [n (bit-count bm)
-                  a (object-array (max 2 (* 2 (dec n))))]
-              (loop [i 0]
-                (if (< i idx)
-                  (do (aset a i (aget arr i))
-                      (aset a (inc i) (aget arr (inc i)))
-                      (recur (+ i 2)))))
-              (loop [i (+ idx 2)]
-                (if (< i (* 2 n))
-                  (do (aset a (- i 2) (aget arr i))
-                      (aset a (- i 1) (aget arr (inc i)))
-                      (recur (+ i 2))))))
-              (BitmapIndexedNode. (bit-xor bm bit) a))
-            node)))))
 
 (defn phm-assoc [m key val]
   (if (nil? key)
@@ -145,44 +92,30 @@
         (if (aget added? 0) (inc (.-count m)) (.-count m))
         r (.-has-nil? m) (.-nil-value m) (.-_meta m)))))
 
-(defn phm-without [m key]
-  (if (nil? key)
-    (if (.-has-nil? m)
-      (PersistentHashMap. (dec (.-count m)) (.-root m) false nil (.-_meta m))
-      m)
-    (if (nil? (.-root m))
-      m
-      (let [nr (bmn-without (.-root m) 0 (hash-mix (hash key)) key)]
-        (if (identical? nr (.-root m))
-          m
-          (PersistentHashMap. (dec (.-count m)) nr
-                             (.-has-nil? m) (.-nil-value m) (.-_meta m)))))))
-
 (defn phm-get
   ([m key] (phm-get m key nil))
-  ([m key not-found-val]
+  ([m key nf]
    (if (nil? key)
-     (if (.-has-nil? m) (.-nil-value m) not-found-val)
+     (if (.-has-nil? m) (.-nil-value m) nf)
      (if (nil? (.-root m))
-       not-found-val
-       (let [val (bmn-find (.-root m) 0 (hash-mix (hash key)) key)]
-         (if (identical? val not-found) not-found-val val))))))
+       nf
+       (let [result (bmn-find (.-root m) 0 (hash key) key)]
+         (if (identical? result not-found) nf result))))))
 
 (defn phm-contains? [m key]
   (if (nil? key)
     (.-has-nil? m)
     (if (nil? (.-root m))
       false
-      (not (identical? (bmn-find (.-root m) 0 (hash-mix (hash key)) key) not-found)))))
+      (not (identical? (bmn-find (.-root m) 0 (hash key) key) not-found)))))
 
 (defn phm-count [m] (.-count m))
-(defn phm-empty [m] EMPTY)
 
 (defn hash-map [& kvs]
   (if (nil? kvs)
     EMPTY
-    (loop [m EMPTY xs (seq kvs)]
-      (if (and xs (seq (rest xs)))
-        (recur (phm-assoc m (first xs) (first (rest xs)))
-               (rest (rest xs)))
+    (loop [m EMPTY pairs (seq kvs)]
+      (if (and pairs (seq (rest pairs)))
+        (recur (phm-assoc m (first pairs) (first (rest pairs)))
+               (rest (rest pairs)))
         m))))
