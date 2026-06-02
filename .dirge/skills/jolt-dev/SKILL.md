@@ -66,6 +66,31 @@ The match arm receives `ctx`, `bindings`, and `form` (the full list). Use `(in f
 - `(first struct)` calls `:jolt/type` method — use `(get struct :key)` instead of positional access
 - Janet `(struct ;[:x nil])` silently drops the nil entry — the map becomes `{}`. Use `@{}` tables for nil-safe entries
 - `(length struct)` counts key-value pairs, not keys. Use `(length (keys struct))` for key count
+- **`(last string)` returns nil** — `last` works only on indexed types (tuple, array). For strings use `(s (- (length s) 1))` or `(string/slice s (- (length s) 1))`
+- **`(set [a b] tuple)` doesn't work** — Janet's `set` doesn't support destructuring. Use `(tuple 0)` / `(tuple 1)` or explicit individual assignments
+
+### unwrap-meta-name helper
+Recursively unwraps `(with-meta sym meta)` forms to extract the underlying symbol. Used in `def`, `ns`, `deftype`, `defmethod` to handle metadata-wrapped names:
+```janet
+(defn- unwrap-meta-name [form]
+  (if (and (array? form) (> (length form) 0)
+           (struct? (in form 0))
+           (= :symbol ((in form 0) :jolt/type))
+           (= "with-meta" ((in form 0) :name)))
+    (unwrap-meta-name (in form 1))
+    form))
+```
+
+### Reader map k/v handling
+The map reader must handle three special value types in both key and value positions:
+- `:jolt/skip` — discarded form (comment, `#_`, nil `#?(:cljs ...)`): skip the K/V pair entirely
+- `:jolt/splice` — `#?@` splicing: concat items into the kvs array. If splice has 0 items (nil `:cljs` branch), don't push the key
+
+### `#?(:cljs X)` returns nil → `:jolt/skip`
+The non-splicing `#?` reader now returns `{:jolt/type :jolt/skip}` for nil results (e.g., `#?(:cljs X)` on CLJ). This prevents orphaned nil keys/values in maps and lists. `parse-next` and `parse-string` skip past skip markers to return the next real form.
+
+### deftype →TypeName constructor
+`deftype` now interns both the type name and `->TypeName` arrow constructor (Clojure convention). The dot-suffix constructor check uses `(sym-name (- (length sym-name) 1))` instead of broken `(last sym-name)`.
 
 ## Comment Handling
 
@@ -119,7 +144,7 @@ This resolves symbols like `IVar` that are interned in `sci.impl.vars` but refer
 - `#_` — discard reader macro, reads next form and returns it as position only
 
 ### Core macros (in core.janet)
-- `core-macro-names` returns `@{"when" true "defn" true "declare" true "defprotocol" true "extend-type" true "reify" true "fn" true "proxy" true "definterface" true "defn-" true}` — a table
+- `core-macro-names` returns `@{"when" true "defn" true "declare" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "fn" true "proxy" true "definterface" true "comment" true "defn-" true}` — a table
 - `init-core!` calls `(get (core-macro-names) name)` to check, then `(put v :macro true)`
 - Order matters: macro functions must be defined BEFORE `core-bindings` map references them
 

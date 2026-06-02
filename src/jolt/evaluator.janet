@@ -102,8 +102,9 @@
             (if v (var-get v) (error (string "Unable to resolve symbol: " ns "/" name))))
           (let [target-ns (ctx-find-ns ctx ns) v (ns-find target-ns name)]
             (if v (var-get v) (error (string "Unable to resolve symbol: " ns "/" name))))))
-      (let [local (get bindings name)]
-        (if (not (nil? local)) local
+      # Use :jolt/not-found sentinel to distinguish nil binding from absent binding
+      (let [local (get bindings name :jolt/not-found)]
+        (if (not= local :jolt/not-found) local
           (let [current-ns (ctx-current-ns ctx) ns (ctx-find-ns ctx current-ns) v (ns-find ns name)]
             (if v (var-get v)
               # Check clojure.core as auto-referred fallback
@@ -281,38 +282,75 @@
               (ctx-set-current-ns ctx ns-name)
               (ctx-find-ns ctx ns-name)
               nil)
-    "fn*" (let [args-form (in form 1)
-                body (tuple/slice form 2)
-                arg-info (parse-arg-names args-form)
-                fixed-names (arg-info :fixed)
-                rest-name (arg-info :rest)]
-            (var self nil)
-            (set self (fn [& fn-args]
-              (var fn-bindings @{})
-              (table/setproto fn-bindings bindings)
-              (var i 0)
-              (each arg-name fixed-names
-                (put fn-bindings arg-name (fn-args i))
-                (++ i))
-              (when rest-name
-                (put fn-bindings rest-name (tuple/slice fn-args i)))
-              (put fn-bindings :jolt/loop-fn self)
-              (var result nil)
-              (each body-form body
-                (set result (eval-form ctx fn-bindings body-form)))
-              result))
-            self)
+    "fn*" (if (array? (in form 1))
+            # Multi-arity: (fn* ([args] body...) ([args] body...)...)
+            (let [pairs (tuple/slice form 1)
+                  arities @{}]
+              (var self nil)
+              (each pair pairs
+                (let [args-form (in pair 0)
+                      body (tuple/slice pair 1)
+                      arg-info (parse-arg-names args-form)
+                      fixed-names (arg-info :fixed)
+                      rest-name (arg-info :rest)
+                      n-fixed (length fixed-names)]
+                  (put arities n-fixed
+                       (fn [& fn-args]
+                         (var fn-bindings @{})
+                         (table/setproto fn-bindings bindings)
+                         (var i 0)
+                         (each arg-name fixed-names
+                           (put fn-bindings arg-name (fn-args i))
+                           (++ i))
+                         (when rest-name
+                           (put fn-bindings rest-name (tuple/slice fn-args i)))
+                         (put fn-bindings :jolt/loop-fn self)
+                         (var result nil)
+                         (each body-form body
+                           (set result (eval-form ctx fn-bindings body-form)))
+                         result))))
+              (set self (fn [& fn-args]
+                (let [n (length fn-args)
+                      f (get arities n)]
+                  (if f
+                    (apply f fn-args)
+                    (error (string "Wrong number of args (" n ") passed to fn"))))))
+              self)
+            # Single-arity: (fn* [args] body...)
+            (let [args-form (in form 1)
+                  body (tuple/slice form 2)
+                  arg-info (parse-arg-names args-form)
+                  fixed-names (arg-info :fixed)
+                  rest-name (arg-info :rest)]
+              (var self nil)
+              (set self (fn [& fn-args]
+                (var fn-bindings @{})
+                (table/setproto fn-bindings bindings)
+                (var i 0)
+                (each arg-name fixed-names
+                  (put fn-bindings arg-name (fn-args i))
+                  (++ i))
+                (when rest-name
+                  (put fn-bindings rest-name (tuple/slice fn-args i)))
+                (put fn-bindings :jolt/loop-fn self)
+                (var result nil)
+                (each body-form body
+                  (set result (eval-form ctx fn-bindings body-form)))
+                result))
+              self))
     "let*" (let [bind-vec (in form 1)
-                 body (tuple/slice form 2)]
-             (var new-bindings @{})
-             (table/setproto new-bindings bindings)
-             (var i 0)
-             (let [len (length bind-vec)]
-               (while (< i len)
-                 (let [sym (bind-vec i)
-                       val (eval-form ctx new-bindings (bind-vec (+ i 1)))]
-                   (put new-bindings (sym :name) val)
-                   (+= i 2))))
+                  body (tuple/slice form 2)]
+              (var new-bindings @{})
+              (table/setproto new-bindings bindings)
+              (var i 0)
+              (let [len (length bind-vec)]
+                (while (< i len)
+                  (let [sym (bind-vec i)]
+                    # Pre-register with nil to prevent proto fallthrough to global scope
+                    (put new-bindings (sym :name) nil)
+                    (def val (eval-form ctx new-bindings (bind-vec (+ i 1))))
+                    (put new-bindings (sym :name) val)
+                    (+= i 2))))
              (var result nil)
              (each body-form body
                (set result (eval-form ctx new-bindings body-form)))

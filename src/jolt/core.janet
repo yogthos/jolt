@@ -448,6 +448,14 @@
 (defn core-complement [f]
   (fn [& args] (not (apply f args))))
 
+(defn core-qualified-symbol? [x]
+  "Returns true if x is a symbol with a namespace."
+  (and (struct? x) (= :symbol (x :jolt/type)) (not (nil? (x :ns)))))
+
+(defn core-meta [x]
+  "Returns the metadata of x, or nil."
+  (if (struct? x) (get x :meta) nil))
+
 (def core-comp
   (fn [& fs]
     (case (length fs)
@@ -601,6 +609,13 @@
   @[{:jolt/type :symbol :ns nil :name "if"}
     test
     arr])
+
+(defn core-when-not
+  "Macro: (when-not test & body) -> (when (not test) & body)"
+  [test & body]
+  (def not-form @[{:jolt/type :symbol :ns nil :name "not"} test])
+  @[{:jolt/type :symbol :ns nil :name "if"} not-form
+    @[{:jolt/type :symbol :ns nil :name "do"} ;body]])
 
 (defn core-defn
   "Macro: (defn name [args] body) -> (def name (fn* [args] body))"
@@ -799,6 +814,7 @@
     "swap!" core-swap!
     "not" core-not
     "when" core-when
+    "when-not" core-when-not
     "defn" core-defn
     "defn-" core-defn-
     "derive" core-derive
@@ -827,6 +843,8 @@
     "definterface" core-definterface
     "comment" core-comment
     "prefer-method" core-prefer-method
+    "qualified-symbol?" core-qualified-symbol?
+    "meta" core-meta
     # Dynamic vars — stubs for SCI bootstrap
     "*unchecked-math*" false
     "*clojure-version*" {:major 1 :minor 11 :incremental 0 :qualifier nil}})
@@ -834,7 +852,7 @@
 (defn core-macro-names
   "Set of core binding names that are macros."
   []
-  @{"when" true "defn" true "defn-" true "declare" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "fn" true "proxy" true "definterface" true "comment" true})
+  @{"when" true "when-not" true "defn" true "defn-" true "declare" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "fn" true "proxy" true "definterface" true "comment" true})
 
 (def init-core!
   (fn [& args]
