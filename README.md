@@ -1,16 +1,28 @@
 # Jolt
 
-A Clojure interpreter running on [Janet](https://janet-lang.org). Jolt reads Clojure source text, evaluates it using an interpreter written in pure Janet, and exposes a Clojure-compatible standard library.
+A Clojure interpreter running on [Janet](https://janet-lang.org). Jolt reads Clojure source text, evaluates it using an interpreter written in pure Janet, and exposes a Clojure-compatible standard library. The goal is a Janet-hosted [SCI](https://github.com/borkdude/sci) runtime — minimal bootstrapping, with SCI as the standard library.
 
 ## What's inside
 
-Jolt implements the core of Clojure in a single-process, no-dependency Janet project:
+Jolt implements the core of Clojure in a single-process Janet project:
 
 **Reader** — A recursive descent parser for Clojure syntax: symbols, keywords, numbers, strings, characters, lists, vectors, maps, sets, quote forms, reader macros (`#()`, `#_`, `#?`), metadata, deref, and tagged literals.
 
-**Evaluator** — A tree-walking interpreter with special forms (`quote`, `do`, `if`, `def`, `fn*`, `let*`, `loop*`/`recur`), syntax-quote with unquote and unquote-splicing, a macro system, and namespace forms (`ns`, `require`, `in-ns`).
+**Evaluator** — A tree-walking interpreter with 22 special forms (`quote`, `do`, `if`, `def`, `defmacro`, `fn*`, `let*`, `loop*`/`recur`, `throw`, `try`, `set!`, `var`, `locking`, `instance?`, `defmulti`, `defmethod`, `deftype`, `new`, `.`, etc.), syntax-quote with unquote and unquote-splicing, a macro system with `&env` support, destructuring (`:keys` and sequential), and namespace forms (`ns`, `require`, `in-ns`).
 
-**Core library** — 95+ functions from `clojure.core`: predicates, math with Clojure arity semantics, comparison, collection operations (conj, assoc, dissoc, get, merge, keys, vals), sequence operations (map, filter, reduce, take, drop, take-while, drop-while, concat, reverse, sort, distinct, group-by, partition), range and repeat, higher-order functions (comp, complement, constantly, juxt, memoize, partial), collection constructors, string functions, I/O, and atoms.
+**Core library** — 145+ bindings from `clojure.core`: predicates, math with Clojure arity semantics, comparison, collections, sequences, higher-order functions, string functions, I/O, atoms, macros (`when`, `when-not`, `if-let`, `when-let`, `if-some`, `when-some`, `doto`, `fn`, `let`, `defn`, `defrecord`, `defprotocol`), and SCI bootstrap stubs.
+
+**SCI bootstrap** — All 317 forms from SCI's 9 core source files (`macros`, `protocols`, `types`, `unrestrict`, `vars`, `lang`, `utils`, `namespaces`, `core`) load with zero failures. 46 namespaces are populated with 900+ bindings. SCI's `eval-string` is replaced with a Jolt-native implementation.
+
+## Quick start
+
+```bash
+git clone https://github.com/yogthos/jolt.git
+cd jolt
+git submodule update --init   # pulls vendor/sci
+jpm build                      # compiles build/jolt
+build/jolt                     # drops into REPL
+```
 
 ## Build
 
@@ -39,6 +51,14 @@ user=> (fib 10)
 55
 ```
 
+## Test
+
+```
+jpm test
+```
+
+Runs all tests: API, bootstrap, core, evaluator, macro, namespace, reader, types, and SCI load.
+
 ## Use as a library
 
 ```janet
@@ -53,13 +73,18 @@ user=> (fib 10)
 
 `(init)` returns a context with `clojure.core` loaded. Pass it to `eval-string` to evaluate Clojure source. Each context is isolated — use separate contexts for separate evaluation environments.
 
-To pre-populate a context with values:
+## Project structure
 
-```janet
-(use jolt/api)
-
-(def ctx (init {:namespaces {"user" {"greeting" "hello"}}}))
-(eval-string ctx "(str greeting \" world\")") ;; → "hello world"
+```
+src/jolt/
+  types.janet       — Var, Namespace, Context, symbol helpers
+  reader.janet      — recursive descent parser for Clojure syntax
+  evaluator.janet   — tree-walking interpreter
+  core.janet        — 145+ clojure.core bindings
+  api.janet         — public API: init, eval-string, eval-string*
+  main.janet        — REPL entry point
+test/                — 8 test suites + SCI load test
+vendor/sci/          — SCI submodule (git submodule)
 ```
 
 ## License
