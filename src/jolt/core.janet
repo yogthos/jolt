@@ -756,14 +756,17 @@
 (defn core-defrecord [name-sym fields-vec & body]
   (def ctor-name-str (string "->" (name-sym :name)))
   (def ctor-name-sym {:jolt/type :symbol :ns nil :name ctor-name-str})
-  (def fnames (map |(keyword ($ :name)) fields-vec))
+  # Build the map expression at macro-expansion time: {"":a a, ":b b, ...}
+  (var kvs @[])
+  (each f fields-vec
+    (array/push kvs (keyword (f :name)))
+    (array/push kvs f))
+  (def map-expr @[{:jolt/type :symbol :ns nil :name "array-map"} ;kvs])
   (def ctor-body
     @[{:jolt/type :symbol :ns nil :name "fn*"}
       @[fields-vec]
-      @[{:jolt/type :symbol :ns nil :name "let*"}
-        @[{:jolt/type :symbol :ns nil :name "m"} @[{:jolt/type :symbol :ns nil :name "hash-map"} ;(interleave fnames fields-vec)]]
-        {:jolt/type :symbol :ns nil :name "m"}]])
-  # Emit (do (def TypeName <ctor-fn>))
+      map-expr])
+  # Emit (do (def TypeName <ctor-fn>) (def ->TypeName <ctor-fn>))
   @[{:jolt/type :symbol :ns nil :name "do"}
     @[{:jolt/type :symbol :ns nil :name "def"} name-sym ctor-body]
     @[{:jolt/type :symbol :ns nil :name "def"} ctor-name-sym ctor-body]])
