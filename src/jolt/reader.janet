@@ -70,7 +70,7 @@
   "Create a Jolt symbol struct."
   [name]
   (let [slash (string/find "/" name)]
-    (if slash
+    (if (and slash (> slash 0))
       {:jolt/type :symbol
        :ns (string/slice name 0 slash)
        :name (string/slice name (+ slash 1))}

@@ -25,6 +25,7 @@
     "some?" "core-some?"
     "string?" "core-string?"
     "number?" "core-number?"
+    "fn?" "core-fn?"
     "keyword?" "core-keyword?"
     "symbol?" "core-symbol?"
     "vector?" "core-vector?"
@@ -664,7 +665,7 @@
   (tuple/slice (tuple ;exprs)))
 
 (defn- emit-vector-expr [items]
-  (def exprs @[])
+  (def exprs @['tuple])
   (each item items (array/push exprs (emit-expr item)))
   (tuple/slice (tuple ;exprs)))
 
