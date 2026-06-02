@@ -50,9 +50,8 @@
           (put cache ns-name cached))
         
         (each form forms
-          (let [janet-src (compile-form form)]
-            (array/push cached janet-src)
-            (eval-janet-source janet-src)))
+          (array/push cached form)
+          (compile-and-eval form ctx))
         ns-name)
       # Interpreter path
       (do

@@ -1,82 +1,97 @@
 ---
-description: Jolt compiler architecture and implementation plan
+triggers:
+  - "compile jolt"
+  - "jolt compiler"
+  - "Clojure to Janet compilation"
+  - "add new op to compiler"
+  - "fix compiler"
 ---
 
 # Jolt Compiler
 
-Two-phase source-to-source compiler: Clojure forms → annotated AST → Janet source → Janet bytecode.
+Source-to-source Clojure→Janet compiler. Two-phase: analyze-form (classify + macro expand) → emit-ast (generate).
 
 ## Architecture
 
 ```
-Clojure source → Reader → raw AST
-                            ↓
-                   analyze-form (classify symbols, produce :op AST)
-                            ↓
-                   emit* dispatch (generate Janet source string)
-                            ↓
-                   Janet compile → bytecode
+Clojure form → analyze-form [form bindings ctx] → AST {:op ...}
+                               ↓ (if head = macro var)
+                          expand → re-analyze expanded form
+                    ↓
+              emit-ast (source string) or emit-expr (data structure)
 ```
 
-Follows CLJS `cljs.analyzer` / `cljs.compiler` pattern.
+Three public entry points:
+- `(compile-form form &opt ctx)` → Janet source string (debug/display)
+- `(compile-ast form &opt ctx)` → Janet data structure (for eval)
+- `(compile-and-eval form ctx)` → compile-ast + eval
 
-## Key decisions
+## Why data structures, not source strings
 
-- **Target**: Janet source text (fed to Janet's `compile`), not direct bytecode. Simpler, debuggable, portable across Janet versions.
-- **Mode gating**: Opt-in per context via `:compile?` flag on `init`. `eval-string` still interprets unless opted in.
-- **Caching**: In-memory bytecode cache in context first. Disk persistence (`.jimage` files) as follow-up.
-
-## AST ops (CLJS subset + Jolt-specific)
-
-Core: `const`, `var`, `local`, `binding`, `if`, `do`, `let`, `loop`, `recur`, `fn`, `fn-method`, `def`, `invoke`, `quote`, `try`, `throw`, `set!`, `new`, `host-field`, `host-call`
-
-Jolt-specific: `deftype`, `defmulti`, `defmethod`, `syntax-quote`
-
-## File layout
-
-| File | Purpose |
-|------|---------|
-| `src/jolt/compiler.janet` | `analyze-form`, `emit*` dispatch, `compile-form`, symbol classifier |
-| `src/jolt/loader.janet` | `load-ns`, `reload-ns`, in-memory bytecode cache |
-| `test/compiler-test.janet` | Round-trip: compile-form → Janet eval → assert |
-
-Modified files:
-- `evaluator.janet` — add compiler fast-path for `def`/`defn`/`defmacro` when `:compile?` set
-- `types.janet` — add `:compiled-cache` table to context
-- `api.janet` — expose `compile-string`, `load-ns`, `compile-file`; `init` gets `:compile?` flag
-- `reader.janet` — **no change**
-- `core.janet` — **no change**
-
-## Emit target advantages
-
-Both input and output are parenthesized prefix syntax, so many forms pass through almost unchanged:
+Janet's `eval` does NOT have access to `use`-imported symbols from the calling file. `(eval "(core-inc 1)")` fails with "unknown symbol core-inc". The fix: emit Janet tuples where function VALUES are embedded: `[core-inc 1]`.
 
 ```
-Clojure:  (defn f [x] (+ x 1))
-AST:      {:op :def :name "f" :init {:op :fn :methods [...]}}
-Janet:    (defn f [x] (+ x 1))          ← nearly identical
+core-fn-values table:  "core-inc" → core-inc (the actual function)
+emit-core-symbol-expr → (get core-fn-values janet-name)
 ```
 
-Main work:
-- Symbol resolution (Clojure's `clojure.core/+` → Janet's `core-+`)
-- Truthiness wrapping (`nil`/`false` are falsey in Clojure, Janet only `nil`)
-- Special form mapping (`loop*`/`recur` → Janet `loop` + explicit recur vars)
-- Vars → Janet table lookups
+Source-to-source (`compile-form` + `emit-ast`) still exists for debugging but is NOT used by `compile-and-eval`.
 
-## Implementation phases
+## Macro expansion
 
-| Phase | What | Deliverable |
-|-------|------|-------------|
-| 1 | `compiler.janet` — `analyze-form` skeleton + `emit*` for `const`, `do`, `if`, `let`, `fn`, `def`, `invoke` | Basic forms compile and run |
-| 2 | Symbol classifier — resolve locals/vars/core at analyze time | No runtime `resolve-sym` in compiled code |
-| 3 | `loader.janet` + `api.janet` wiring — `:compile?` flag, `load-ns`, caching | File-based namespace loading works |
-| 4 | Macro integration — expand at analyze time via interpreter | Macros work in compiled code |
-| 5 | Remaining ops: `loop`/`recur`, `try`/`throw`, `quote`, `syntax-quote`, `set!`, `deftype`, `.` | Full language coverage |
-| 6 | Tests + benchmarks | Correctness + speedup measurement |
+`analyze-form` checks whether the head symbol of a list resolves to a macro var before dispatching to special form handling:
 
-## Pitfalls
+1. Look up symbol in current ns → core ns via `resolve-macro`
+2. If `var-macro?` is true, call `(var-get macro-var)` to get the fn
+3. `(apply macro-fn (tuple/slice form 1))` to expand
+4. `(analyze-form expanded ...)` to re-analyze the result
 
-- Janet `compile` produces bytecode tied to Janet version — source-to-source avoids this
-- CLJS analyzer is ~5000 lines; Jolt's can be simpler because emit target is s-expressions
-- Symbol resolution must happen at analyze time, not runtime, for compiled code
-- Macro expansion still uses interpreter at analyze time — macros are not AOT-compiled
+Macros expand at analyze time, before emission. `defn` expands to `(def name (fn* ...))`, `when` to `(if test (do ...) nil)`, etc.
+
+## Symbol classification (in analyze-form)
+
+Order: qualified ns → local binding → core-symbol → bare symbol
+
+```
+(if (form :ns) → :qualified-symbol
+    (get bindings name) → :local
+    (get core-renames name) → :core-symbol
+    → :symbol)
+```
+
+core-renames MUST match actual fn names: `"-"` → `"core-sub"` (not `"core--"`), `"not"` → `"core-not"`. Verify against `core.janet` bindings.
+
+## core-fn-values
+
+Maps Janet string names to actual function values. Must be kept in sync with core-renames. When adding a new core fn, update BOTH tables.
+
+Functions that need special mapping (name differs):
+- `"apply"` → `apply` (Janet built-in)
+- `"-"` → `"core-sub"` (not `core--`)
+- `"some"` → `core-some?` (shared with `core-some?`)
+- `"pr-str"` → `core-str` (alias)
+- `"nth"` → `core-get` (alias)
+
+## Stateful forms (must use interpreter, NOT compiler)
+
+These forms modify context state and cannot be compiled:
+- `defmacro`, `ns`, `deftype`, `defmulti`, `defmethod`, `require`, `in-ns`
+
+Note: `def` IS handled by the compiler (compiles to Janet `def`).
+
+## Adding a new op
+
+1. Add `analyze-form` match arm for the special form
+2. Add `emit-ast` match arm (source string path)
+3. Add `emit-expr` match arm (data structure path)
+4. Add `core-renames` entry if it's a core fn (name → Janet string name)
+5. Add `core-fn-values` entry (Janet string name → actual fn value)
+6. Add tests in `test/compiler-test.janet`
+
+## Test patterns
+
+- Source output tests: `(assert (= "(expected)" (compile-str "(input)")) "label")`
+- Round-trip tests: `(assert (= val (compile-eval-str "(input)")) "label")`
+- Compile flag tests: `(eval-string ctx "(input)")` with `{:compile? true}`
+
+Run: `janet test/compiler-test.janet` or `jpm test`

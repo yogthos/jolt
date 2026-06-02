@@ -102,7 +102,7 @@
 
 (defn compile-eval-str [s]
   (let [form (parse-string s)]
-    (compile-and-eval form)))
+    (compile-and-eval form nil)))
 
 (assert (= 42 (compile-eval-str "42")) "eval literal")
 (assert (= 2 (compile-eval-str "(inc 1)")) "eval inc")
@@ -141,3 +141,32 @@
 (print "  passed")
 
 (print "\nAll compiler Phase 3 tests passed!")
+
+# ============================================================
+# 11. Macro expansion (Phase 4)
+# ============================================================
+(print "11: macro expansion...")
+(use ../src/jolt/api)
+
+(let [ctx (init {:compile? true})]
+  # defn expands via compiler, produces Janet def
+  (eval-string ctx "(defn square [n] (* n n))")
+  (assert (= 25 (eval-string ctx "(square 5)")) "defn via compiler")
+
+  # when macro
+  (assert (= 42 (eval-string ctx "(when true 42)")) "when true")
+  (assert (= nil (eval-string ctx "(when false 42)")) "when false")
+
+  # let macro
+  (assert (= 30 (eval-string ctx "(let [x 10 y 20] (+ x y))")) "let macro")
+
+  # fn macro
+  (assert (= 49 (eval-string ctx "((fn [x] (* x x)) 7)")) "fn macro")
+
+  # and/or
+  (assert (= 3 (eval-string ctx "(and 1 2 3)")) "and")
+  (assert (= 99 (eval-string ctx "(or nil false 99)")) "or"))
+
+(print "  passed")
+
+(print "\nAll compiler Phase 4 tests passed!")

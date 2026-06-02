@@ -42,22 +42,24 @@
 
 (defn eval-string
   "Evaluate a Clojure source string in a Jolt context.
-  When :compile? is enabled, compiles to Janet source and evaluates via Janet.
-  Stateful forms (def, defmacro, ns, deftype) always use the interpreter."
+  When :compile? is enabled, compiles to Janet and evaluates.
+  Macros are expanded at compile time.
+  Context-modifying forms (ns, defmacro, deftype, require, in-ns, defmulti, defmethod)
+  always use the interpreter."
   [ctx s]
   (let [compile? (get (ctx :env) :compile?)
         form (parse-string s)]
     (if (and compile? (array? form))
-      # Check if this is a stateful form that needs the interpreter
       (let [first-form (first form)
             head-name (if (and (struct? first-form) (= :symbol (first-form :jolt/type)))
                        (first-form :name)
-                       nil)]
-        (if (or (= head-name "def") (= head-name "defmacro") (= head-name "ns")
-                (= head-name "deftype") (= head-name "defmulti") (= head-name "defmethod")
-                (= head-name "require") (= head-name "in-ns"))
+                       nil)
+            stateful? (or (= head-name "defmacro") (= head-name "ns")
+                          (= head-name "deftype") (= head-name "defmulti") (= head-name "defmethod")
+                          (= head-name "require") (= head-name "in-ns"))]
+        (if stateful?
           (eval-form ctx @{} form)
-          (compile-and-eval form)))
+          (compile-and-eval form ctx)))
       (eval-form ctx @{} form))))
 
 (defn eval-string*

@@ -37,9 +37,16 @@ For evaluating Janet source strings, use the parser pipeline:
 
 When you need to mutate a local with `set`, use `(var x nil)` not `(def x nil)`. `def` creates constants.
 
+## Compiler (see also `jolt-compiler` skill)
+
+`src/jolt/compiler.janet` — Clojure→Janet source compiler with macro expansion.
+`test/compiler-test.janet` — 11 test groups covering all ops.
+
+Key design decision: **compile-and-eval emits Janet DATA STRUCTURES, not source strings**, because Janet's `eval` doesn't see `use`-imported symbols. `core-fn-values` table resolves Janet names to actual function values at compile time.
+
 ## Special Form Checklist
 
-To add a new special form to the evaluator:
+To add a new special form to the evaluator AND compiler:
 
 1. Add the name to `special-symbol?` in `src/jolt/evaluator.janet`
 2. Add a match arm in `eval-list` (the match on `name`)
