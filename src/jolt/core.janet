@@ -795,19 +795,20 @@
   (let [n (length bindings)]
     (while (< i n)
       (array/push frame-pairs
-        [{:jolt/type :symbol :ns nil :name "var"} (in bindings i)])
+        @[{:jolt/type :symbol :ns nil :name "var"} (in bindings i)])
       (array/push frame-pairs (in bindings (+ i 1)))
       (+= i 2)))
-  (def hm-form (tuple ;(array/insert frame-pairs 0
-    {:jolt/type :symbol :ns nil :name "hash-map"})))
-  @[{:jolt/type :symbol :ns nil :name "let"}
+  (def hm-form (array/insert frame-pairs 0
+    {:jolt/type :symbol :ns nil :name "hash-map"}))
+  @[{:jolt/type :symbol :ns nil :name "let*"}
     [{:jolt/type :symbol :ns nil :name "frame"} hm-form]
-    {:jolt/type :symbol :ns nil :name "push-thread-bindings"}
-    {:jolt/type :symbol :ns nil :name "frame"}
-    {:jolt/type :symbol :ns nil :name "try"}
-    [{:jolt/type :symbol :ns nil :name "do"} ;body]
-    [{:jolt/type :symbol :ns nil :name "finally"}
-     {:jolt/type :symbol :ns nil :name "pop-thread-bindings"}]])
+    @[{:jolt/type :symbol :ns nil :name "push-thread-bindings"}
+      {:jolt/type :symbol :ns nil :name "frame"}]
+    @[{:jolt/type :symbol :ns nil :name "try"}
+      @[{:jolt/type :symbol :ns nil :name "do"} ;body]
+      @[{:jolt/type :symbol :ns nil :name "finally"}
+        @[{:jolt/type :symbol :ns nil :name "pop-thread-bindings"}]]]])
+
 
 (defn core-defn
   "Macro: (defn name [args] body) or (defn name ([args] body)...) 

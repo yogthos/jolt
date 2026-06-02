@@ -533,7 +533,10 @@
                  result))
               (if finally-body
                 (try
-                  (eval-form ctx bindings body-form)
+                  (do
+                    (def result (eval-form ctx bindings body-form))
+                    (run-finally finally-body)
+                    result)
                   ([err]
                    (run-finally finally-body)
                    (error err)))
