@@ -98,6 +98,18 @@
   [bindings key value]
   (put bindings key (if (nil? value) :jolt/nil value)))
 
+(defn- binding-get
+  "Get a value from bindings, walking the prototype chain."
+  [bindings name]
+  (var result :jolt/not-found)
+  (var t bindings)
+  (while (not (nil? t))
+    (when (in t name)
+      (set result (in t name))
+      (break))
+    (set t (table/getproto t)))
+  result)
+
 (defn- resolve-sym
   [ctx bindings sym-s]
   (let [name (sym-s :name) ns (sym-s :ns)]
@@ -109,7 +121,8 @@
           (let [target-ns (ctx-find-ns ctx ns) v (ns-find target-ns name)]
             (if v (var-get v) (error (string "Unable to resolve symbol: " ns "/" name))))))
       # Use :jolt/not-found sentinel to distinguish nil binding from absent binding
-      (let [local (get bindings name :jolt/not-found)]
+      (let [local (get bindings name :jolt/not-found-1)
+            local (if (= local :jolt/not-found-1) (binding-get bindings name) local)]
         (if (not= local :jolt/not-found)
           (if (= local :jolt/nil) nil local)
           (let [current-ns (ctx-current-ns ctx) ns (ctx-find-ns ctx current-ns) v (ns-find ns name)]
