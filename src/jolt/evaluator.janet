@@ -239,22 +239,27 @@
                      body (tuple/slice rest-form (if has-doc? 2 1))
                      arg-info (parse-arg-names args-form)
                      fixed-names (arg-info :fixed)
-                     rest-name (arg-info :rest)]
+                     rest-name (arg-info :rest)
+                     defining-ns (ctx-current-ns ctx)]
                  (def macro-fn (fn [& macro-args]
                    (var new-bindings @{})
                    (table/setproto new-bindings bindings)
-                    (put new-bindings "&env" @{})  # implicit &env for macro bodies (table — nil-safe)
+                   (put new-bindings "&env" @{})  # implicit &env for macro bodies (table — nil-safe)
                    (var i 0)
                    (each a fixed-names
                      (bind-put new-bindings a (macro-args i))
                      (++ i))
                    (when rest-name
                      (put new-bindings rest-name (tuple/slice macro-args i)))
+                   # Use defining namespace for symbol resolution
+                   (def saved-ns (ctx-current-ns ctx))
+                   (ctx-set-current-ns ctx defining-ns)
                    (var result nil)
                    (each bf body
                      (set result (eval-form ctx new-bindings bf)))
+                   (ctx-set-current-ns ctx saved-ns)
                    result))
-                 (let [ns-name (ctx-current-ns ctx)
+                  (let [ns-name (ctx-current-ns ctx)
                        ns (ctx-find-ns ctx ns-name)]
                    (def v (ns-intern ns (name-sym :name) macro-fn))
                    (put v :macro true)
@@ -290,60 +295,70 @@
               (ctx-find-ns ctx ns-name)
               nil)
     "fn*" (if (array? (in form 1))
-            # Multi-arity: (fn* ([args] body...) ([args] body...)...)
-            (let [pairs (tuple/slice form 1)
-                  arities @{}]
-              (var self nil)
-              (each pair pairs
-                (let [args-form (in pair 0)
-                      body (tuple/slice pair 1)
-                      arg-info (parse-arg-names args-form)
-                      fixed-names (arg-info :fixed)
-                      rest-name (arg-info :rest)
-                      n-fixed (length fixed-names)]
-                  (put arities n-fixed
-                       (fn [& fn-args]
-                         (var fn-bindings @{})
-                         (table/setproto fn-bindings bindings)
-                         (var i 0)
-                         (each arg-name fixed-names
-                           (bind-put fn-bindings arg-name (fn-args i))
-                           (++ i))
-                         (when rest-name
-                           (put fn-bindings rest-name (tuple/slice fn-args i)))
-                         (put fn-bindings :jolt/loop-fn self)
-                         (var result nil)
-                         (each body-form body
-                           (set result (eval-form ctx fn-bindings body-form)))
-                         result))))
-              (set self (fn [& fn-args]
-                (let [n (length fn-args)
-                      f (get arities n)]
-                  (if f
-                    (apply f fn-args)
-                    (error (string "Wrong number of args (" n ") passed to fn"))))))
-              self)
-            # Single-arity: (fn* [args] body...)
-            (let [args-form (in form 1)
-                  body (tuple/slice form 2)
-                  arg-info (parse-arg-names args-form)
-                  fixed-names (arg-info :fixed)
-                  rest-name (arg-info :rest)]
-              (var self nil)
-              (set self (fn [& fn-args]
-                (var fn-bindings @{})
-                (table/setproto fn-bindings bindings)
-                (var i 0)
-                (each arg-name fixed-names
-                  (bind-put fn-bindings arg-name (fn-args i))
-                  (++ i))
-                (when rest-name
-                  (put fn-bindings rest-name (tuple/slice fn-args i)))
-                (put fn-bindings :jolt/loop-fn self)
-                (var result nil)
-                (each body-form body
-                  (set result (eval-form ctx fn-bindings body-form)))
-                result))
+             # Multi-arity: (fn* ([args] body...) ([args] body...)...)
+             (let [pairs (tuple/slice form 1)
+                   arities @{}
+                   defining-ns (ctx-current-ns ctx)]
+               (var self nil)
+               (each pair pairs
+                 (let [args-form (in pair 0)
+                       body (tuple/slice pair 1)
+                       arg-info (parse-arg-names args-form)
+                       fixed-names (arg-info :fixed)
+                       rest-name (arg-info :rest)
+                       n-fixed (length fixed-names)]
+                   (put arities n-fixed
+                        (fn [& fn-args]
+                          (var fn-bindings @{})
+                          (table/setproto fn-bindings bindings)
+                          (var i 0)
+                          (each arg-name fixed-names
+                            (bind-put fn-bindings arg-name (fn-args i))
+                            (++ i))
+                          (when rest-name
+                            (put fn-bindings rest-name (tuple/slice fn-args i)))
+                          (put fn-bindings :jolt/loop-fn self)
+                          # Use defining namespace for symbol resolution
+                          (def saved-ns (ctx-current-ns ctx))
+                          (ctx-set-current-ns ctx defining-ns)
+                          (var result nil)
+                          (each body-form body
+                            (set result (eval-form ctx fn-bindings body-form)))
+                          (ctx-set-current-ns ctx saved-ns)
+                          result))))
+               (set self (fn [& fn-args]
+                 (let [n (length fn-args)
+                       f (get arities n)]
+                   (if f
+                     (apply f fn-args)
+                     (error (string "Wrong number of args (" n ") passed to fn"))))))
+               self)
+             # Single-arity: (fn* [args] body...)
+             (let [args-form (in form 1)
+                   body (tuple/slice form 2)
+                   arg-info (parse-arg-names args-form)
+                   fixed-names (arg-info :fixed)
+                   rest-name (arg-info :rest)
+                   defining-ns (ctx-current-ns ctx)]
+               (var self nil)
+               (set self (fn [& fn-args]
+                 (var fn-bindings @{})
+                 (table/setproto fn-bindings bindings)
+                 (var i 0)
+                 (each arg-name fixed-names
+                   (bind-put fn-bindings arg-name (fn-args i))
+                   (++ i))
+                 (when rest-name
+                   (put fn-bindings rest-name (tuple/slice fn-args i)))
+                 (put fn-bindings :jolt/loop-fn self)
+                 # Use defining namespace for symbol resolution
+                 (def saved-ns (ctx-current-ns ctx))
+                 (ctx-set-current-ns ctx defining-ns)
+                 (var result nil)
+                 (each body-form body
+                   (set result (eval-form ctx fn-bindings body-form)))
+                 (ctx-set-current-ns ctx saved-ns)
+                 result))
               self))
     "let*" (let [bind-vec (in form 1)
                   body (tuple/slice form 2)]
@@ -352,9 +367,28 @@
               (var i 0)
               (let [len (length bind-vec)]
                 (while (< i len)
-                  (let [sym (bind-vec i)]
+                  (let [pat (bind-vec i)]
                     (def val (eval-form ctx new-bindings (bind-vec (+ i 1))))
-                    (bind-put new-bindings (sym :name) val)
+                    # Handle destructuring patterns
+                    (if (struct? pat)
+                      (let [keys-vec (get pat :keys)]
+                        (if (and keys-vec (indexed? keys-vec))
+                          (each k keys-vec
+                            (def kname (if (keyword? k) (string k) (k :name)))
+                            (bind-put new-bindings kname (get val (keyword kname))))
+                          (bind-put new-bindings (pat :name) val)))
+                      (if (indexed? pat)
+                        # Sequential destructuring (vector pattern)
+                        (do
+                          (var di 0)
+                          (while (< di (length pat))
+                            (let [inner-pat (in pat di)]
+                              (if (struct? inner-pat)
+                                (bind-put new-bindings (inner-pat :name) (get val di))
+                                (bind-put new-bindings inner-pat (get val di))))
+                            (+= di 1)))
+                        # Plain symbol binding
+                        (bind-put new-bindings (pat :name) val)))
                     (+= i 2))))
              (var result nil)
              (each body-form body

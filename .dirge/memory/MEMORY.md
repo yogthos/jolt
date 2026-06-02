@@ -1,9 +1,13 @@
-`defmacro` supports optional docstring: `(defmacro name [args] body)` or `(defmacro name \"doc\" [args] body)`. Implementation: slice rest-form from form index 2, check if first is string, adjust args-form and body start accordingly. Implicit `&env` binding injected as `(put new-bindings "&env" @{'ns nil})` — must use `@{}` not `(struct …)` because nil values get dropped from structs. `fn*` uses same `parse-arg-names` helper for `& rest` args.
-§
-Jolt bootstrap: `core-bindings` (def- map) maps symbol strings → Janet functions. `init-core!` interns them into clojure.core ns. Macros (when, defn, declare) are registered in `core-macro-names` which returns `@{"when" true "defn" true "declare" true}`. `init-core!` checks this table and sets `:macro true` on the var for macro bindings. Order matters: `core-when` and `core-defn` must be defined BEFORE `core-bindings` map literal references them, otherwise compile error.
-§
-Reader comments (`;`) return `{:jolt/type :jolt/skip}` sentinel; `parse-next`/`parse-string` skip past it. Closing `)`, `]`, `}` produce explicit "Unmatched" errors. `unwrap-meta-name` recursively unwraps `(with-meta sym meta)` to raw symbol — used in def, ns, deftype, defmethod. `resolve-sym` does class-name lookup: `Foo.Bar.Baz` → ns "Foo.Bar" name "Baz". Janet `(set [a b] tuple)` doesn't work — use explicit indexing. `comment` must be a macro (registered in core-macro-names) to avoid evaluating body.
-§
 Sci bootstrap order: macros(4/4)→protocols(15/17)→utils(39/47)→types(22/27)→unrestrict(2/2)→vars(28/28)→lang(10/10)→ctx-store(6/6)→namespaces(93/98)→core(60/69). All .cljc; #?(:clj) resolved at read time, #?(:cljs)→nil.
 §
 Janet `last` works only on indexed types (tuple, array). On strings it returns nil. Use `(s (- (length s) 1))` to get the last character of a string, or `(string/slice s (- (length s) 1))` for the last char as string. `(last "hello")` → nil, not `\o`.
+§
+resolve-sym returns `:jolt/not-found` sentinel to distinguish nil local bindings from absent ones, preventing accidental fallthrough to global resolution. Falls back to `clojure.core` namespace for unqualified symbols. `bind-put` helper wraps nil as `:jolt/nil`; resolve-sym unwraps. Multi-arity `fn*` dispatches on fixed-params count vs variadic args.
+§
+Janet `(string :keyword)` returns `"keyword"` (without colon). Use this for keyword→string conversion in destructuring code. Avoid `(name :keyword)` in Jolt evaluation context — `name` is a Janet built-in but may not be available in all eval contexts.
+§
+`:jolt/nil-sentinel` used in `core-bindings` map for vars that should have nil root values. Janet table literals drop nil entries: `@{"*1" nil}` → empty table. `init-core!` unwraps sentinels back to nil with `(if (= fn :jolt/nil-sentinel) nil fn)`. Applies to `*1`, `*2`, `*3`, `*e` and potentially other nil-rooted vars.
+§
+`fn*` and `defmacro` now capture `defining-ns` at definition time and restore it via `(ctx-set-current-ns ctx defining-ns)` / `(ctx-set-current-ns ctx saved-ns)` around body evaluation. This ensures symbols in function/macro bodies resolve in the defining namespace, not the calling context. Applies to both multi-arity and single-arity `fn*` forms.
+§
+SCI load order: `macros` → `protocols` → `types` → `unrestrict` → `vars` → `lang` → `utils` → `namespaces` → `core`. Utils must load after lang (needs `lang/->Namespace`, `vars/unqualify-symbol`). Namespaces needs utils (for `clojure-core-ns`, `dynamic-var`, `unqualify-symbol`). Core needs namespaces (for `*1`, `*2`, `*3`, `*e`, `resolve`).

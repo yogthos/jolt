@@ -60,6 +60,8 @@ The match arm receives `ctx`, `bindings`, and `form` (the full list). Use `(in f
 - Functions are not tables — `(put fn :prop val)` fails. Stash properties on vars
 - `match` is Janet's pattern matching — no `case` or `cond` needed for simple dispatch
 - Janet structs silently **drop entries with nil values**: `(struct ;[:x nil :y 1])` → `{:y 1}`. Use `@{}` mutable tables when nil-valued entries are needed (e.g., `&env` binding `@{}` for macro bodies)
+- Janet `(put table key nil)` **silently drops the key** — even on mutable `@{}` tables. Use `bind-put` helper (stores `:jolt/nil` sentinel) for binding tables; `resolve-sym` unwraps `:jolt/nil` back to `nil`. All `put` calls on bindings in `fn*`, `let*`, `loop*`, macro bodies, `deftype` reify MUST use `bind-put`
+- `resolve-sym` returns `:jolt/not-found` sentinel to distinguish nil local bindings from absent ones; falls back to `clojure.core` for unqualified symbols
 - `match` with string patterns returns **nil** (not error) when no pattern matches. Used in `eval-list` to handle non-symbol heads cleanly — keyword heads like `:ns` fall through to default function application
 - `break` in `while` does NOT return a value in Janet. Use `(var done nil)` + `(set done val)` + check pattern instead
 - Janet `#{}` set literals can cause parse issues in some contexts — use `@[]` as fallback
@@ -68,6 +70,9 @@ The match arm receives `ctx`, `bindings`, and `form` (the full list). Use `(in f
 - `(length struct)` counts key-value pairs, not keys. Use `(length (keys struct))` for key count
 - **`(last string)` returns nil** — `last` works only on indexed types (tuple, array). For strings use `(s (- (length s) 1))` or `(string/slice s (- (length s) 1))`
 - **`(set [a b] tuple)` doesn't work** — Janet's `set` doesn't support destructuring. Use `(tuple 0)` / `(tuple 1)` or explicit individual assignments
+- **`(string :keyword)` returns `"keyword"` (no colon)** — use this for keyword→string conversion. Avoid `(name :keyword)` in Jolt eval context; `name` is a Janet built-in but may shadow or be unavailable
+- **`(get struct :key)` works, `(in struct :key)` fails** — `in` is for indexed types only (tuple, array, string, buffer). Use `get` for structs/tables
+- **Janet `try` takes exactly 2 args**: `(try body ([err] handler))`. Multi-expression body must wrap in `do`: `(try (do expr1 true) ([err] handler))`
 
 ### unwrap-meta-name helper
 Recursively unwraps `(with-meta sym meta)` forms to extract the underlying symbol. Used in `def`, `ns`, `deftype`, `defmethod` to handle metadata-wrapped names:
@@ -144,7 +149,7 @@ This resolves symbols like `IVar` that are interned in `sci.impl.vars` but refer
 - `#_` — discard reader macro, reads next form and returns it as position only
 
 ### Core macros (in core.janet)
-- `core-macro-names` returns `@{"when" true "defn" true "declare" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "fn" true "proxy" true "definterface" true "comment" true "defn-" true}` — a table
+- `core-macro-names` returns `@{"when" true "when-not" true "if-let" true "when-let" true "if-some" true "when-some" true "defn" true "defn-" true "declare" true "fn" true "let" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "comment" true}` — a table
 - `init-core!` calls `(get (core-macro-names) name)` to check, then `(put v :macro true)`
 - Order matters: macro functions must be defined BEFORE `core-bindings` map references them
 
@@ -154,6 +159,59 @@ This resolves symbols like `IVar` that are interned in `sci.impl.vars` but refer
 - `core-volatile!`, `core-vswap!`, `core-vreset!` — volatile (atom-like table with :val key)
 - `core-defprotocol` emits `(do (def name @{}) (def method fn) ...)` — macro, returns do form
 - `core-extend-type`, `core-extend-protocol`, `core-extend`, `core-reify`, `core-satisfies?`, `core-extends?`, `core-implements?`, `core-type->str` — protocol stubs
+- `core-copy-core-var`, `core-copy-var`, `core-macrofy`, `core-new-var`, `core-avoid-method-too-large` — sci.impl.copy-vars stubs (needed by namespaces)
+- `core-resolve` — stub returning nil (sci symbol resolution check)
+- `core-update` — delegates to Janet's `update` with apply
+- `core-prefer-method` — multimethod preference ordering stub
+
+### `:jolt/nil-sentinel` pattern for nil bindings
+Janet table literals drop entries with nil values: `@{"x" nil}` → `{}`. For core bindings that need nil root values (e.g., `*1`, `*2`, `*3`, `*e`), use the sentinel:
+```janet
+"*1" :jolt/nil-sentinel
+"*2" :jolt/nil-sentinel
+```
+`init-core!` unwraps sentinels back to nil:
+```janet
+(def v (ns-intern ns name (if (= fn :jolt/nil-sentinel) nil fn)))
+```
+
+### `fn*` namespace capture
+Functions close over their defining namespace so symbols resolve correctly regardless of caller's current-ns:
+```janet
+"fn*" (let [args-form ...
+            defining-ns (ctx-current-ns ctx)]  ; capture at definition time
+        (set self (fn [& fn-args]
+          (def saved-ns (ctx-current-ns ctx))
+          (ctx-set-current-ns ctx defining-ns)   ; restore defining ns
+          (var result nil)
+          (each body-form body
+            (set result (eval-form ctx fn-bindings body-form)))
+          (ctx-set-current-ns ctx saved-ns)      ; restore caller's ns
+          result)))
+```
+Same pattern in `defmacro` bodies.
+
+### `let*` destructuring
+Supports `:keys` destructuring with both symbol keys and keyword keys:
+```janet
+(if (struct? pat)
+  (let [keys-vec (get pat :keys)]
+    (if (and keys-vec (indexed? keys-vec))
+      (each k keys-vec
+        (def kname (if (keyword? k) (string k) (k :name)))  ; keyword→string, symbol→name
+        (bind-put new-bindings kname (get val (keyword kname))))
+      (bind-put new-bindings (pat :name) val)))  ; plain symbol binding
+  ...
+```
+
+Also supports sequential destructuring of vector patterns.
+
+### New core macros
+- `core-if-let` — expands `(if-let [x expr] then else)` → `(let* [x expr] (if x then else))`
+- `core-when-let` — expands to `(let* [x expr] (when x body))`
+- `core-if-some` — expands to `(let* [x expr] (if (some? x) then else))`
+- `core-when-some` — expands to `(let* [x expr] (when (some? x) body))`
+- `core-let` — expands `(let [bindings] body)` → `(let* [bindings] body)` (macro, like `fn` → `fn*`)
 
 ### Namespace handling
 - `ns` form handles `^:meta` on ns name via `with-meta` pattern
@@ -161,20 +219,21 @@ This resolves symbols like `IVar` that are interned in `sci.impl.vars` but refer
 - `require` clause in `ns` wraps each spec in `(when s ...)` for nil-safety
 - `resolve-var` falls back to checking clojure.core namespace if var not found in current ns
 
-### Bootstrap loading order
+### Bootstrap loading order (corrected)
 ```
 sci.impl.macros      (4/4 ok)
-sci.impl.protocols   (15/17 ok)
-sci.impl.utils       (39/47 ok)
-sci.impl.types       (22/27 ok)
+sci.impl.protocols   (15/15 ok)
+sci.impl.types       (22/22 ok)
 sci.impl.unrestrict  (2/2 ok)
-sci.impl.vars        (28/28 ok — comment block parsed as skip)
-sci.lang             (10/10 ok — IVar via class-name resolve)
-sci.ctx-store        (6/6 ok)
-sci.impl.namespaces  (93/98 ok — parse crash at unmatched brace)
-sci.core             (60/69 ok — namespaces/*1/*2/*3/*e fail)
+sci.impl.vars        (28/28 ok)
+sci.lang             (10/10 ok)
+sci.impl.utils       (45/46 ok — 1 fail on dynamic-var internals)
+sci.impl.namespaces  (124/127 ok — 3 remaining: major destructure, clojure-version, iterable)
+sci.core             (64/65 ok — 1 remaining form)
 ```
 All .cljc files. #?(:clj ...) resolved at read time. #?(:cljs ...) returns nil.
+
+**Critical load order**: `macros` → `protocols` → `types` → `unrestrict` → `vars` → `lang` → `utils` → `namespaces` → `core`. `utils` must load after `lang` (needs `lang/->Namespace`, `vars/unqualify-symbol`). `namespaces` needs `utils` (for `clojure-core-ns`, `dynamic-var`). `core` needs `namespaces` (for `*1`, `*2`, `*3`, `*e`, `resolve`).
 
 ### parse-arg-names
 - Handles `& rest` args AND nested destructuring vectors

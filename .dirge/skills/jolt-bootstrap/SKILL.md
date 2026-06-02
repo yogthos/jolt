@@ -1,4 +1,5 @@
 # jolt-bootstrap
+# jolt-bootstrap
 
 TDD workflow for bootstrapping a Clojure interpreter on Janet
 
@@ -81,8 +82,19 @@ Used in `def`, `ns`, `deftype`, `defmethod` to handle metadata-wrapped names.
 ### deftype →TypeName constructor
 `deftype` interns both `TypeName` and `->TypeName` (Clojure arrow constructor convention).
 
+### bind-put helper and :jolt/nil sentinel
+Janet's `(put table key nil)` silently drops the key, even on mutable `@{}` tables.
+`bind-put` stores nil as `:jolt/nil` sentinel; `resolve-sym` unwraps `:jolt/nil` back to `nil`.
+Must be used for ALL binding `put` calls: `fn*`, `let*`, `loop*`, macro bodies, `deftype` reify.
+
+### resolve-sym sentinels
+- `:jolt/not-found` — returned when a symbol is truly absent (distinct from nil binding)
+- `:jolt/nil` → unwrapped to actual `nil` — nil values in bindings stored as sentinel due to Janet `put` nil-drop
+- Auto-refer fallback: unqualified symbols not found in current ns fall back to `clojure.core`
+
 ## Pitfalls
 - Janet `let` can't bind to nil; use `(var x nil)` then `(set x val)`
+- Janet `(put table key nil)` silently drops the key — use `bind-put` helper for all binding tables
 - `(get table)` with 1 arg = compile error, use `(table :key)` shorthand
 - `(put fn :key val)` fails on functions; stash metadata on vars instead
 - `deftype` field names must be keywords (not strings) for `(inst :field)` access

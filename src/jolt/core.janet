@@ -617,6 +617,52 @@
   @[{:jolt/type :symbol :ns nil :name "if"} not-form
     @[{:jolt/type :symbol :ns nil :name "do"} ;body]])
 
+(defn core-if-let
+  "Macro: (if-let [binding val-expr] then else?)"
+  [bindings then-form & else-forms]
+  (def form-sym (in bindings 0))
+  (def val-form (in bindings 1))
+  @[{:jolt/type :symbol :ns nil :name "let*"}
+    @[form-sym val-form]
+    @[{:jolt/type :symbol :ns nil :name "if"}
+      form-sym
+      then-form
+      ;else-forms]])
+
+(defn core-when-let
+  "Macro: (when-let [binding val-expr] & body)"
+  [bindings & body]
+  (def form-sym (in bindings 0))
+  (def val-form (in bindings 1))
+  @[{:jolt/type :symbol :ns nil :name "let*"}
+    @[form-sym val-form]
+    @[{:jolt/type :symbol :ns nil :name "when"}
+      form-sym
+      ;body]])
+
+(defn core-if-some
+  "Macro: (if-some [binding val-expr] then else?)"
+  [bindings then-form & else-forms]
+  (def form-sym (in bindings 0))
+  (def val-form (in bindings 1))
+  @[{:jolt/type :symbol :ns nil :name "let*"}
+    @[form-sym val-form]
+    @[{:jolt/type :symbol :ns nil :name "if"}
+      @[{:jolt/type :symbol :ns nil :name "some?"} form-sym]
+      then-form
+      ;else-forms]])
+
+(defn core-when-some
+  "Macro: (when-some [binding val-expr] & body)"
+  [bindings & body]
+  (def form-sym (in bindings 0))
+  (def val-form (in bindings 1))
+  @[{:jolt/type :symbol :ns nil :name "let*"}
+    @[form-sym val-form]
+    @[{:jolt/type :symbol :ns nil :name "when"}
+      @[{:jolt/type :symbol :ns nil :name "some?"} form-sym]
+      ;body]])
+
 (defn core-defn
   "Macro: (defn name [args] body) -> (def name (fn* [args] body))"
   [fn-name args-form & body]
@@ -670,6 +716,22 @@
 (defn core-prefer-method [multifn dispatch-val & dispatch-vals]
   nil)
 
+# resolve stub — returns nil (symbols not found in Jolt's clojure.core)
+(defn core-resolve [sym] nil)
+
+# update — works on both structs and tables
+(defn core-update [m k f & args]
+  (let [current (get m k)
+        new-val (apply f current args)]
+    (put m k new-val)))
+
+# copy-var stubs for sci.impl.copy-vars (used by sci.impl.namespaces)
+(defn core-copy-core-var [sym] nil)
+(defn core-copy-var [sym & args] nil)
+(defn core-macrofy [sym fn] fn)
+(defn core-new-var [sym & args] nil)
+(defn core-avoid-method-too-large [& args] @{})
+
 # declare macro — accepts symbols, does nothing (forward declaration)
 (defn core-declare [& syms]
   @[{:jolt/type :symbol :ns nil :name "do"}])
@@ -680,6 +742,15 @@
   (def result @[])
   (array/push result {:jolt/type :symbol :ns nil :name "fn*"})
   (each a args (array/push result a))
+  result)
+
+(defn core-let
+  "Macro: (let [bindings] body) → (let* [bindings] body)"
+  [bindings & body]
+  (def result @[])
+  (array/push result {:jolt/type :symbol :ns nil :name "let*"})
+  (array/push result bindings)
+  (each b body (array/push result b))
   result)
 
 # Protocol stubs — defined in sci.impl.protocols, needed in clojure.core
@@ -815,6 +886,10 @@
     "not" core-not
     "when" core-when
     "when-not" core-when-not
+    "if-let" core-if-let
+    "when-let" core-when-let
+    "if-some" core-if-some
+    "when-some" core-when-some
     "defn" core-defn
     "defn-" core-defn-
     "derive" core-derive
@@ -824,6 +899,7 @@
     "Object" core-Object
     "declare" core-declare
     "fn" core-fn
+    "let" core-let
     "defprotocol" core-defprotocol
     "extend-type" core-extend-type
     "extend-protocol" core-extend-protocol
@@ -843,31 +919,43 @@
     "definterface" core-definterface
     "comment" core-comment
     "prefer-method" core-prefer-method
+    "resolve" core-resolve
+    "update" core-update
+    "copy-core-var" core-copy-core-var
+    "copy-var" core-copy-var
+    "macrofy" core-macrofy
+    "new-var" core-new-var
+    "avoid-method-too-large" core-avoid-method-too-large
     "qualified-symbol?" core-qualified-symbol?
     "meta" core-meta
     # Dynamic vars — stubs for SCI bootstrap
     "*unchecked-math*" false
-    "*clojure-version*" {:major 1 :minor 11 :incremental 0 :qualifier nil}})
+    "*clojure-version*" @{:major 1 :minor 11 :incremental 0 :qualifier nil}
+    "*1" :jolt/nil-sentinel
+    "*2" :jolt/nil-sentinel
+    "*3" :jolt/nil-sentinel
+    "*e" :jolt/nil-sentinel
+    "*assert" true})
 
 (defn core-macro-names
   "Set of core binding names that are macros."
   []
-  @{"when" true "when-not" true "defn" true "defn-" true "declare" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "fn" true "proxy" true "definterface" true "comment" true})
+  @{"when" true "when-not" true "if-let" true "when-let" true "if-some" true "when-some" true "defn" true "defn-" true "declare" true "fn" true "let" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "comment" true})
 
 (def init-core!
   (fn [& args]
     (case (length args)
       1 (let [ctx (args 0)
-              ns (ctx-find-ns ctx "clojure.core")]
-          (loop [[name fn] :pairs core-bindings]
-            (def v (ns-intern ns name fn))
-            (when (get (core-macro-names) name)
-              (put v :macro true)))
-          ns)
-      2 (let [ctx (args 0) ns-name (args 1)
-              ns (ctx-find-ns ctx ns-name)]
-          (loop [[name fn] :pairs core-bindings]
-            (def v (ns-intern ns name fn))
+               ns (ctx-find-ns ctx "clojure.core")]
+           (loop [[name fn] :pairs core-bindings]
+             (def v (ns-intern ns name (if (= fn :jolt/nil-sentinel) nil fn)))
+             (when (get (core-macro-names) name)
+               (put v :macro true)))
+           ns)
+       2 (let [ctx (args 0) ns-name (args 1)
+               ns (ctx-find-ns ctx ns-name)]
+           (loop [[name fn] :pairs core-bindings]
+             (def v (ns-intern ns name (if (= fn :jolt/nil-sentinel) nil fn)))
             (when (get (core-macro-names) name)
               (put v :macro true)))
           ns)
