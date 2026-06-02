@@ -92,6 +92,12 @@
         (ns-import current-ns alias ns-name)))
     nil))
 
+(defn- bind-put
+  "Put a value into bindings. Uses :jolt/nil sentinel for nil values
+  because Janet's (put table key nil) silently drops the key."
+  [bindings key value]
+  (put bindings key (if (nil? value) :jolt/nil value)))
+
 (defn- resolve-sym
   [ctx bindings sym-s]
   (let [name (sym-s :name) ns (sym-s :ns)]
@@ -104,7 +110,8 @@
             (if v (var-get v) (error (string "Unable to resolve symbol: " ns "/" name))))))
       # Use :jolt/not-found sentinel to distinguish nil binding from absent binding
       (let [local (get bindings name :jolt/not-found)]
-        (if (not= local :jolt/not-found) local
+        (if (not= local :jolt/not-found)
+          (if (= local :jolt/nil) nil local)
           (let [current-ns (ctx-current-ns ctx) ns (ctx-find-ns ctx current-ns) v (ns-find ns name)]
             (if v (var-get v)
               # Check clojure.core as auto-referred fallback
@@ -239,7 +246,7 @@
                     (put new-bindings "&env" @{})  # implicit &env for macro bodies (table — nil-safe)
                    (var i 0)
                    (each a fixed-names
-                     (put new-bindings a (macro-args i))
+                     (bind-put new-bindings a (macro-args i))
                      (++ i))
                    (when rest-name
                      (put new-bindings rest-name (tuple/slice macro-args i)))
@@ -300,7 +307,7 @@
                          (table/setproto fn-bindings bindings)
                          (var i 0)
                          (each arg-name fixed-names
-                           (put fn-bindings arg-name (fn-args i))
+                           (bind-put fn-bindings arg-name (fn-args i))
                            (++ i))
                          (when rest-name
                            (put fn-bindings rest-name (tuple/slice fn-args i)))
@@ -328,7 +335,7 @@
                 (table/setproto fn-bindings bindings)
                 (var i 0)
                 (each arg-name fixed-names
-                  (put fn-bindings arg-name (fn-args i))
+                  (bind-put fn-bindings arg-name (fn-args i))
                   (++ i))
                 (when rest-name
                   (put fn-bindings rest-name (tuple/slice fn-args i)))
@@ -346,10 +353,8 @@
               (let [len (length bind-vec)]
                 (while (< i len)
                   (let [sym (bind-vec i)]
-                    # Pre-register with nil to prevent proto fallthrough to global scope
-                    (put new-bindings (sym :name) nil)
                     (def val (eval-form ctx new-bindings (bind-vec (+ i 1))))
-                    (put new-bindings (sym :name) val)
+                    (bind-put new-bindings (sym :name) val)
                     (+= i 2))))
              (var result nil)
              (each body-form body
@@ -370,7 +375,7 @@
                 (table/setproto loop-bindings bindings)
                 (var j 0)
                 (each sn sym-names
-                  (put loop-bindings sn (args j))
+                  (bind-put loop-bindings sn (args j))
                   (++ j))
                 (put loop-bindings :jolt/loop-fn loop-fn)
                 (var result nil)
@@ -486,7 +491,7 @@
                              (table/setproto new-bindings bindings)
                              (var i 0)
                              (each a arg-names
-                               (put new-bindings a (args i))
+                                (bind-put new-bindings a (args i))
                                (++ i))
                              (var result nil)
                              (each bf body
