@@ -170,3 +170,34 @@
 (print "  passed")
 
 (print "\nAll compiler Phase 4 tests passed!")
+
+# ============================================================
+# 12. throw, try, loop*/recur (Phase 5)
+# ============================================================
+(print "12: throw/try/loop...")
+(use ../src/jolt/api)
+
+(let [ctx (init {:compile? true})]
+  # throw/catch via compiler
+  (assert (= "caught"
+             (eval-string ctx "(try (throw 42) (catch Exception e \"caught\"))"))
+          "try/catch")
+
+  # try without catch returns body
+  (assert (= 1 (eval-string ctx "(try 1 (catch Exception e 2))")) "try no throw")
+
+  # throw in nested context
+  (assert (= "ok"
+             (eval-string ctx "(try (do (throw 99) 1) (catch Exception e \"ok\"))"))
+          "throw in do")
+
+  # loop*/recur
+  (assert (= 3 (eval-string ctx "(loop* [x 0] (if (< x 3) (recur (inc x)) x))"))
+          "loop count up")
+  (assert (= 3
+             (eval-string ctx "(loop* [i 0 acc 0] (if (< i 3) (recur (inc i) (+ acc i)) acc))"))
+          "loop with acc"))
+
+(print "  passed")
+
+(print "\nAll compiler Phase 5 tests passed!")

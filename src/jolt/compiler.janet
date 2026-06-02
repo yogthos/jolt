@@ -110,7 +110,6 @@
 # ============================================================
 
 (defn- resolve-macro
-  "Resolve a symbol struct to a macro var. Returns the var or nil."
   [ctx sym-s]
   (when ctx
     (let [name (sym-s :name)
@@ -129,7 +128,7 @@
               (if (and cv (var-macro? cv)) cv))))))))
 
 # ============================================================
-# Core function value lookup — resolved at compile time
+# Core function value lookup
 # ============================================================
 
 (def- core-fn-values
@@ -218,6 +217,18 @@
     (put t "core-pr-str" core-str)
     (put t "core-nth" core-get)
     t))
+
+# Loop counter for generating unique loop function names
+(var loop-counter 0)
+
+(defn- make-loop-name
+  []
+  (let [name (string "_loop_" loop-counter)]
+    (++ loop-counter)
+    name))
+
+# ============================================================
+# Analyzer
 # ============================================================
 
 (defn analyze-form
@@ -245,8 +256,7 @@
           head-name (if (and (struct? first-form) (= :symbol (first-form :jolt/type)))
                      (first-form :name)
                      nil)]
-      # Macro expansion: if ctx is provided and head resolves to a macro,
-      # expand it and re-analyze the expanded form
+      # Macro expansion
       (if (and ctx head-name
                (not (special-form? head-name))
                (resolve-macro ctx first-form))
@@ -257,6 +267,41 @@
         (if head-name
           (match head-name
             "quote" {:op :quote :expr (in form 1)}
+            "throw" {:op :throw :val (analyze-form (in form 1) bindings ctx)}
+            "try" (let [body-form (in form 1)
+                        clauses (tuple/slice form 2)
+                        n (length clauses)]
+                    (var catch-sym nil)
+                    (var catch-body nil)
+                    (var finally-body nil)
+                    (var i 0)
+                    (while (< i n)
+                      (let [clause (in clauses i)
+                            head (first clause)]
+                        (if (and (struct? head) (= :symbol (head :jolt/type)))
+                          (match (head :name)
+                            "catch" (do
+                              (set catch-sym (in clause 2))
+                              (set catch-body (tuple/slice clause 3)))
+                            "finally" (set finally-body (tuple/slice clause 1)))))
+                      (++ i))
+                    (let [catch-bindings (if catch-sym
+                                          (do
+                                            (var cb @{})
+                                            (loop [[k v] :pairs bindings] (put cb k v))
+                                            (put cb (catch-sym :name) :jolt/local)
+                                            cb)
+                                          nil)]
+                      {:op :try
+                       :body (analyze-form body-form bindings ctx)
+                       :catch-sym (if catch-sym (catch-sym :name))
+                       :catch-body (if catch-body
+                                    (map |(analyze-form $ catch-bindings ctx) catch-body))
+                       :finally-body (if finally-body
+                                      (map |(analyze-form $ bindings ctx) finally-body))}))
+            "recur" (let [args (map |(analyze-form $ bindings ctx) (tuple/slice form 1))
+                          loop-name (get bindings :jolt/current-loop)]
+                      {:op :recur :args args :loop-name loop-name})
             "do" (let [all-statements (array/slice form 1)
                        n (length all-statements)
                        analyzed (map |(analyze-form $ bindings ctx) all-statements)]
@@ -317,6 +362,40 @@
                                :statements (array/slice analyzed-body 0 (- n-body 1))
                                :ret (last analyzed-body)}
                               (first analyzed-body))})
+            "loop*" (let [bind-vec (in form 1)
+                          loop-name (make-loop-name)
+                          binding-pairs (do
+                                          (var pairs @[])
+                                          (var i 0)
+                                          (let [n (length bind-vec)]
+                                            (while (< i n)
+                                              (let [sym-s (in bind-vec i)
+                                                    name (if (struct? sym-s) (sym-s :name) sym-s)
+                                                    val-form (if (< (+ i 1) n) (in bind-vec (+ i 1)) nil)
+                                                    val-ast (if val-form (analyze-form val-form bindings ctx) {:op :const :val nil})]
+                                                (array/push pairs {:name name :init val-ast})
+                                                (+= i 2))))
+                                          pairs)
+                          param-names (map |($ :name) binding-pairs)
+                          body-bindings (do
+                                          (var bb @{})
+                                          (loop [[k v] :pairs bindings] (put bb k v))
+                                          (each bp binding-pairs
+                                            (put bb (bp :name) :jolt/local))
+                                          (put bb :jolt/current-loop loop-name)
+                                          bb)
+                          body-exprs (tuple/slice form 2)
+                          analyzed-body (map |(analyze-form $ body-bindings ctx) body-exprs)
+                          n-body (length analyzed-body)]
+                      {:op :loop
+                       :loop-name loop-name
+                       :param-names param-names
+                       :init-vals (map |($ :init) binding-pairs)
+                       :body (if (> n-body 1)
+                               {:op :do
+                                :statements (array/slice analyzed-body 0 (- n-body 1))
+                                :ret (last analyzed-body)}
+                               (first analyzed-body))})
             (let [f-ast (analyze-form first-form bindings ctx)
                   args (map |(analyze-form $ bindings ctx) (tuple/slice form 1))]
               {:op :invoke :fn f-ast :args args}))
@@ -393,6 +472,55 @@
       (++ i)))
   (buffer/push buf "] ") (emit-ast body buf) (buffer/push buf ")"))
 
+(defn- emit-throw-str [val buf]
+  (buffer/push buf "(error ") (emit-ast val buf) (buffer/push buf ")"))
+
+(defn- emit-try-str [body catch-sym catch-body finally-body buf]
+  (buffer/push buf "(try ")
+  (emit-ast body buf)
+  (when catch-sym
+    (buffer/push buf " ([")
+    (buffer/push buf catch-sym)
+    (buffer/push buf "] ")
+    (if (= 1 (length catch-body))
+      (emit-ast (first catch-body) buf)
+      (do
+        (buffer/push buf "(do ")
+        (var i 0)
+        (let [n (length catch-body)]
+          (while (< i n)
+            (emit-ast (in catch-body i) buf)
+            (when (< (+ i 1) n) (buffer/push buf " "))
+            (++ i)))
+        (buffer/push buf ")")))
+    (buffer/push buf ")"))
+  (buffer/push buf ")"))
+
+(defn- emit-loop-str [loop-name param-names init-vals body buf]
+  (buffer/push buf "(do (var ") (buffer/push buf loop-name) (buffer/push buf " nil) ")
+  (buffer/push buf "(set ") (buffer/push buf loop-name) (buffer/push buf " (fn [")
+  (var i 0)
+  (let [n (length param-names)]
+    (while (< i n)
+      (buffer/push buf (in param-names i))
+      (when (< (+ i 1) n) (buffer/push buf " "))
+      (++ i)))
+  (buffer/push buf "] ")
+  (emit-ast body buf)
+  (buffer/push buf ")) (")
+  (buffer/push buf loop-name)
+  (each iv init-vals
+    (buffer/push buf " ")
+    (emit-ast iv buf))
+  (buffer/push buf "))"))
+
+(defn- emit-recur-str [args loop-name buf]
+  (buffer/push buf "(") (buffer/push buf loop-name)
+  (each arg args
+    (buffer/push buf " ")
+    (emit-ast arg buf))
+  (buffer/push buf ")"))
+
 (defn- emit-invoke-str [f-ast args buf]
   (buffer/push buf "(") (emit-ast f-ast buf)
   (each arg args (buffer/push buf " ") (emit-ast arg buf))
@@ -434,6 +562,10 @@
       :def (emit-def-str (ast :name) (ast :init) buf)
       :fn (emit-fn-str (ast :params) (ast :body) buf)
       :let (emit-let-str (ast :binding-pairs) (ast :body) buf)
+      :throw (emit-throw-str (ast :val) buf)
+      :try (emit-try-str (ast :body) (ast :catch-sym) (ast :catch-body) (ast :finally-body) buf)
+      :loop (emit-loop-str (ast :loop-name) (ast :param-names) (ast :init-vals) (ast :body) buf)
+      :recur (emit-recur-str (ast :args) (ast :loop-name) buf)
       :invoke (emit-invoke-str (ast :fn) (ast :args) buf)
       :vector (emit-vector-str (ast :items) buf)
       :map (emit-map-str (ast :form) buf)
@@ -447,6 +579,15 @@
 (var emit-expr nil)
 
 (defn- emit-const-expr [val] val)
+(defn- emit-symbol-expr [name] (symbol name))
+(defn- emit-local-expr [name] (symbol name))
+
+(defn- emit-core-symbol-expr [janet-name]
+  (or (get core-fn-values janet-name)
+      (error (string "Core fn not found: " janet-name))))
+
+(defn- emit-qualified-symbol-expr [ns name]
+  (error (string "Cannot eval qualified symbol at compile time: " ns "/" name)))
 
 (defn- emit-do-expr [statements ret]
   (def exprs @['do])
@@ -477,20 +618,50 @@
     (array/push bind-tuple (emit-expr (bp :init))))
   ['let (tuple/slice (tuple ;bind-tuple)) (emit-expr body)])
 
+(defn- emit-throw-expr [val]
+  ['error (emit-expr val)])
+
+(defn- emit-try-expr [body catch-sym catch-body finally-body]
+  # Janet try: (try body ([err] handler-body))
+  (def forms @['try (emit-expr body)])
+  (when catch-sym
+    (def err-binding [(symbol catch-sym)])
+    (def handler
+      (if (= 1 (length catch-body))
+        (emit-expr (first catch-body))
+        (do
+          (def do-body @['do])
+          (each cb catch-body (array/push do-body (emit-expr cb)))
+          (tuple/slice (tuple ;do-body)))))
+    (array/push forms [(tuple ;err-binding) handler]))
+  (when finally-body
+    (def finally-do @['do])
+    (each fb finally-body (array/push finally-do (emit-expr fb)))
+    (array/push forms (tuple/slice (tuple ;finally-do))))
+  (tuple/slice (tuple ;forms)))
+
+(defn- emit-loop-expr [loop-name param-names init-vals body]
+  # Emit: (do (var loop-name nil) (set loop-name (fn [params] body)) (loop-name init-vals...))
+  (def param-syms (map symbol param-names))
+  (def loop-sym (symbol loop-name))
+  (def body-emitted (emit-expr body))
+  # For recur calls, rewrite (recur arg1 arg2) → (loop-name arg1 arg2)
+  # This is done by the :recur op handler below which uses the loop-name from ast
+  ['do
+   ['var loop-sym nil]
+   ['set loop-sym ['fn (tuple/slice (tuple ;param-syms)) body-emitted]]
+   (tuple ;(array/insert (map emit-expr init-vals) 0 loop-sym))])
+
+(defn- emit-recur-expr [args loop-name]
+  # Emit: (loop-name arg1 arg2...)
+  (def exprs @[(symbol loop-name)])
+  (each arg args (array/push exprs (emit-expr arg)))
+  (tuple/slice (tuple ;exprs)))
+
 (defn- emit-invoke-expr [f-ast args]
   (def exprs @[(emit-expr f-ast)])
   (each arg args (array/push exprs (emit-expr arg)))
   (tuple/slice (tuple ;exprs)))
-
-(defn- emit-symbol-expr [name] (symbol name))
-(defn- emit-local-expr [name] (symbol name))
-
-(defn- emit-core-symbol-expr [janet-name]
-  (or (get core-fn-values janet-name)
-      (error (string "Core fn not found: " janet-name))))
-
-(defn- emit-qualified-symbol-expr [ns name]
-  (error (string "Cannot eval qualified symbol at compile time: " ns "/" name)))
 
 (defn- emit-vector-expr [items]
   (def exprs @[])
@@ -515,6 +686,10 @@
       :def (emit-def-expr (ast :name) (ast :init))
       :fn (emit-fn-expr (ast :params) (ast :body))
       :let (emit-let-expr (ast :binding-pairs) (ast :body))
+      :throw (emit-throw-expr (ast :val))
+      :try (emit-try-expr (ast :body) (ast :catch-sym) (ast :catch-body) (ast :finally-body))
+      :loop (emit-loop-expr (ast :loop-name) (ast :param-names) (ast :init-vals) (ast :body))
+      :recur (emit-recur-expr (ast :args) (ast :loop-name))
       :invoke (emit-invoke-expr (ast :fn) (ast :args))
       :vector (emit-vector-expr (ast :items))
       :map (emit-map-expr (ast :form))
@@ -526,8 +701,7 @@
 # ============================================================
 
 (defn compile-form
-  "Compile a Clojure form to a Janet source string.
-  Pass ctx for macro expansion."
+  "Compile a Clojure form to a Janet source string."
   [form &opt ctx]
   (default ctx nil)
   (let [ast (analyze-form form @{} ctx)
@@ -536,14 +710,12 @@
     (string buf)))
 
 (defn compile-ast
-  "Compile a Clojure form to an eval-able Janet data structure.
-  Core function symbols are resolved to actual function values."
+  "Compile a Clojure form to an eval-able Janet data structure."
   [form &opt ctx]
   (default ctx nil)
   (emit-expr (analyze-form form @{} ctx)))
 
 (defn compile-and-eval
-  "Compile a Clojure form and evaluate it as Janet.
-  Emits Janet data structures with resolved core functions."
+  "Compile a Clojure form and evaluate it as Janet."
   [form ctx]
   (eval (compile-ast form ctx)))
