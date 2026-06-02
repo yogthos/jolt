@@ -464,29 +464,52 @@
                    (run-finally finally-body)
                    (error err)))
                 (eval-form ctx bindings body-form))))
-    "set!" (let [target-sym (in form 1)
-                 val (eval-form ctx bindings (in form 2))
-                 v (resolve-var ctx bindings target-sym)]
-             (if v
-               (do (var-set v val) val)
-               # Auto-create var if it doesn't exist (e.g., *warn-on-reflection*)
-               (let [ns-name (ctx-current-ns ctx)
-                     ns (ctx-find-ns ctx ns-name)]
-                 (def new-v (ns-intern ns (target-sym :name) val))
-                 val)))
+    "set!" (let [target (in form 1)
+                 val (eval-form ctx bindings (in form 2))]
+             # (set! (. obj -field) val) — instance field mutation
+             (if (and (array? target) (> (length target) 0)
+                      (struct? (first target))
+                      (= :symbol ((first target) :jolt/type))
+                      (= "." ((first target) :name)))
+               (let [obj (eval-form ctx bindings (in target 1))
+                     field-sym (in target 2)
+                     field-name (field-sym :name)
+                     field-key (keyword (if (and (> (length field-name) 0) (= "-" (string/slice field-name 0 1)))
+                                        (string/slice field-name 1)
+                                        field-name))]
+                 (if (get obj :jolt/deftype)
+                   (do (put obj field-key val) val)
+                   (error (string "Can't set! field on non-deftype: " (type obj)))))
+               # (set! var val) — normal var mutation
+               (let [target-sym target
+                     v (resolve-var ctx bindings target-sym)]
+                 (if v
+                   (do (var-set v val) val)
+                   # Auto-create var if it doesn't exist
+                   (let [ns-name (ctx-current-ns ctx)
+                         ns (ctx-find-ns ctx ns-name)]
+                     (def new-v (ns-intern ns (target-sym :name) val))
+                     val)))))
     "var" (let [target-sym (in form 1)
                 v (resolve-var ctx bindings target-sym)]
             (if v v (error (string "Unable to resolve var: " (sym-name-str target-sym) " in var"))))
     "locking" (eval-form ctx bindings (in form 2))
     "instance?" (let [type-sym (in form 1)
                       val (eval-form ctx bindings (in form 2))]
-                  (match (type-sym :name)
-                    "Number" (number? val)
-                    "String" (string? val)
-                    "Boolean" (or (= true val) (= false val))
-                    "Keyword" (keyword? val)
-                    "Object" true
-                    false))
+                  (if (and (struct? val) (get val :jolt/deftype))
+                    (let [type-tag (val :jolt/deftype)
+                          type-name (type-sym :name)]
+                      (or (= type-tag type-name)
+                          (and (> (length type-tag) (length type-name))
+                               (= (string/slice type-tag (- (length type-tag) (length type-name)))
+                                  type-name))))
+                    (match (type-sym :name)
+                      "Number" (number? val)
+                      "String" (string? val)
+                      "Boolean" (or (= true val) (= false val))
+                      "Keyword" (keyword? val)
+                      "Object" true
+                      false)))
     "defmulti" (let [name-sym (in form 1)
                      dispatch-fn (eval-form ctx bindings (in form 2))
                      ns (ctx-find-ns ctx (ctx-current-ns ctx))

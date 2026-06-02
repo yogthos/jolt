@@ -542,6 +542,14 @@
       (if (string? x) x
         ""))))
 
+(defn core-namespace
+  "Returns the namespace of a keyword, symbol, or nil if none."
+  [x]
+  (if (keyword? x) (string x)
+    (if (and (struct? x) (= :symbol (x :jolt/type)))
+      (if (x :ns) (if (struct? (x :ns)) ((x :ns) :name) (string (x :ns))) nil)
+      nil)))
+
 (def core-subs
   (fn [& args]
     (case (length args)
@@ -568,6 +576,50 @@
   (apply core-pr xs)
   (print "\n")
   nil)
+
+# ============================================================
+# Array primitives (needed for persistent data structures)
+# ============================================================
+
+(def core-alength (fn [arr] (length arr)))
+(def core-aget (fn [arr idx] (in arr idx)))
+(def core-aset (fn [arr idx val] (put arr idx val) val))
+(def core-aclone (fn [arr] (array/slice arr 0)))
+(def core-object-array (fn [size] (array/new-filled size nil)))
+(def core-int-array (fn [size] (array/new-filled size 0)))
+(def core-to-array (fn [coll]
+  (def arr @[])
+  (each x coll (array/push arr x))
+  arr))
+
+# ============================================================
+# Bit operations (needed for persistent data structures)  
+# ============================================================
+
+(def core-bit-and (fn [a b] (band a b)))
+(def core-bit-or (fn [a b] (bor a b)))
+(def core-bit-xor (fn [a b] (bxor a b)))
+(def core-bit-not (fn [a] (bnot a)))
+(def core-bit-shift-left (fn [x n] (blshift x n)))
+(def core-bit-shift-right (fn [x n] (brshift x n)))
+(def core-unsigned-bit-shift-right (fn [x n] (brushift x n)))
+
+# ============================================================
+# Integer coercion
+# ============================================================
+
+(def core-int (fn [x] (math/trunc x)))
+(def core-unchecked-inc (fn [x] (+ x 1)))
+(def core-unchecked-dec (fn [x] (- x 1)))
+(def core-unchecked-add (fn [& xs] (+ ;xs)))
+(def core-unchecked-subtract (fn [& xs] (- ;xs)))
+
+# ============================================================
+# Hash
+# ============================================================
+
+(def core-hash (fn [x] (hash x)))
+
 
 # ============================================================
 # Atom
@@ -938,6 +990,30 @@
     "println" core-println
     "pr" core-pr
     "prn" core-prn
+    # Array primitives (for persistent data structures)
+    "alength" core-alength
+    "aget" core-aget
+    "aset" core-aset
+    "aclone" core-aclone
+    "object-array" core-object-array
+    "int-array" core-int-array
+    "to-array" core-to-array
+    # Bit operations
+    "bit-and" core-bit-and
+    "bit-or" core-bit-or
+    "bit-xor" core-bit-xor
+    "bit-not" core-bit-not
+    "bit-shift-left" core-bit-shift-left
+    "bit-shift-right" core-bit-shift-right
+    "unsigned-bit-shift-right" core-unsigned-bit-shift-right
+    # Integer coercion / unchecked math
+    "int" core-int
+    "unchecked-inc" core-unchecked-inc
+    "unchecked-dec" core-unchecked-dec
+    "unchecked-add" core-unchecked-add
+    "unchecked-subtract" core-unchecked-subtract
+    # Hash
+    "hash" core-hash
     "atom" core-atom
     "atom?" core-atom?
     "deref" core-deref
