@@ -202,7 +202,13 @@
       (if (= (s pos) 41) # )
         [items (+ pos 1)]
         (let [[form new-pos] (read-form s pos)]
-          (read-list-items s new-pos (array/push items form))))))
+          # skip #_ discarded forms
+          (if (and (struct? form) (= :jolt/skip (form :jolt/type)))
+            (read-list-items s new-pos items)
+            # splice #?@ items into the list
+            (if (and (struct? form) (= :jolt/splice (form :jolt/type)))
+              (read-list-items s new-pos (array/concat items (form :items)))
+              (read-list-items s new-pos (array/push items form))))))))
   (read-list-items s (+ pos 1) @[]))
 
 (defn read-vector [s pos]
@@ -214,7 +220,11 @@
       (if (= (s pos) 93) # ]
         [(tuple/slice (tuple ;items)) (+ pos 1)]
         (let [[form new-pos] (read-form s pos)]
-          (read-vec-items s new-pos (array/push items form))))))
+          (if (and (struct? form) (= :jolt/skip (form :jolt/type)))
+            (read-vec-items s new-pos items)
+            (if (and (struct? form) (= :jolt/splice (form :jolt/type)))
+              (read-vec-items s new-pos (array/concat items (form :items)))
+              (read-vec-items s new-pos (array/push items form))))))))
   (read-vec-items s (+ pos 1) @[]))
 
 (defn read-map [s pos]
@@ -225,10 +235,21 @@
         (error "Unterminated map"))
       (if (= (s pos) 125) # }
         [(struct ;kvs) (+ pos 1)]
-        (let [[key new-pos] (read-form s pos)
-              pos (skip-whitespace s new-pos)
-              [val new-pos2] (read-form s pos)]
-          (read-kvs s new-pos2 (-> kvs (array/push key) (array/push val)))))))
+        (let [[key new-pos] (read-form s pos)]
+          (if (and (struct? key) (= :jolt/skip (key :jolt/type)))
+            (read-kvs s new-pos kvs)
+            (if (and (struct? key) (= :jolt/splice (key :jolt/type)))
+              (read-kvs s new-pos (array/concat kvs (key :items)))
+              (let [pos (skip-whitespace s new-pos)
+                    [val new-pos2] (read-form s pos)]
+                (if (and (struct? val) (= :jolt/skip (val :jolt/type)))
+                  (read-kvs s new-pos2 kvs)
+                  (if (and (struct? val) (= :jolt/splice (val :jolt/type)))
+                    # Only push key if splice contributes items
+                    (if (> (length (val :items)) 0)
+                      (do (array/push kvs key) (read-kvs s new-pos2 (array/concat kvs (val :items))))
+                      (read-kvs s new-pos2 kvs))
+                    (read-kvs s new-pos2 (-> kvs (array/push key) (array/push val))))))))))))
   (read-kvs s (+ pos 1) @[]))
 
 (defn read-set [s pos]
@@ -240,7 +261,11 @@
       (if (= (s pos) 125) # }
         [{:jolt/type :jolt/set :value (tuple/slice (tuple ;items))} (+ pos 1)]
         (let [[form new-pos] (read-form s pos)]
-          (read-set-items s new-pos (array/push items form))))))
+          (if (and (struct? form) (= :jolt/skip (form :jolt/type)))
+            (read-set-items s new-pos items)
+            (if (and (struct? form) (= :jolt/splice (form :jolt/type)))
+              (read-set-items s new-pos (array/concat items (form :items)))
+              (read-set-items s new-pos (array/push items form))))))))
   (read-set-items s (+ pos 2) @[]))
 
 (defn read-char-name-end [s pos]
@@ -260,14 +285,52 @@
     [(array/insert form 0 (sym "fn*")) new-pos]))
 
 (defn read-reader-conditional [s pos]
-  # pos is at #, next char is ?
-  (let [[form new-pos] (read-form s (+ pos 2))]
-    [{:jolt/type :jolt/reader-conditional :clauses form} new-pos]))
+  # pos is at #, next char is ? or ?@
+  (def splice? (and (< (+ pos 2) (length s)) (= (s (+ pos 2)) 64))) # @ = 64
+  (def form-start (if splice? (+ pos 3) (+ pos 2)))
+  (let [[form new-pos] (read-form s form-start)]
+    (if (array? form)
+      (do
+        (var result nil)
+        (var i 0)
+        (while (< i (length form))
+          (if (= (in form i) :clj)
+            (do
+              (set result (in form (+ i 1)))
+              (set i (length form)))
+            (++ i)))
+        (if splice?
+          # #?@ splicing: resolve :clj branch, wrap for splice
+          (let [items (if (nil? result)
+                        @[]
+                        (if (or (array? result) (tuple? result))
+                          result
+                          @[result]))]
+            [{:jolt/type :jolt/splice :items items} new-pos])
+          # #? non-splicing: skip nil results (from :cljs branches on CLJ)
+          (if (nil? result)
+            [{:jolt/type :jolt/skip} new-pos]
+            [result new-pos])))
+      [{:jolt/type :jolt/reader-conditional :clauses form} new-pos])))
 
 (defn read-var-quote [s pos]
   # pos is at #, next char is '
   (let [[form new-pos] (read-form s (+ pos 2))]
     [(array (sym "var") form) new-pos]))
+
+(defn read-regex [s pos]
+  # pos is at #, next char is "
+  # Read until unescaped closing "
+  (var i (+ pos 2))
+  (var done nil)
+  (while (and (< i (length s)) (not done))
+    (if (= (s i) 92)  # backslash — skip next char
+      (+= i 2)
+      (if (= (s i) 34)  # closing quote
+        (set done [(struct ;[:jolt/type :jolt/tagged :tag :regex :form (string/slice s (+ pos 2) i)])
+                   (+ i 1)])
+        (++ i))))
+  (if done done (error "Unterminated regex literal")))
 
 (defn read-dispatch [s pos]
   # pos is at #
@@ -279,8 +342,9 @@
       (= c 40) (read-anon-fn s pos)        # #(
       (= c 63) (read-reader-conditional s pos) # #?
       (= c 95) (let [[_ new-pos] (read-form s (+ pos 2))]  # #_
-                  (read-form s new-pos))
+                  [{:jolt/type :jolt/skip} new-pos])
       (= c 39) (read-var-quote s pos)      # #'
+      (= c 34) (read-regex s pos)          # #"regex
       # unknown dispatch — tagged literal
       (let [end (read-symbol-name s pos pos)
             tag (string/slice s pos end)
@@ -311,7 +375,7 @@
           # comment
           (= c 59)
           (let [line-end (read-until-newline s pos)]
-            (read-form s line-end))
+            [{:jolt/type :jolt/skip} line-end])
           
           # dispatch
           (= c 35)
@@ -324,6 +388,16 @@
           # list
           (= c 40)
           (read-list s pos)
+          
+          # unmatched closing delimiters
+          (= c 41)
+          (error (string "Unmatched closing paren at " pos))
+          
+          (= c 93)
+          (error (string "Unmatched closing bracket at " pos))
+          
+          (= c 125)
+          (error (string "Unmatched closing brace at " pos))
           
           # vector
           (= c 91)
@@ -373,11 +447,17 @@
 (defn parse-string
   "Parse a Clojure source string and return the first form."
   [s]
-  (let [[form _] (read-form s 0)]
-    form))
+  (let [[form pos] (read-form s 0)]
+    (if (and (struct? form) (= :jolt/skip (form :jolt/type)))
+      (parse-string (string/slice s pos))
+      form)))
 
 (defn parse-next
   "Parse the first form from a string. Returns [form remaining-string]."
   [s]
-  (let [[form pos] (read-form s 0)]
-    [form (string/slice s pos)]))
+  (defn- parse-next-loop [pos]
+    (let [[form new-pos] (read-form s pos)]
+      (if (and (struct? form) (= :jolt/skip (form :jolt/type)))
+        (parse-next-loop new-pos)
+        [form (string/slice s new-pos)])))
+  (parse-next-loop 0))

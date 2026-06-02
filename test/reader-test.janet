@@ -115,10 +115,18 @@
   (let [[form2 _] (parse-next rest-str)]
     (assert (deep= [3 4] form2) "second form is vector")))
 
-# Reader conditional (basic #? support)
-(let [form (parse-string "#?(:clj 1 :cljs 2)")]
-  (assert (struct? form) "reader conditional")
-  (assert (= :jolt/reader-conditional (form :jolt/type)) "correct type"))
+# Reader conditional — resolves :clj branch at read time
+(assert (= 1 (parse-string "#?(:clj 1 :cljs 2)"))
+        "#?(:clj) picks :clj branch")
+(assert (= nil (parse-string "#?(:cljs 999)"))
+        "#?(:cljs) returns nil on CLJ")
+(assert (= 42 (parse-string "#?(:clj 42)"))
+        "#?(:clj) with single branch")
+(assert (deep= (sym "clj-only") (parse-string "#?(:clj clj-only :cljs cljs-only)"))
+        "#?(:clj) picks :clj symbol")
+# Nested inside a list — :clj branch is evaluated at read time
+(assert (deep= @[(sym "+") 1 3] (parse-string "(+ 1 #?(:clj 3 :cljs 4))"))
+        "#? inside list picks :clj")
 
 # Characters
 (let [form (parse-string "\\newline")]

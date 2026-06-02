@@ -1,0 +1,18 @@
+(use ./src/jolt/reader)
+(def s (slurp "/Users/yogthos/src/sci/src/sci/impl/utils.cljc"))
+(var ss s)
+(var i 0)
+(while (< i 14)
+  (def [f r] (parse-next ss))
+  (set ss r)
+  (++ i))
+(try
+  (def [form rest] (parse-next ss))
+  (if (array? form)
+    (let [h (first form)]
+      (if (and (struct? h) (= :symbol (h :jolt/type)))
+        (print (string "form: (" (h :name) "...)"))
+        (print (string "form: array head " (type h)))))
+    (print (string "form: " (type form) " " (string form))))
+  (print (string "OK rest: " (string/slice rest 0 80)))
+  ([err] (print (string "FAIL: " err))))

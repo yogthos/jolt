@@ -8,6 +8,7 @@
 # ============================================================
 
 (defn core-nil? [x] (nil? x))
+(defn core-not [x] (if x false true))
 (defn core-some? [x] (not (nil? x)))
 (defn core-string? [x] (string? x))
 (defn core-number? [x] (number? x))
@@ -592,6 +593,110 @@
 # Initialization — intern everything into a context's namespace
 # ============================================================
 
+(defn core-when
+  "Macro: (when test & body) -> (if test (do body...))"
+  [test & body]
+  (def arr (array ;body))
+  (array/insert arr 0 {:jolt/type :symbol :ns nil :name "do"})
+  @[{:jolt/type :symbol :ns nil :name "if"}
+    test
+    arr])
+
+(defn core-defn
+  "Macro: (defn name [args] body) -> (def name (fn* [args] body))"
+  [fn-name args-form & body]
+  (def fn-form @[])
+  (array/push fn-form {:jolt/type :symbol :ns nil :name "fn*"})
+  (array/push fn-form args-form)
+  (each b body (array/push fn-form b))
+  @[{:jolt/type :symbol :ns nil :name "def"}
+    fn-name
+    fn-form])
+
+# defn- stub — expands to defn
+(defn core-defn- [& args] @[{:jolt/type :symbol :ns nil :name "do"}])
+
+# Hierarchy stubs for sci bootstrap
+(def core-derive (fn [& args] nil))
+(def core-isa? (fn [& args] false))
+(def core-ancestors (fn [& args] @[]))
+(def core-descendants (fn [& args] @[]))
+
+# Java interop stubs
+(def core-Object (fn [] (struct ;[:jolt/type :jolt/java-object])))
+
+# Volatile stubs (minimal — use table as volatile box)
+(defn core-volatile! [v] @{:val v})
+(defn core-vswap! [vol f & args] 
+  (def new-val (apply f (vol :val) args))
+  (put vol :val new-val)
+  new-val)
+(defn core-vreset! [vol val] (put vol :val val) val)
+
+# Proxy stub — returns nil form (macro, args not evaluated)
+(defn core-proxy [& args] nil)
+
+# Thread stubs
+(def core-Thread (fn [& args] (struct ;[:jolt/type :jolt/thread])))
+(def core-ThreadLocal (fn [& args] (struct ;[:jolt/type :jolt/thread-local])))
+(def core-IllegalStateException (fn [& args] (struct ;[:jolt/type :jolt/exception])))
+
+# definterface stub — JVM-only, emits def form
+(defn core-definterface [name-sym & body]
+  @[{:jolt/type :symbol :ns nil :name "def"}
+    name-sym
+    @{}])
+
+# comment macro — ignores body, returns nil
+(defn core-comment [& body]
+  nil)
+
+# prefer-method stub — multimethod preference ordering
+(defn core-prefer-method [multifn dispatch-val & dispatch-vals]
+  nil)
+
+# declare macro — accepts symbols, does nothing (forward declaration)
+(defn core-declare [& syms]
+  @[{:jolt/type :symbol :ns nil :name "do"}])
+
+(defn core-fn
+  "Macro: (fn [args] body) → (fn* [args] body)"
+  [& args]
+  (def result @[])
+  (array/push result {:jolt/type :symbol :ns nil :name "fn*"})
+  (each a args (array/push result a))
+  result)
+
+# Protocol stubs — defined in sci.impl.protocols, needed in clojure.core
+# defprotocol must be a macro to avoid evaluating its args
+(defn core-defprotocol [protocol-name & sigs]
+  # Emit (do (def protocol-name {}) (def method1 fn) (def method2 fn) ...)
+  (def result @[])
+  (array/push result {:jolt/type :symbol :ns nil :name "do"})
+  # First (def protocol-name {})
+  (def d @[])
+  (array/push d {:jolt/type :symbol :ns nil :name "def"})
+  (array/push d protocol-name)
+  (array/push d @{})
+  (array/push result d)
+  # Then (def method-name (fn [& args] nil)) for each sig
+  (each sig sigs
+    (def method-sym (first sig))
+    (def d @[])
+    (array/push d {:jolt/type :symbol :ns nil :name "def"})
+    (array/push d method-sym)
+    (array/push d (fn [& args] nil))
+    (array/push result d))
+  result)
+(def core-extend-type (fn [& args] nil))
+(defn core-extend-protocol [& args] @[{:jolt/type :symbol :ns nil :name "do"}])
+(def core-extend (fn [& args] nil))
+(def core-reify (fn [& args] nil))
+(def core-satisfies? (fn [& args] nil))
+(def core-extends? (fn [& args] false))
+(def core-implements? (fn [& args] false))
+(def core-type->str (fn [& args] ""))
+
 (def- core-bindings
   "Map of symbol name → function for all core functions."
   @{"nil?" core-nil?
@@ -691,7 +796,45 @@
     "atom?" core-atom?
     "deref" core-deref
     "reset!" core-reset!
-    "swap!" core-swap!})
+    "swap!" core-swap!
+    "not" core-not
+    "when" core-when
+    "defn" core-defn
+    "defn-" core-defn-
+    "derive" core-derive
+    "isa?" core-isa?
+    "ancestors" core-ancestors
+    "descendants" core-descendants
+    "Object" core-Object
+    "declare" core-declare
+    "fn" core-fn
+    "defprotocol" core-defprotocol
+    "extend-type" core-extend-type
+    "extend-protocol" core-extend-protocol
+    "extend" core-extend
+    "reify" core-reify
+    "satisfies?" core-satisfies?
+    "extends?" core-extends?
+    "implements?" core-implements?
+    "type->str" core-type->str
+    "volatile!" core-volatile!
+    "vswap!" core-vswap!
+    "vreset!" core-vreset!
+    "proxy" core-proxy
+    "Thread" core-Thread
+    "ThreadLocal" core-ThreadLocal
+    "IllegalStateException" core-IllegalStateException
+    "definterface" core-definterface
+    "comment" core-comment
+    "prefer-method" core-prefer-method
+    # Dynamic vars — stubs for SCI bootstrap
+    "*unchecked-math*" false
+    "*clojure-version*" {:major 1 :minor 11 :incremental 0 :qualifier nil}})
+
+(defn core-macro-names
+  "Set of core binding names that are macros."
+  []
+  @{"when" true "defn" true "defn-" true "declare" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "fn" true "proxy" true "definterface" true "comment" true})
 
 (def init-core!
   (fn [& args]
@@ -699,11 +842,15 @@
       1 (let [ctx (args 0)
               ns (ctx-find-ns ctx "clojure.core")]
           (loop [[name fn] :pairs core-bindings]
-            (ns-intern ns name fn))
+            (def v (ns-intern ns name fn))
+            (when (get (core-macro-names) name)
+              (put v :macro true)))
           ns)
       2 (let [ctx (args 0) ns-name (args 1)
               ns (ctx-find-ns ctx ns-name)]
           (loop [[name fn] :pairs core-bindings]
-            (ns-intern ns name fn))
+            (def v (ns-intern ns name fn))
+            (when (get (core-macro-names) name)
+              (put v :macro true)))
           ns)
       (error "Wrong number of args passed to: init-core!"))))

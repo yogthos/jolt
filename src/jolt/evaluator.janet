@@ -11,8 +11,11 @@
   [name]
   (or (= name "quote") (= name "syntax-quote") (= name "unquote")
       (= name "unquote-splicing") (= name "do") (= name "if")
-      (= name "def") (= name "fn*") (= name "let*") (= name "loop*")
-      (= name "recur")))
+      (= name "def") (= name "defmacro") (= name "fn*") (= name "let*") (= name "loop*")
+      (= name "recur") (= name "throw") (= name "try")
+      (= name "set!") (= name "var") (= name "locking")
+      (= name "instance?") (= name "defmulti") (= name "defmethod")
+      (= name "deftype") (= name "new") (= name ".")))
 
 (var eval-form nil)
 
@@ -51,13 +54,18 @@
       (array/push kvs (syntax-quote* ctx bindings (get form k)))) (struct ;kvs))
     form))
 
-(defn- resolve-var
+(defn resolve-var
   [ctx bindings sym-s]
   (let [name (sym-s :name) ns (sym-s :ns)]
     (if (not (nil? ns))
       (let [target-ns (ctx-find-ns ctx ns)] (ns-find target-ns name))
       (if (get bindings name) nil
-        (let [current-ns (ctx-current-ns ctx) ns (ctx-find-ns ctx current-ns)] (ns-find ns name))))))
+        (let [current-ns (ctx-current-ns ctx)
+              ns (ctx-find-ns ctx current-ns)
+              v (ns-find ns name)]
+          (if v v
+            (let [core-ns (ctx-find-ns ctx "clojure.core")]
+              (ns-find core-ns name))))))))
 
 (defn- sym-name-str
   [sym-s]
@@ -103,20 +111,94 @@
                     core-v (ns-find core-ns name)]
                 (if core-v
                   (var-get core-v)
-                  # Fall back to Janet's global environment
-                  (let [root-env (fiber/getenv (fiber/current))
-                        entry (in root-env (symbol name))]
-                    (if (not (nil? entry))
-                      (if (table? entry) (entry :value) entry)
-                      (error (string "Unable to resolve symbol: " name)))))))))))))
+                  # Try class-name resolution: Foo.Bar.Baz -> ns "Foo.Bar", name "Baz"
+                  (let [dot-idx (string/find "." name)]
+                    (if dot-idx
+                      (let [last-dot (do
+                                       (var idx dot-idx)
+                                       (var next-dot (string/find "." name (+ idx 1)))
+                                       (while (not (nil? next-dot))
+                                         (set idx next-dot)
+                                         (set next-dot (string/find "." name (+ idx 1))))
+                                       idx)
+                            class-ns (string/slice name 0 last-dot)
+                            class-name (string/slice name (+ last-dot 1))]
+                        (let [target-ns (ctx-find-ns ctx class-ns) tv (ns-find target-ns class-name)]
+                          (if tv (var-get tv) tv)))
+                      # Fall back to Janet's global environment
+                      (let [root-env (fiber/getenv (fiber/current))
+                            entry (in root-env (symbol name))]
+                        (if (not (nil? entry))
+                          (if (table? entry) (entry :value) entry)
+                          (error (string "Unable to resolve symbol: " name)))))))))))))))
 
-# Dispatch a special form by its string name. Each branch is a standalone
-# expression that returns the value directly — no cond, no nested if chains.
-# We use a local function per form and call the matching one.
+(defn- parse-arg-names
+  "Parse a parameter vector, handling & rest args.
+  Returns {:fixed [names...] :rest name-or-nil :all [names...]}"
+  [args-form]
+  (var fixed @[])
+  (var rest-name nil)
+  (var i 0)
+  (while (< i (length args-form))
+    (let [a (in args-form i)]
+      (if (and (struct? a) (= :symbol (a :jolt/type)) (= "&" (a :name)))
+        (do
+          (+= i 1)
+          (if (< i (length args-form))
+            (do
+              (set rest-name ((in args-form i) :name))
+              (+= i 1))
+            (error "& without argument in parameter list")))
+        (do
+          (if (and (struct? a) (= :symbol (a :jolt/type)))
+            (array/push fixed (a :name))
+            # destructuring form: recurse into it
+            (when (indexed? a)
+              (var di 0)
+              (while (< di (length a))
+                (def inner (in a di))
+                (if (and (struct? inner) (= :symbol (inner :jolt/type)) (= "&" (inner :name)))
+                  (do
+                    (+= di 1)
+                    (if (< di (length a))
+                      (do
+                        (set rest-name ((in a di) :name))
+                        (+= di 1))
+                      (error "& without argument in parameter list")))
+                  (do
+                    (if (and (struct? inner) (= :symbol (inner :jolt/type)))
+                      (array/push fixed (inner :name))
+                      # nested destructuring - extract names
+                      (when (indexed? inner)
+                        (each sym inner
+                          (when (and (struct? sym) (= :symbol (sym :jolt/type)))
+                            (array/push fixed (sym :name))))))
+                    (+= di 1))))))
+          (+= i 1)))))
+  (var all @[])
+  (each n fixed (array/push all n))
+  (if rest-name (array/push all rest-name))
+  {:fixed (tuple/slice (tuple ;fixed)) :rest rest-name :all (tuple/slice (tuple ;all))})
+
+# Dispatch a special form by its string name.
+(defn- unwrap-meta-name
+  "Recursively unwrap (with-meta sym meta) forms to extract the underlying symbol.
+  Returns the symbol struct, or the original form if it's not a with-meta wrapper."
+  [form]
+  (if (and (array? form) (> (length form) 0)
+           (struct? (in form 0))
+           (= :symbol ((in form 0) :jolt/type))
+           (= "with-meta" ((in form 0) :name)))
+    (unwrap-meta-name (in form 1))
+    form))
+
 (defn- eval-list
   [ctx bindings form]
   (def first-form (first form))
-  (def name (first-form :name))
+  # Safe name extraction: non-symbol heads (e.g. keywords) fall through to default
+  (def name (if (and (struct? first-form) (= :symbol (first-form :jolt/type)))
+              (first-form :name)
+              nil))
   (match name
     "quote" (in form 1)
     "syntax-quote" (syntax-quote* ctx bindings (in form 1))
@@ -134,13 +216,44 @@
            (if (and (not (nil? test-val)) (not (= false test-val)))
              (eval-form ctx bindings (in form 2))
              (if (> (length form) 3) (eval-form ctx bindings (in form 3)) nil)))
-    "def" (let [name-sym (in form 1)
+    "def" (let [raw-name (in form 1)
+                name-sym (unwrap-meta-name raw-name)
                 val (eval-form ctx bindings (in form 2))
                 ns-name (ctx-current-ns ctx)
                 ns (ctx-find-ns ctx ns-name)]
             (ns-intern ns (name-sym :name) val)
             (var-get (ns-intern ns (name-sym :name))))
-    "ns" (let [ns-name (sym-name-str (in form 1))
+    "defmacro" (let [name-sym (in form 1)
+                     rest-form (tuple/slice form 2)
+                     # optional docstring
+                     has-doc? (and (> (length rest-form) 0) (string? (first rest-form)))
+                     args-form (if has-doc? (in rest-form 1) (first rest-form))
+                     body (tuple/slice rest-form (if has-doc? 2 1))
+                     arg-info (parse-arg-names args-form)
+                     fixed-names (arg-info :fixed)
+                     rest-name (arg-info :rest)]
+                 (def macro-fn (fn [& macro-args]
+                   (var new-bindings @{})
+                   (table/setproto new-bindings bindings)
+                    (put new-bindings "&env" @{})  # implicit &env for macro bodies (table — nil-safe)
+                   (var i 0)
+                   (each a fixed-names
+                     (put new-bindings a (macro-args i))
+                     (++ i))
+                   (when rest-name
+                     (put new-bindings rest-name (tuple/slice macro-args i)))
+                   (var result nil)
+                   (each bf body
+                     (set result (eval-form ctx new-bindings bf)))
+                   result))
+                 (let [ns-name (ctx-current-ns ctx)
+                       ns (ctx-find-ns ctx ns-name)]
+                   (def v (ns-intern ns (name-sym :name) macro-fn))
+                   (put v :macro true)
+                   (var-get v)))
+    "ns" (let [raw-name (in form 1)
+               name-sym (unwrap-meta-name raw-name)
+               ns-name (sym-name-str name-sym)
                clauses (tuple/slice form 2)]
            (ctx-set-current-ns ctx ns-name)
            (ctx-find-ns ctx ns-name)
@@ -153,9 +266,9 @@
                    (let [specs (tuple/slice clause 1)
                          slen (length specs)]
                      (var j 0)
-                     (while (< j slen)
-                       (let [s (in specs j)]
-                         (eval-require ctx s))
+                      (while (< j slen)
+                        (let [s (in specs j)]
+                          (when s (eval-require ctx s)))
                        (++ j))
                      (set i (+ i 1)))
                    (do (set result clause) (++ i))))))
@@ -170,15 +283,19 @@
               nil)
     "fn*" (let [args-form (in form 1)
                 body (tuple/slice form 2)
-                arg-names (map |($ :name) args-form)]
+                arg-info (parse-arg-names args-form)
+                fixed-names (arg-info :fixed)
+                rest-name (arg-info :rest)]
             (var self nil)
             (set self (fn [& fn-args]
               (var fn-bindings @{})
               (table/setproto fn-bindings bindings)
               (var i 0)
-              (each arg-name arg-names
+              (each arg-name fixed-names
                 (put fn-bindings arg-name (fn-args i))
                 (++ i))
+              (when rest-name
+                (put fn-bindings rest-name (tuple/slice fn-args i)))
               (put fn-bindings :jolt/loop-fn self)
               (var result nil)
               (each body-form body
@@ -228,19 +345,184 @@
                 (error "recur used outside of loop* or fn*")
                 (let [args (map |(eval-form ctx bindings $) (tuple/slice form 1))]
                   (apply loop-fn args))))
+    "throw" (let [val (eval-form ctx bindings (in form 1))]
+              (error {:jolt/type :jolt/exception :value val}))
+    "try" (let [body-form (in form 1)
+                clauses (tuple/slice form 2)
+                n (length clauses)]
+            (var catch-sym nil)
+            (var catch-body nil)
+            (var finally-body nil)
+            (var i 0)
+            (while (< i n)
+              (let [clause (in clauses i)]
+                (if (and (array? clause) (> (length clause) 0))
+                  (let [head (first clause)]
+                    (if (and (struct? head) (= :symbol (head :jolt/type)))
+                      (match (head :name)
+                        "catch" (do
+                          (set catch-sym (in clause 2))
+                          (set catch-body (tuple/slice clause 3)))
+                        "finally" (set finally-body (tuple/slice clause 1)))))))
+              (++ i))
+            (defn run-finally [f]
+              (when f
+                (each fb f (eval-form ctx bindings fb))))
+            (if catch-sym
+              (try
+                (eval-form ctx bindings body-form)
+                ([err]
+                 (var new-bindings @{})
+                 (table/setproto new-bindings bindings)
+                 (put new-bindings (catch-sym :name) err)
+                 (var result nil)
+                 (each cb catch-body
+                   (set result (eval-form ctx new-bindings cb)))
+                 (run-finally finally-body)
+                 result))
+              (if finally-body
+                (try
+                  (eval-form ctx bindings body-form)
+                  ([err]
+                   (run-finally finally-body)
+                   (error err)))
+                (eval-form ctx bindings body-form))))
+    "set!" (let [target-sym (in form 1)
+                 val (eval-form ctx bindings (in form 2))
+                 v (resolve-var ctx bindings target-sym)]
+             (if v
+               (do (var-set v val) val)
+               # Auto-create var if it doesn't exist (e.g., *warn-on-reflection*)
+               (let [ns-name (ctx-current-ns ctx)
+                     ns (ctx-find-ns ctx ns-name)]
+                 (def new-v (ns-intern ns (target-sym :name) val))
+                 val)))
+    "var" (let [target-sym (in form 1)
+                v (resolve-var ctx bindings target-sym)]
+            (if v v (error (string "Unable to resolve var: " (sym-name-str target-sym) " in var"))))
+    "locking" (eval-form ctx bindings (in form 2))
+    "instance?" (let [type-sym (in form 1)
+                      val (eval-form ctx bindings (in form 2))]
+                  (match (type-sym :name)
+                    "Number" (number? val)
+                    "String" (string? val)
+                    "Boolean" (or (= true val) (= false val))
+                    "Keyword" (keyword? val)
+                    "Object" true
+                    false))
+    "defmulti" (let [name-sym (in form 1)
+                     dispatch-fn (eval-form ctx bindings (in form 2))
+                     ns (ctx-find-ns ctx (ctx-current-ns ctx))
+                     methods @{}
+                     mm-fn (fn [& args]
+                             (let [dv (apply dispatch-fn args)
+                                   method (get methods dv)]
+                               (if method
+                                 (apply method args)
+                                 (error (string "No method in multimethod "
+                                                (name-sym :name) " for dispatch value: "
+                                                dv)))))]
+                 (def v (ns-intern ns (name-sym :name) mm-fn))
+                 (put v :jolt/methods methods)
+                 (var-get v))
+    "defmethod" (let [mm-sym (in form 1)
+                      dispatch-val (eval-form ctx bindings (in form 2))
+                      arg-vec (in form 3)
+                      body (tuple/slice form 4)
+                      # Extract names, handling metadata-wrapped symbols
+                      extract-name (fn [arg]
+                                     (let [arg (unwrap-meta-name arg)]
+                                       (arg :name)))
+                      arg-names (tuple/slice (map extract-name arg-vec))
+                      mm-var (resolve-var ctx bindings mm-sym)
+                      # Auto-create multimethod if it doesn't exist
+                      mm-var (if mm-var mm-var
+                               (let [ns (ctx-find-ns ctx (ctx-current-ns ctx))
+                                     dummy-fn (fn [& args] nil)]
+                                 (def v (ns-intern ns (mm-sym :name) dummy-fn))
+                                 (put v :jolt/methods @{})
+                                 v))
+                      methods (get mm-var :jolt/methods)
+                      impl (fn [& args]
+                             (var new-bindings @{})
+                             (table/setproto new-bindings bindings)
+                             (var i 0)
+                             (each a arg-names
+                               (put new-bindings a (args i))
+                               (++ i))
+                             (var result nil)
+                             (each bf body
+                               (set result (eval-form ctx new-bindings bf)))
+                             result)]
+                  (put methods dispatch-val impl)
+                  mm-var)
+    "deftype" (let [raw-name (in form 1)
+                    type-name (unwrap-meta-name raw-name)
+                    fields-vec (in form 2)
+                    field-names (map 
+                      (fn [f]
+                        # Handle ^:meta and ^Type annotations — extract the actual name
+                        (let [f (unwrap-meta-name f)]
+                          (if (and (struct? f) (= :symbol (f :jolt/type)))
+                            (keyword (f :name))
+                            (error (string "Unsupported deftype field: " (string f))))))
+                      fields-vec)
+                    ns-name (ctx-current-ns ctx)
+                    type-tag (string ns-name "." (type-name :name))]
+                (defn ctor [& args]
+                  (var inst @{:jolt/deftype type-tag})
+                  (var i 0)
+                  (each fn field-names
+                    (put inst fn (args i))
+                    (++ i))
+                  inst)
+                (let [ns (ctx-find-ns ctx ns-name)
+                      ctor-name (type-name :name)
+                      arrow-name (string "->" ctor-name)]
+                  (ns-intern ns ctor-name ctor)
+                  (ns-intern ns arrow-name ctor)
+                  (var-get (ns-intern ns ctor-name))))
+    "new" (let [type-sym (in form 1)
+                args (map |(eval-form ctx bindings $) (tuple/slice form 2))
+                ctor (eval-form ctx bindings type-sym)]
+            (apply ctor args))
+    "." (let [target (eval-form ctx bindings (in form 1))
+              member-sym (in form 2)
+              member-name (member-sym :name)]
+          (if (> (length form) 3)
+            # method call: (. obj method args...)
+            (let [args (map |(eval-form ctx bindings $) (tuple/slice form 3))]
+              (if (target :jolt/deftype)
+                (let [method-key (keyword member-name)]
+                  (apply (get target method-key) target ;args))
+                (error (string "Cannot call method " member-name " on non-deftype"))))
+            # field access: (. obj field)
+            (get target (keyword member-name))))
     # default: function application — check for macros
     (if (and (struct? first-form) (= :symbol (first-form :jolt/type)))
-      (let [v (resolve-var ctx bindings first-form)]
-        (if (and v (var-macro? v))
-          (let [macro-fn (var-get v)
-                args (tuple/slice form 1)]
-            (eval-form ctx bindings (apply macro-fn args)))
-          (let [f (eval-form ctx bindings first-form)
+      (let [sym-name (first-form :name)]
+        # Handle ClassName. constructor syntax
+        (if (and (> (length sym-name) 0) (= (sym-name (- (length sym-name) 1)) 46))
+          (let [type-name (string/slice sym-name 0 (- (length sym-name) 1))
+                type-sym {:jolt/type :symbol :ns (first-form :ns) :name type-name}
+                ctor (eval-form ctx bindings type-sym)
                 args (map |(eval-form ctx bindings $) (tuple/slice form 1))]
-            (apply f args))))
+            (apply ctor args))
+          (let [v (resolve-var ctx bindings first-form)]
+            (if (and v (var-macro? v))
+              (let [macro-fn (var-get v)
+                    args (tuple/slice form 1)]
+                (eval-form ctx bindings (apply macro-fn args)))
+              (let [f (eval-form ctx bindings first-form)
+                    args (map |(eval-form ctx bindings $) (tuple/slice form 1))]
+                (apply f args))))))
       (let [f (eval-form ctx bindings first-form)
             args (map |(eval-form ctx bindings $) (tuple/slice form 1))]
-        (apply f args)))))
+        (if (function? f)
+          (apply f args)
+          (if (keyword? f)
+            (get (first args) f)
+            (error (string "Cannot call " (type f) " as a function"))))))))
 
 (set eval-form (fn [ctx bindings form]
   (cond

@@ -7,4 +7,4 @@
 
 (declare-executable
   :name "jolt"
-  :entry "jolt/main.janet")
+  :entry "src/jolt/main.janet")

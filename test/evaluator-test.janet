@@ -1,6 +1,7 @@
 (use ../src/jolt/evaluator)
 (use ../src/jolt/types)
 (use ../src/jolt/reader)
+(use ../src/jolt/api)
 
 # Helper: create a Jolt symbol
 (defn sym [name]
@@ -68,6 +69,83 @@
 (print "9: recur in fn*...")
 (let [countdown (eval-str "(fn* [n] (if (< n 1) 0 (recur (dec n))))")]
   (assert (= 0 (countdown 5)) "recur in fn"))
+(print "  passed")
+
+(print "10: throw/try/catch/finally...")
+# throw + catch
+(let [result (eval-str "(try (throw \"boom\") (catch Exception e \"caught\"))")]
+  (assert (= "caught" result) "catch catches throw"))
+
+# try with finally — body returns, finally runs
+(let [result (eval-str "(try 1 (finally 2))")]
+  (assert (= 1 result) "try returns body even with finally"))
+
+# try/catch/finally — catch returns, finally runs  
+(let [result (eval-str "(try (throw \"err\") (catch Exception e \"handled\") (finally :cleanup))")]
+  (assert (= "handled" result) "catch + finally returns catch value"))
+(print "  passed")
+
+(print "11: set!...")
+# set! on a var
+(assert (= 99 (eval-str "(do (def x 1) (set! x 99) x)")) "set! on var")
+# set! re-evaluates
+(assert (= 3 (eval-str "(do (def a 1) (def b 2) (set! a (+ a b)) a)")) "set! with expression")
+(print "  passed")
+
+(print "12: var...")
+# (var x) returns the var itself, not its value
+(let [v (eval-str "(do (def x 42) (var x))")]
+  (assert (var? v) "(var x) returns a var")
+  (assert (= 42 (var-get v)) "var holds value"))
+(print "  passed")
+
+(print "13: locking...")
+# locking is a no-op in single-threaded Janet — just executes body
+(assert (= 42 (eval-str "(locking :lock 42)")) "locking returns body result")
+(print "  passed")
+
+(print "14: instance?...")
+# instance? checks type
+(assert (= true (eval-str "(instance? Number 42)")) "instance? Number matches number")
+(assert (= false (eval-str "(instance? Number \"hello\")")) "instance? Number doesn't match string")
+(print "  passed")
+
+(print "15: defmulti/defmethod...")
+(let [ctx (make-ctx)]
+  (eval-form ctx @{} (parse-string "(defmulti my-dispatch (fn* [x] (x :type)))"))
+  (eval-form ctx @{} (parse-string "(defmethod my-dispatch :foo [_] :got-foo)"))
+  (eval-form ctx @{} (parse-string "(defmethod my-dispatch :bar [_] :got-bar)"))
+  (assert (= :got-foo (eval-form ctx @{} (parse-string "(my-dispatch {:type :foo})"))) "defmethod :foo dispatches")
+  (assert (= :got-bar (eval-form ctx @{} (parse-string "(my-dispatch {:type :bar})"))) "defmethod :bar dispatches"))
+(print "  passed")
+
+(print "16: deftype...")
+(let [ctx (make-ctx)
+      _ (eval-form ctx @{} (parse-string "(deftype Point [x y])"))
+      _ (eval-form ctx @{} (parse-string "(def p (Point. 10 20))"))
+      p-val (eval-form ctx @{} (parse-string "p"))
+      x-val (eval-form ctx @{} (parse-string "(p :x)"))
+      y-val (eval-form ctx @{} (parse-string "(p :y)"))
+      result [x-val y-val]]
+  (printf "  p-val: %q" p-val)
+  (printf "  x-val: %q, y-val: %q" x-val y-val)
+  (printf "  result: %q" result)
+  (assert (deep= [10 20] result) "deftype creates tagged instances with fields"))
+(print "  passed")
+
+(print "17: defmacro...")
+# define a macro using defmacro special form
+# init loads clojure.core so `list` is available
+(let [ctx (init)
+      _ (eval-form ctx @{} (parse-string "(defmacro my-when [test body] (list 'if test body nil))"))
+      result (eval-form ctx @{} (parse-string "(my-when true 2)"))]
+  (assert (= 2 result) "defmacro defines callable macro"))
+# verify the var is marked :macro
+(let [ctx (make-ctx)
+      _ (eval-form ctx @{} (parse-string "(defmacro m [x] (list 'quote x))"))
+      v (resolve-var ctx @{} (parse-string "m"))]
+  (assert v "macro var exists")
+  (assert (v :macro) "macro var has :macro true"))
 (print "  passed")
 
 (print "\nAll evaluator tests passed!")

@@ -19,16 +19,17 @@
       (printf "#'%s/%s" (ctx-current-ns ctx) ((var-name v) :name))
       (print v))))
 
-(print "Jolt — Clojure on Janet")
-(print "Type (exit) to quit.\n")
+(defn main [&]
+  (print "Jolt — Clojure on Janet")
+  (print "Type (exit) to quit.\n")
 
-(var running true)
-(while running
-  (let [line (read-line (string (ctx-current-ns ctx) "=> "))]
-    (if (nil? line) (set running false)
-      (if (= line "(exit)") (set running false)
-        (if (not (= "" line))
-          (try
-            (print-value (eval-string ctx line))
-            ([err]
-             (eprint "Error: " err))))))))
+  (var running true)
+  (while running
+    (let [line (read-line (string (ctx-current-ns ctx) "=> "))]
+      (if (nil? line) (set running false)
+        (if (= line "(exit)") (set running false)
+          (if (not (= "" line))
+            (try
+              (print-value (eval-string ctx line))
+              ([err]
+               (eprint "Error: " err)))))))))
