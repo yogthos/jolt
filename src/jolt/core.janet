@@ -352,6 +352,15 @@
     (-- i))
   (if (tuple? coll) (tuple/slice (tuple ;result)) result))
 
+(defn core-nth
+  "Return the nth element of a sequential collection."
+  [coll idx &opt default]
+  (if (and (>= idx 0) (< idx (length coll)))
+    (in coll idx)
+    (if (nil? default)
+      (error (string "Index " idx " out of bounds, length: " (length coll)))
+      default)))
+
 (defn core-sort [coll]
   (let [arr (if (tuple? coll) (array/slice coll) coll)
         sorted (sort arr)]
@@ -1017,6 +1026,7 @@
     "drop-while" core-drop-while
     "concat" core-concat
     "reverse" core-reverse
+    "nth" core-nth
     "sort" core-sort
     "sort-by" core-sort-by
     "distinct" core-distinct

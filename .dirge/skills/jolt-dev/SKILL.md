@@ -59,6 +59,28 @@ The match arm receives `ctx`, `bindings`, and `form` (the full list). Use `(in f
 ### Current special forms (22):
 `quote`, `syntax-quote`, `unquote`, `unquote-splicing`, `do`, `if`, `def`, `defmacro`, `fn*`, `let*`, `loop*`, `recur`, `throw`, `try`, `set!`, `var`, `locking`, `instance?`, `defmulti`, `defmethod`, `deftype`, `new`, `.`
 
+## Compiler Development
+
+### Architecture
+`src/jolt/compiler.janet` (721 lines). Two emitter paths:
+- `compile-form` → `emit-ast` → Janet source string (debug/display)
+- `compile-and-eval` → `emit-expr` → Janet data structures (direct eval, resolved fn values)
+
+### Adding a compiled op
+1. **analyze-form**: add `match head-name` arm returning `{:op :your-op ...}`
+2. **emit-ast**: add str function + `:your-op` case in `set emit-ast` dispatch
+3. **emit-expr**: add expr function + `:your-op` case in `set emit-expr` dispatch
+4. Add tests in `test/compiler-test.janet`
+
+### Emit-expr critical rules
+- **Vectors**: wrap with `['tuple ...]` — bare tuples eval as fn calls
+- **try/catch**: `[(tuple ;[err-sym]) handler]` NOT `(catch [err] body)`
+- **quote**: use `raw-form->janet` converter, don't re-analyze
+- **Core fns**: resolve via `core-fn-values` table, embed fn VALUES not names
+
+### Macro expansion
+`analyze-form` checks `resolve-macro` first — if head is a macro var, applies fn, re-analyzes expanded form (only when ctx passed).
+
 ## Persistent Data Structures
 
 Located in:

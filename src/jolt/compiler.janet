@@ -70,6 +70,9 @@
     "take-while" "core-take-while"
     "drop-while" "core-drop-while"
     "nth" "core-nth"
+    "list" "core-list"
+    "name" "core-name"
+    "subs" "core-subs"
     "reverse" "core-reverse"
     "into" "core-into"
     "merge" "core-merge"
@@ -216,7 +219,10 @@
     (put t "core-apply" apply)
     (put t "core-some" core-some?)
     (put t "core-pr-str" core-str)
-    (put t "core-nth" core-get)
+    (put t "core-nth" core-nth)
+    (put t "core-list" core-list)
+    (put t "core-name" core-name)
+    (put t "core-subs" core-subs)
     t))
 
 # Loop counter for generating unique loop function names

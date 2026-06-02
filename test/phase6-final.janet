@@ -6,6 +6,7 @@
 (let [ctx (init {:compile? true})]
 
   (print "  collections...")
+  (assert (= :a (ct-eval ctx "(nth [:a :b :c :d] 0)")) "nth")
   (assert (= true (ct-eval ctx "(vector? [1 2])")) "vector?")
   (assert (= true (ct-eval ctx "(map? {:a 1})")) "map?")
   (assert (= true (ct-eval ctx "(fn? inc)")) "fn?")
