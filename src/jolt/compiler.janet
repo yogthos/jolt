@@ -670,8 +670,20 @@
 
 (defn- emit-map-expr [form] form)
 
+(defn- raw-form->janet
+  "Convert a Jolt reader form to a Janet data structure for quoting."
+  [form]
+  (cond
+    (and (struct? form) (= :symbol (form :jolt/type)))
+    (symbol (form :name))
+    (array? form)
+    (tuple/slice (tuple ;(map raw-form->janet form)))
+    (tuple? form)
+    (tuple/slice (tuple ;(map raw-form->janet form)))
+    form))
+
 (defn- emit-quote-expr [expr]
-  ['quote (analyze-form expr @{})])
+  ['quote (raw-form->janet expr)])
 
 (set emit-expr
   (fn [ast]
