@@ -1,47 +1,31 @@
-## Persistent Data Structures
+# jolt-dev
 
-Load `.clj` source files into a context via the reader/evaluator:
+Jolt development workflow — build, test, special form patterns, Janet gotchas
 
-```janet
-(use ./src/jolt/api) (use ./src/jolt/reader) (use ./src/jolt/evaluator)
-(def ctx (init))
-(def s (slurp "src/jolt/clojure/lang/persistent_vector.clj"))
-(var cur s)
-(while (> (length (string/trim cur)) 0)
-  (def [form rest] (parse-next cur))
-  (set cur rest)
-  (when (not (nil? form))
-    (try (eval-form ctx @{} form) ([err] nil))))
+# Jolt Development
+
+## Build & Test
+
+```bash
+cd /Users/yogthos/src/jolt
+jpm build           # produces build/jolt
+jpm test            # runs all tests
+janet test/foo.janet  # run a single test file from project root
 ```
 
-**`:mutable?` flag:** `(init)` loads persistent structures by default. Pass `{:mutable? true}` to use Janet native mutable types instead: `(def ctx (init {:mutable? true}))`.
+## Special Form Checklist
 
-### PersistentVector (17 forms, fully working)
-`src/jolt/clojure/lang/persistent_vector.clj` — 32-way branching trie with tail optimization.
+To add a new special form to the evaluator:
 
-### PersistentHashMap (18 forms, bitmap WIP)
-`src/jolt/clojure/lang/persistent_hash_map.clj` — HAMT-based persistent hash map. 328-closing-parens balanced. `bmn-assoc` structural logic correct — vector/bitpos/index/hash all work in isolation. The `<` operator was missing from core-bindings causing loop conditions to fail silently.
+1. Add the name to `special-symbol?` in `src/jolt/evaluator.janet`
+2. Add a match arm in `eval-list` (the match on `name`)
+3. Add tests in `test/evaluator-test.janet`
 
-## Gotchas (Critical)
+The match arm receives `ctx`, `bindings`, and `form` (the full list). Use `(in form 1)` for first arg, etc.
 
-### Missing comparison operators
-`<`, `>`, `<=`, `>=` are NOT in `core-bindings` by default. Add them before any Clojure code with loop conditions:
-```
-"<" core-<   ">" core->   "<=" core-<=   ">=" core->=
-```
-Symptom: `(loop [i 0] (if (< i 3) (recur (inc i)) i))` returns nil because `<` resolves to nil → apply fails silently.
+**Non-symbol heads** (keywords, etc.): `eval-list` first checks `(and (struct? first-form) (= :symbol (...)))` before extracting `name`. If not a symbol, falls through to default function application.
 
-### `struct?` vs tables
-Janet `struct?` returns **false** for deftype instances (tables). Use `(get val :jolt/deftype)` for `instance?` checks, not `(and (struct? val) ...)`.
+### Current special forms (22):
+`quote`, `syntax-quote`, `unquote`, `unquote-splicing`, `do`, `if`, `def`, `defmacro`, `fn*`, `let*`, `loop*`, `recur`, `throw`, `try`, `set!`, `var`, `locking`, `instance?`, `defmulti`, `defmethod`, `deftype`, `new`, `.`
 
-### `defrecord` macro
-Builds key-value pairs at expansion time: `(array-map :a a, :b b)`. Does NOT use `interleave` at eval time.
-
-### `and`/`or` macros  
-`(and x y)` → `(let* [and__x x] (if and__x (and y) and__x))`. `(or x y)` → `(let* [or__x x] (if or__x or__x (or y)))`. Registered as macros.
-
-### `loop` macro
-Explicit macro: `(defn core-loop [bindings & body] (list* (sym "loop*") bindings ...))` + `"loop" core-loop` in core-bindings + `"loop" true` in core-macro-names.
-
-### `.` special form field access
-For deftype instances: `(.-cnt obj)` → `(get obj :cnt)`. The `-` prefix is stripped.
+## Pers… (truncated, 34945 bytes total)

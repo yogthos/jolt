@@ -1,5 +1,5 @@
-`binding-get` uses `return` from inside while loop within fn body — this signals an error in Janet (user0 tuple). Must use `(var result :jolt/not-found)` + `(when (in t name) (set result ...) (set t nil) (break))` pattern. Cannot use `return` for early exit from loops in Janet.
-§
 Janet `struct?` returns false for tables. Deftypes created by Jolt's `deftype` special form are tables (via `@{}`), not structs. So `(struct? val)` fails for deftype instances but `(get val :jolt/deftype)` works. This broke `instance?` check for persistent vector — fixed by changing from `(and (struct? val) ...)` to `(get val :jolt/deftype)`. The `.` special form for deftype field access strips `-` prefix: `(.-cnt obj)` → `(get obj :cnt)`.
 §
 Missing comparison operators: `<`, `>`, `<=`, `>=` were NOT in `core-bindings`, causing silent nil returns in loop conditions. Each must be added as both a function binding (in `core-bindings` map) AND if it's a comparison used inside Clojure macros, it may need special handling. Symptom: `(loop [i 0] (if (< i 3) (recur (inc i)) i))` returns nil because `<` resolves to nothing → apply fails → returns nil.
+§
+Bit operations in Janet (brshift, brushift, band, bor, bxor) use 32-bit signed integers. Values from (hash key) can exceed 32-bit range (>2^31). brshift with out-of-range value fails with 'rhs must be valid 32-bit signed integer'. Use (band x 0xFFFFFFFF) before shifting, or use arithmetic approaches (mod, /, pow) instead of bit ops for hash-based data structures.
