@@ -86,12 +86,16 @@
       (while (and ok (< i (dec (length args))))
         (let [a (args i) b (args (+ i 1))]
           (set ok
-            (if (phm? a)
-              (deep= (phm-to-struct a) (if (phm? b) (phm-to-struct b) b))
-              (if (phm? b) (deep= a (phm-to-struct b))
-                (if (set? a)
-                  (deep= (phs-to-struct a) (if (set? b) (phs-to-struct b) b))
-                  (if (set? b) (deep= a (phs-to-struct b)) (deep= a b)))))))
+            (if (and (tuple? a) (array? b))
+              (deep= a (tuple/slice (tuple ;b)))
+              (if (and (array? a) (tuple? b))
+                (deep= (tuple/slice (tuple ;a)) b)
+                (if (phm? a)
+                  (deep= (phm-to-struct a) (if (phm? b) (phm-to-struct b) b))
+                  (if (phm? b) (deep= a (phm-to-struct b))
+                    (if (set? a)
+                      (deep= (phs-to-struct a) (if (set? b) (phs-to-struct b) b))
+                      (if (set? b) (deep= a (phs-to-struct b)) (deep= a b))))))))
         (++ i))
       ok)))
 
@@ -623,7 +627,8 @@
   (var first? true)
   (each x xs
     (if first? (set first? false) (buffer/push buf " "))
-    (if (nil? x) (buffer/push buf "nil")
+    (cond
+      (nil? x) (buffer/push buf "nil")
       (= true x) (buffer/push buf "true")
       (= false x) (buffer/push buf "false")
       (keyword? x) (do (buffer/push buf ":") (buffer/push buf (string x)))
@@ -1222,6 +1227,7 @@
     "filter" core-filter
     "remove" core-remove
     "reduce" core-reduce
+    "every-pred" core-every-pred
     "take" core-take
     "drop" core-drop
     "take-while" core-take-while
