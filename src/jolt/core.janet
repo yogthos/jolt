@@ -857,10 +857,38 @@
       @[{:jolt/type :symbol :ns nil :name "def"} fn-name fn-form])))
 
 # Hierarchy stubs for sci bootstrap
-(def core-derive (fn [& args] nil))
-(def core-isa? (fn [& args] false))
-(def core-ancestors (fn [& args] @[]))
-(def core-descendants (fn [& args] @[]))
+(def core-make-hierarchy make-hierarchy)
+(defn core-derive
+  [& args]
+  (case (length args)
+    2 (let [[tag parent] args] (derive* (make-hierarchy) tag parent))
+    3 (let [[h tag parent] args] (derive* h tag parent))))
+(defn core-isa?
+  [& args]
+  (case (length args)
+    1 false
+    2 false
+    3 (let [[h child parent] args] (isa? h child parent))))
+(defn core-ancestors
+  [& args]
+  (case (length args)
+    1 @[]
+    2 (let [[h tag] args] (ancestors h tag))))
+(defn core-descendants
+  [& args]
+  (case (length args)
+    1 @[]
+    2 (let [[h tag] args] (descendants h tag))))
+(def core-underive underive)
+(def core-remove-method (fn [mm-var dispatch-val]
+  (let [methods (get mm-var :jolt/methods)]
+    (put methods dispatch-val nil) mm-var)))
+(def core-remove-all-methods (fn [mm-var]
+  (put mm-var :jolt/methods @{}) mm-var))
+(defn core-prefer-method [mm-var dispatch-val-a dispatch-val-b]
+  (let [prefs (or (get mm-var :jolt/prefers)
+                 (do (put mm-var :jolt/prefers @{}) (mm-var :jolt/prefers)))]
+    (put prefs dispatch-val-a dispatch-val-b) mm-var))
 
 # Java interop stubs
 (def core-Object (fn [] (struct ;[:jolt/type :jolt/java-object])))
@@ -1145,6 +1173,11 @@
     "isa?" core-isa?
     "ancestors" core-ancestors
     "descendants" core-descendants
+    "make-hierarchy" core-make-hierarchy
+    "underive" core-underive
+    "remove-method" core-remove-method
+    "remove-all-methods" core-remove-all-methods
+    "prefer-method" core-prefer-method
     "Object" core-Object
     "declare" core-declare
     "fn" core-fn

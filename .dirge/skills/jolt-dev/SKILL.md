@@ -2,6 +2,8 @@
 
 Jolt development workflow — build, test, special form patterns, Janet gotchas
 
+# Jolt Development
+
 ## Build & Test
 
 ```bash
@@ -33,13 +35,15 @@ When you need to mutate a local with `set`, use `(var x nil)` not `(def x nil)`.
 ## Compiler (see also `jolt-compiler` skill)
 
 `src/jolt/compiler.janet` — Clojure→Janet source compiler with macro expansion.
+`test/compiler-test.janet` — 11 test groups covering all ops.
 
 Key design decision: **compile-and-eval emits Janet DATA STRUCTURES, not source strings**, because Janet's `eval` doesn't see `use`-imported symbols. `core-fn-values` table resolves Janet names to actual function values at compile time.
 
 ### Adding a compiled op
-1. Add match arm in `analyze-form` — maps Clojure form → AST node
-2. Add `emit-*-str` for source-to-source path → arm in `emit-ast` dispatch
-3. Add `emit-*-expr` for data-structure path → arm in `emit-expr` dispatch
+
+1. **analyze-form**: add `match head-name` arm returning `{:op :your-op ...}`
+2. **emit-ast**: add str function + `:your-op` case in `set emit-ast` dispatch
+3. **emit-expr**: add expr function + `:your-op` case in `set emit-expr` dispatch
 4. Add tests in `test/compiler-test.janet`
 
 ### Emit-expr critical rules
@@ -51,41 +55,40 @@ Key design decision: **compile-and-eval emits Janet DATA STRUCTURES, not source 
 ### Macro expansion
 `analyze-form` checks `resolve-macro` first — if head is a macro var, applies fn, re-analyzes expanded form (only when ctx passed).
 
-### Loop/recur compilation
-`(loop* [x 0] body)` → `(do (var name nil) (set name (fn [x] body)) (name 0))`
-Recur rewrites to `(loop-name arg...)` via `:jolt/current-loop` binding.
+## Persistent Data Structures
 
-## Special Form Checklist
+Located in:
+- `src/jolt/clojure/lang/persistent_vector.clj`
+- `src/jolt/clojure/lang/persistent_hash_map.clj`
 
-To add a new special form to the evaluator AND compiler:
-1. Add the name to `special-symbol?` in `src/jolt/evaluator.janet`
-2. Add a match arm in `eval-list` (the match on `name`)
-3. Add tests in `test/evaluator-test.janet`
+Loaded at init time by `load-persistent-structures` in `api.janet`. Use `{:mutable? true}` to skip and use Janet-native types.
 
-The match arm receives `ctx`, `bindings`, and `form`. Use `(in form 1)` for first arg.
+### Implementation detail
+Simple array-based implementation (node-assoc/node-find/find-key-index), NOT HAMT bit-trie.
+HAMT failed because Janet uses 64-bit doubles and bit operations require 32-bit signed ints.
 
-### Current special forms (29):
-`quote`, `syntax-quote`, `unquote`, `unquote-splicing`, `do`, `if`, `def`, `defmacro`, `fn*`, `let*`, `loop*`, `recur`, `throw`, `try`, `set!`, `var`, `locking`, `instance?`, `defmulti`, `defmethod`, `deftype`, `new`, `.`, `var-get`, `var-set`, `var?`, `alter-var-root`, `find-var`, `alter-meta!`, `reset-meta!`, `intern`
+## Janet Gotchas
 
-## PersistentHashMap (phm.janet)
+- Bit operations (brshift, brushift, band) use 32-bit signed integers. Hash values can exceed 32-bit range. Use `(band x 0xFFFFFFFF)` before shifting.
+- `deftype` creates tables, not structs. `struct?` returns false.
+- `(get child :key)` DOES follow table prototype chain — resolved and confirmed working.
+- Janet LSP produces many false positives on `.janet` files — safe to ignore.
+- Janet `and` returns the last truthy value, NOT boolean `true`. Wrap with `(if (and ...) true false)` for predicates.
+- `set!` field mutation: `(set! (.-x obj) val)` reader creates `(. -x obj)` array — must check for `.` head in set! handler BEFORE the var mutation branch.
 
-`src/jolt/phm.janet` — separate module imported via `(use ./phm)` into `core.janet`.
-PHM is a table with `:jolt/deftype` tag. Has `:cnt`, `:buckets` (array of 8 flat `[k v k v ...]` arrays), `:_meta`.
-16 core functions updated with `(phm? x)` branches. `phm-to-struct` converts to Janet struct for compatibility.
+## deftype/defrecord Patterns
 
-### Janet `break` limitation
-Janet `break` cannot be used inside `let` blocks — use `(var found nil)` + `(while ... (if condition (do (set found val) (break))))` pattern.
+**deftype** produces a table with `:jolt/deftype` key (format: `"ns.TypeName"`):
+- Constructor: `(TypeName. args...)` — evaluator creates `@{:jolt/deftype "ns.TypeName" :key1 val1 ...}`
+- Field access: `(. obj field)` — evaluator does `(get obj (keyword field-name))`
+- Mutation: `(set! (.-field obj) val)` — reader creates `(. -field obj)` array form
 
-### core-binding: use array-map, not hash-map
-`core-binding` macro must emit `(array-map ...)` for the binding frame — PHM's get is incompatible with `push-thread-bindings` var-get lookup.
+**Defrecord** macro emits `(do (deftype Name [fields]) (def ->Name ...) (def map->Name ...))`.
 
-### core-intern gotcha
-Janet does not support Clojure-style multi-arity destructuring `([a b] ...)` in `defn`. Use flat args or wrapper functions.
+**core-map?** for records: `(or (phm? x) (struct? x) (if (and (table? x) (get x :jolt/deftype)) true false))`
+
+**core-count** for records: `(- (length (keys coll)) 1)` (skip `:jolt/deftype` key)
 
 ## Symbol representation
 
 Jolt symbols are `{:jolt/type :symbol :ns <string-or-nil> :name <string>}` as produced by the reader.
-
-## Janet LSP
-
-Janet LSP produces many false positives on `.janet` files — safe to ignore.

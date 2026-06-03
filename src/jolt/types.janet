@@ -125,6 +125,57 @@
   (put v :meta meta)
   meta)
 
+(defn make-hierarchy
+  "Create a new empty hierarchy for multimethod dispatch."
+  []
+  {:parents @{} :descendants @{} :ancestors @{}})
+
+(defn derive*
+  "Add a parent relationship to a hierarchy."
+  [h tag parent]
+  (put (h :parents) tag parent)
+  (let [d (get (h :descendants) parent)]
+    (if d (array/push d tag) (put (h :descendants) parent @[tag])))
+  (let [a (get (h :ancestors) tag)]
+    (if a (array/push a parent) (put (h :ancestors) tag @[parent])))
+  h)
+
+(defn- ancestors*
+  "Internal: get all ancestors of a tag via iterative graph walk."
+  [h tag visited]
+  (var stack @[tag])
+  (while (> (length stack) 0)
+    (let [t (array/pop stack)]
+      (when (not (get visited t))
+        (put visited t true)
+        (let [p (get (h :parents) t)]
+          (when (and p (not= p t))
+            (array/push stack p))))))
+  visited)
+
+(defn ancestors
+  "Return a set of ancestors for a tag in the given hierarchy."
+  [h tag]
+  (let [a (get (h :ancestors) tag)] (if a a @[])))
+
+(defn descendants
+  "Return the descendants of a tag in the given hierarchy."
+  [h tag]
+  (let [d (get (h :descendants) tag)] (if d d @[])))
+
+(defn isa?
+  "Check if child is derived from parent in the given hierarchy."
+  [h child parent]
+  (if (= child parent) true
+    (let [p (get (h :parents) child)]
+      (if p (isa? h p parent) false))))
+
+(defn underive
+  "Remove a parent relationship from a hierarchy."
+  [h tag parent]
+  (put (h :parents) tag nil)
+  h)
+
 (defn with-meta
   "Return a new var with updated metadata. The original var is unchanged."
   [v meta]
