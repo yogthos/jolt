@@ -95,9 +95,9 @@
                   (if (phm? b) (deep= a (phm-to-struct b))
                     (if (set? a)
                       (deep= (phs-to-struct a) (if (set? b) (phs-to-struct b) b))
-                      (if (set? b) (deep= a (phs-to-struct b)) (deep= a b)))))))
+                      (if (set? b) (deep= a (phs-to-struct b)) (deep= a b)))))))))
         (++ i))
-      ok)))))
+      ok)))
 
 (defn core-not= [& args] (not (apply core-= args)))
 
@@ -515,9 +515,11 @@
 
 (defn core-every-pred [& preds]
   (fn [x]
-    (var ok true) (var i 0)
+    (var ok true)
+    (var i 0)
     (while (and ok (< i (length preds)))
-      (if (not ((preds i) x)) (set ok false))
+      (if (not ((preds i) x))
+        (set ok false))
       (++ i))
     ok))
 
