@@ -1276,6 +1276,7 @@
     "println" core-println
     "pr" core-pr
     "prn" core-prn
+    "pr-str" core-pr-str
     # Array primitives (for persistent data structures)
     "alength" core-alength
     "aget" core-aget
