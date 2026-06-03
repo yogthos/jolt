@@ -87,7 +87,10 @@
           (set ok
             (if (phm? a)
               (deep= (phm-to-struct a) (if (phm? b) (phm-to-struct b) b))
-              (if (phm? b) (deep= a (phm-to-struct b)) (deep= a b)))))
+              (if (phm? b) (deep= a (phm-to-struct b))
+                (if (set? a)
+                  (deep= (phs-to-struct a) (if (set? b) (phs-to-struct b) b))
+                  (if (set? b) (deep= a (phs-to-struct b)) (deep= a b)))))))
         (++ i))
       ok)))
 

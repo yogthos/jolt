@@ -194,3 +194,6 @@
 (defn phs-get [s x &opt default]
   (default default nil)
   (if (phm-contains? (s :phm) x) x default))
+
+(defn phs-to-struct [s]
+  (phm-to-struct (s :phm)))

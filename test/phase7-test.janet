@@ -19,7 +19,7 @@
   (assert (= false (ct-eval ctx "(set? [1 2 3])")) "set? false")
   (assert (= 4 (ct-eval ctx "(count (conj #{1 2 3} 4))")) "conj add")
   (assert (= 2 (ct-eval ctx "(count (disj #{1 2 3} 3))")) "disj")
-  (assert (= 3 (ct-eval ctx "(count #{1 2 3})")) "count"))
-(print "  passed")
+  (assert (= 3 (ct-eval ctx "(count #{1 2 3})")) "count")
+  (assert (= true (ct-eval ctx "(= #{1 2 3} #{3 2 1})")) "= order-independent"))
 
 (print "\nAll Phase 7 tests passed!")
