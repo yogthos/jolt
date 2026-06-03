@@ -40,7 +40,8 @@
 
 (defn core-every? [pred coll]
   (var result true)
-  (each x coll (if (not (pred x)) (do (set result false) (break))))
+  (each x (if (set? coll) (phs-seq coll) coll)
+    (if (not (pred x)) (do (set result false) (break))))
   result)
 
 # ============================================================
@@ -307,7 +308,7 @@
 
 (defn core-filter [pred coll]
   (var result @[])
-  (each x coll
+  (each x (if (set? coll) (phs-seq coll) coll)
     (if (pred x) (array/push result x)))
   (if (tuple? coll) (tuple/slice (tuple ;result)) result))
 
@@ -317,7 +318,8 @@
 (def core-reduce
   (fn [& args]
     (case (length args)
-      2 (let [f (args 0) coll (args 1)]
+      2 (let [f (args 0) coll (args 1)
+              coll (if (set? coll) (phs-seq coll) coll)]
           (if (= 0 (length coll))
             (f)
             (do
@@ -327,7 +329,8 @@
                 (set acc (f acc (coll i)))
                 (++ i))
               acc)))
-      3 (let [f (args 0) val (args 1) coll (args 2)]
+      3 (let [f (args 0) val (args 1) coll (args 2)
+              coll (if (set? coll) (phs-seq coll) coll)]
           (var acc val)
           (each x coll (set acc (f acc x)))
           acc)
