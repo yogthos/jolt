@@ -15,7 +15,10 @@
       (= name "recur") (= name "throw") (= name "try")
       (= name "set!") (= name "var") (= name "locking")
       (= name "instance?") (= name "defmulti") (= name "defmethod")
-      (= name "deftype") (= name "new") (= name ".")))
+      (= name "deftype") (= name "new") (= name ".")
+      (= name "var-get") (= name "var-set") (= name "var?")
+      (= name "alter-var-root") (= name "find-var") (= name "intern")
+      (= name "alter-meta!") (= name "reset-meta!")))
 
 (var eval-form nil)
 
@@ -568,8 +571,21 @@
                      (def new-v (ns-intern ns (target-sym :name) val))
                      val)))))
     "var" (let [target-sym (in form 1)
-                v (resolve-var ctx bindings target-sym)]
-            (if v v (error (string "Unable to resolve var: " (sym-name-str target-sym) " in var"))))
+                 v (resolve-var ctx bindings target-sym)]
+             (if v v (error (string "Unable to resolve var: " (sym-name-str target-sym) " in var"))))
+    "var-get" (var-get (eval-form ctx bindings (in form 1)))
+    "var-set" (var-set (eval-form ctx bindings (in form 1))
+                       (eval-form ctx bindings (in form 2)))
+    "var?" (var? (eval-form ctx bindings (in form 1)))
+    "alter-var-root" (alter-var-root (eval-form ctx bindings (in form 1))
+                                      (eval-form ctx bindings (in form 2)))
+    "find-var" (find-var ctx (eval-form ctx bindings (in form 1)))
+    "alter-meta!" (let [v (eval-form ctx bindings (in form 1))
+                         f (eval-form ctx bindings (in form 2))
+                         args (map |(eval-form ctx bindings $) (tuple/slice form 3))]
+                    (apply alter-meta! v f args))
+    "reset-meta!" (reset-meta! (eval-form ctx bindings (in form 1))
+                                (eval-form ctx bindings (in form 2)))
     "locking" (eval-form ctx bindings (in form 2))
     "instance?" (let [type-sym (in form 1)
                       val (eval-form ctx bindings (in form 2))]

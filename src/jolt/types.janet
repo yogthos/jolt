@@ -112,6 +112,19 @@
   (let [new-val (f (v :root) ;args)]
     (put v :root new-val)))
 
+(defn alter-meta!
+  "Atomically update a var's metadata via (apply f args)."
+  [v f & args]
+  (let [new-meta (apply f (var-meta v) args)]
+    (put v :meta new-meta)
+    new-meta))
+
+(defn reset-meta!
+  "Reset a var's metadata to the given value."
+  [v meta]
+  (put v :meta meta)
+  meta)
+
 (defn with-meta
   "Return a new var with updated metadata. The original var is unchanged."
   [v meta]
@@ -319,3 +332,18 @@
   [ctx]
   (let [ns (ctx-find-ns ctx (ctx-current-ns ctx))]
     (ns :imports)))
+
+(defn find-var
+  "Resolve a symbol to a var in the current context.
+  Looks in current namespace first, then clojure.core."
+  [ctx sym-s]
+  (let [name (sym-s :name)
+        ns-sym (sym-s :ns)]
+    (if ns-sym
+      (let [ns (ctx-find-ns ctx ns-sym)]
+        (ns-find ns name))
+      (let [current-ns (ctx-find-ns ctx (ctx-current-ns ctx))
+            v (ns-find current-ns name)]
+        (if v v
+          (let [core-ns (ctx-find-ns ctx "clojure.core")]
+            (ns-find core-ns name)))))))

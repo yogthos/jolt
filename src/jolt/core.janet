@@ -467,7 +467,8 @@
 
 (defn core-meta [x]
   "Returns the metadata of x, or nil."
-  (if (struct? x) (get x :meta) nil))
+  (if (var? x) (var-meta x)
+    (if (struct? x) (get x :meta) nil)))
 
 (def core-comp
   (fn [& fs]
@@ -780,8 +781,17 @@
 (defn core-push-thread-bindings [b] (push-thread-bindings b))
 (defn core-pop-thread-bindings [] (pop-thread-bindings))
 
+(defn core-var-get [v] (var-get v))
+(defn core-var-set [v val] (var-set v val))
+(defn core-var? [x] (var? x))
+(defn core-alter-var-root [v f & args] (apply alter-var-root v f args))
+(defn core-alter-meta! [v f & args] (apply alter-meta! v f args))
+(defn core-reset-meta! [v meta] (reset-meta! v meta))
+
 (defn core-binding
-  "Macro: (binding [var val ...] body...)"
+  "Macro: (binding [var val ...] body...)
+  Uses array-map (plain struct) to store binding frame
+  to avoid PHM get() incompatibility with var-get."
   [bindings & body]
   (def frame-pairs @[])
   (var i 0)
@@ -792,7 +802,7 @@
       (array/push frame-pairs (in bindings (+ i 1)))
       (+= i 2)))
   (def hm-form (array/insert frame-pairs 0
-    {:jolt/type :symbol :ns nil :name "hash-map"}))
+    {:jolt/type :symbol :ns nil :name "array-map"}))
   @[{:jolt/type :symbol :ns nil :name "let*"}
     [{:jolt/type :symbol :ns nil :name "frame"} hm-form]
     @[{:jolt/type :symbol :ns nil :name "push-thread-bindings"}
@@ -1155,6 +1165,12 @@
     "avoid-method-too-large" core-avoid-method-too-large
     "qualified-symbol?" core-qualified-symbol?
     "meta" core-meta
+    "var-get" core-var-get
+    "var-set" core-var-set
+    "var?" core-var?
+    "alter-var-root" core-alter-var-root
+    "alter-meta!" core-alter-meta!
+    "reset-meta!" core-reset-meta!
     "binding" core-binding
     "push-thread-bindings" core-push-thread-bindings
     "pop-thread-bindings" core-pop-thread-bindings

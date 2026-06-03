@@ -250,3 +250,38 @@
 (print "  passed")
 
 (print "\nAll Phase 1 tests passed!")
+
+# ============================================================
+# 17. Phase 3: Var system completion
+# ============================================================
+(print "17: var system...")
+(use ../src/jolt/api)
+
+(let [ctx (init)]
+  (eval-string ctx "(def x-var-test 42)")
+  (assert (= true (eval-string ctx "(var? (var x-var-test))")) "var?")
+  (eval-string ctx "(def y-var-test 99)")
+  (assert (= 99 (eval-string ctx "(var-get (var y-var-test))")) "var-get")
+  (eval-string ctx "(def z-var-test 10)")
+  (assert (= 20 (eval-string ctx "(do (var-set (var z-var-test) 20) (var-get (var z-var-test)))")) "var-set")
+  (eval-string ctx "(def a-var-test 1)")
+  (assert (= 2 (eval-string ctx "(do (alter-var-root (var a-var-test) inc) (var-get (var a-var-test)))")) "alter-var-root")
+  (eval-string ctx "(def fv-var-test :found)")
+  (assert (= :found (eval-string ctx "(var-get (find-var 'fv-var-test))")) "find-var")
+  (eval-string ctx "(def ^:dynamic *dv* 1)")
+  (assert (= 99 (eval-string ctx "(binding [*dv* 99] *dv*)")) "dynamic binding"))
+(print "  passed")
+
+# ============================================================
+# 18. Phase 3: Var metadata
+# ============================================================
+(print "18: var metadata...")
+(let [ctx (init)]
+  (eval-string ctx "(def mvar 42)")
+  (eval-string ctx "(alter-meta! (var mvar) assoc :doc \"the answer\")")
+  (assert (= "the answer" (eval-string ctx "(:doc (meta (var mvar)))")) "alter-meta!")
+  (eval-string ctx "(reset-meta! (var mvar) {:a 1})")
+  (assert (= 1 (eval-string ctx "(:a (meta (var mvar)))")) "reset-meta!"))
+(print "  passed")
+
+(print "\nAll Phase 3 tests passed!")
