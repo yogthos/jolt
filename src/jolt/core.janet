@@ -644,6 +644,23 @@
   (print "\n")
   nil)
 
+(defn core-pr-str [& xs]
+  (def buf @"")
+  (var i 0)
+  (let [n (length xs)]
+    (while (< i n)
+      (def v (xs i))
+      (cond
+        (nil? v) (buffer/push-string buf "nil")
+        (string? v) (do (buffer/push-string buf "\"") (buffer/push-string buf v) (buffer/push-string buf "\""))
+        (keyword? v) (do (buffer/push-string buf ":") (buffer/push-string buf (string v)))
+        (= true v) (buffer/push-string buf "true")
+        (= false v) (buffer/push-string buf "false")
+        (buffer/push-string buf (string v)))
+      (when (< (+ i 1) n) (buffer/push-string buf " "))
+      (++ i)))
+  (string buf))
+
 # ============================================================
 # Array primitives (needed for persistent data structures)
 # ============================================================
