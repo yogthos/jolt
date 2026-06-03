@@ -1,0 +1,132 @@
+(use ../src/jolt/api)
+(defn ct-eval [ctx s] (eval-string ctx s))
+(print "CLJS Ported Tests")
+
+(print "1: math...")
+(let [ctx (init)]
+  (assert (= 3 (ct-eval ctx "(+ 1 2)")) "+")
+  (assert (= 1 (ct-eval ctx "(- 3 2)")) "-")
+  (assert (= 6 (ct-eval ctx "(* 2 3)")) "*")
+  (assert (= 3 (ct-eval ctx "(inc 2)")) "inc")
+  (assert (= 1 (ct-eval ctx "(dec 2)")) "dec")
+  (assert (= 1 (ct-eval ctx "(quot 5 3)")) "quot")
+  (assert (= 2 (ct-eval ctx "(rem 5 3)")) "rem")
+  (assert (= 2 (ct-eval ctx "(mod 5 3)")) "mod")
+  (assert (= 3 (ct-eval ctx "(max 1 2 3)")) "max")
+  (assert (= 1 (ct-eval ctx "(min 1 2 3)")) "min"))
+(print "  ok")
+
+(print "2: predicates...")
+(let [ctx (init)]
+  (assert (= true (ct-eval ctx "(nil? nil)")) "nil?")
+  (assert (= false (ct-eval ctx "(nil? 1)")) "nil? false")
+  (assert (= false (ct-eval ctx "(not true)")) "not")
+  (assert (= true (ct-eval ctx "(not false)")) "not false")
+  (assert (= true (ct-eval ctx "(some? 1)")) "some?")
+  (assert (= true (ct-eval ctx "(number? 42)")) "number?")
+  (assert (= true (ct-eval ctx "(fn? inc)")) "fn?")
+  (assert (= true (ct-eval ctx "(keyword? :foo)")) "keyword?")
+  (assert (= true (ct-eval ctx "(zero? 0)")) "zero?")
+  (assert (= true (ct-eval ctx "(pos? 5)")) "pos?")
+  (assert (= true (ct-eval ctx "(neg? -1)")) "neg?")
+  (assert (= true (ct-eval ctx "(even? 4)")) "even?")
+  (assert (= true (ct-eval ctx "(odd? 3)")) "odd?"))
+(print "  ok")
+
+(print "3: comparison...")
+(let [ctx (init)]
+  (assert (= true (ct-eval ctx "(= 1 1)")) "=")
+  (assert (= false (ct-eval ctx "(= 1 2)")) "= false")
+  (assert (= true (ct-eval ctx "(= 1 1 1)")) "= three")
+  (assert (= true (ct-eval ctx "(not= 1 2)")) "not= true")
+  (assert (= true (ct-eval ctx "(< 1 2)")) "<")
+  (assert (= true (ct-eval ctx "(> 2 1)")) ">")
+  (assert (= true (ct-eval ctx "(<= 1 1)")) "<=")
+  (assert (= true (ct-eval ctx "(>= 2 2)")) ">="))
+(print "  ok")
+
+(print "4: vectors...")
+(let [ctx (init)]
+  (assert (= :a (ct-eval ctx "(nth [:a :b :c :d] 0)")) "nth")
+  (assert (= [1 2 3 4] (ct-eval ctx "(conj [1 2 3] 4)")) "conj")
+  (assert (= 1 (ct-eval ctx "(first [1 2 3])")) "first")
+  (assert (= [2 3] (ct-eval ctx "(rest [1 2 3])")) "rest")
+  (assert (= 3 (ct-eval ctx "(count [1 2 3])")) "count"))
+(print "  ok")
+
+(print "5: maps...")
+(let [ctx (init)]
+  (assert (= 1 (ct-eval ctx "(get {:a 1} :a)")) "get")
+  (assert (= nil (ct-eval ctx "(get {:a 1} :z)")) "get missing")
+  (assert (= :d (ct-eval ctx "(get {:a 1} :z :d)")) "get default")
+  (assert (= {:a 1 :b 2} (ct-eval ctx "(assoc {:a 1} :b 2)")) "assoc")
+  (assert (= {:b 2} (ct-eval ctx "(dissoc {:a 1 :b 2} :a)")) "dissoc")
+  (assert (= true (ct-eval ctx "(contains? {:a 1} :a)")) "contains?")
+  (assert (= 3 (ct-eval ctx "(count {:a 1 :b 2 :c 3})")) "count")
+  (assert (= 2 (ct-eval ctx "(count (keys {:a 1 :b 2}))")) "keys"))
+(print "  ok")
+
+(print "6: sets...")
+(let [ctx (init)]
+  (assert (= true (ct-eval ctx "(set? #{1 2 3})")) "set?")
+  (assert (= #{1 2 3 4} (ct-eval ctx "(conj #{1 2 3} 4)")) "conj")
+  (assert (= #{1 2} (ct-eval ctx "(disj #{1 2 3} 3)")) "disj")
+  (assert (= 3 (ct-eval ctx "(count #{1 2 3})")) "count")
+  (assert (= true (ct-eval ctx "(= #{1 2 3} #{3 2 1})")) "= order"))
+(print "  ok")
+
+(print "7: seq ops...")
+(let [ctx (init)]
+  (assert (= nil (ct-eval ctx "(seq [])")) "seq empty")
+  (assert (= [2 3 4] (ct-eval ctx "(map inc [1 2 3])")) "map")
+  (assert (= [2 3] (ct-eval ctx "(filter odd? [1 2 3 4])")) "filter")
+  (assert (= 6 (ct-eval ctx "(reduce + [1 2 3])")) "reduce")
+  (assert (= [1 2 3] (ct-eval ctx "(take 3 [1 2 3 4 5])")) "take")
+  (assert (= [4 5] (ct-eval ctx "(drop 3 [1 2 3 4 5])")) "drop")
+  (assert (= [3 2 1] (ct-eval ctx "(reverse [1 2 3])")) "reverse")
+  (assert (= true (ct-eval ctx "(every? even? [2 4 6])")) "every?"))
+(print "  ok")
+
+(print "8: atoms...")
+(let [ctx (init)]
+  (assert (= 0 (ct-eval ctx "(deref (atom 0))")) "deref")
+  (assert (= 1 (ct-eval ctx "(let [a (atom 0)] (swap! a inc) (deref a))")) "swap!")
+  (assert (= true (ct-eval ctx "(atom? (atom 0))")) "atom?"))
+(print "  ok")
+
+(print "9: special forms...")
+(let [ctx (init)]
+  (assert (= 30 (ct-eval ctx "(let [x 10 y 20] (+ x y))")) "let")
+  (assert (= :a (ct-eval ctx "(if true :a :b)")) "if true")
+  (assert (= :b (ct-eval ctx "(if false :a :b)")) "if false")
+  (assert (= 2 (ct-eval ctx "(do 1 2)")) "do")
+  (assert (= 3 (ct-eval ctx "(loop [x 0] (if (< x 3) (recur (inc x)) x))")) "loop")
+  (assert (= :caught (ct-eval ctx "(try (throw 42) (catch Exception e :caught))")) "try"))
+(print "  ok")
+
+(print "10: macros...")
+(let [ctx (init)]
+  (ct-eval ctx "(defn add [a b] (+ a b))")
+  (assert (= 7 (ct-eval ctx "(add 3 4)")) "defn")
+  (assert (= 42 (ct-eval ctx "(when true 42)")) "when")
+  (assert (= 3 (ct-eval ctx "(and 1 2 3)")) "and")
+  (assert (= 1 (ct-eval ctx "(or 1 2 3)")) "or")
+  (assert (= 49 (ct-eval ctx "((fn [x] (* x x)) 7)")) "fn"))
+(print "  ok")
+
+(print "11: higher-order...")
+(let [ctx (init)]
+  (assert (= 3 (ct-eval ctx "((comp inc inc) 1)")) "comp")
+  (assert (= 3 (ct-eval ctx "((partial + 1 2))")) "partial")
+  (assert (= 5 (ct-eval ctx "((constantly 5) :anything)")) "constantly")
+  (assert (= 3 (ct-eval ctx "((identity 3))")) "identity"))
+(print "  ok")
+
+(print "12: constructors...")
+(let [ctx (init)]
+  (assert (= [1 2 3] (ct-eval ctx "(vector 1 2 3)")) "vector")
+  (assert (= {:a 1 :b 2} (ct-eval ctx "(hash-map :a 1 :b 2)")) "hash-map")
+  (assert (= #{1 2 3} (ct-eval ctx "(hash-set 1 2 3)")) "hash-set")
+  (assert (= {:a 1 :b 2 :c 3} (ct-eval ctx "(zipmap [:a :b :c] [1 2 3])")) "zipmap"))
+(print "  ok")
+
