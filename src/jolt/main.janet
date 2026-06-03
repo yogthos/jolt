@@ -14,100 +14,104 @@
     (if line (string/trim line) nil)))
 
 # Forward declaration for mutual recursion
-(var print-value nil)
+(var write-value nil)
 
-(defn- print-collection [v]
+(defn- push-str [buf s]
+  (buffer/push-string buf s))
+
+(defn- write-collection [v buf]
   (cond
     (tuple? v)
     (do
-      (prin "[")
+      (push-str buf "[")
       (var i 0)
       (let [n (length v)]
         (while (< i n)
-          (print-value (in v i))
-          (when (< (+ i 1) n) (prin " "))
+          (write-value (in v i) buf)
+          (when (< (+ i 1) n) (push-str buf " "))
           (++ i)))
-      (prin "]"))
+      (push-str buf "]"))
 
     (array? v)
     (do
-      (prin "(")
+      (push-str buf "(")
       (var i 0)
       (let [n (length v)]
         (while (< i n)
-          (print-value (in v i))
-          (when (< (+ i 1) n) (prin " "))
+          (write-value (in v i) buf)
+          (when (< (+ i 1) n) (push-str buf " "))
           (++ i)))
-      (prin ")"))
+      (push-str buf ")"))
 
     (and (table? v) (= :jolt/set (v :jolt/type)))
     (do
-      (prin "#{")
+      (push-str buf "#{")
       (var first? true)
       (each k (keys (v :phm))
         (when (not= k :jolt/deftype)
-          (if first? (set first? false) (prin " "))
-          (print-value k)))
-      (prin "}"))
+          (if first? (set first? false) (push-str buf " "))
+          (write-value k buf)))
+      (push-str buf "}"))
 
     (and (table? v) (get v :jolt/deftype))
     (do
-      (prin "{")
+      (push-str buf "{")
       (var first? true)
       (each [k val] (pairs v)
-        (when (and (not= k :jolt/deftype) (not= k :cnt) (not= k :buckets) (not= k :_meta)
-                   (not= k :jolt/type) (not= k :phm))
-          (if first? (set first? false) (prin " "))
-          (print-value k)
-          (prin " ")
-          (print-value val)))
-      (prin "}"))
+        (when (and (not= k :jolt/deftype) (not= k :cnt) (not= k :buckets)
+                   (not= k :_meta) (not= k :jolt/type) (not= k :phm))
+          (if first? (set first? false) (push-str buf " "))
+          (write-value k buf)
+          (push-str buf " ")
+          (write-value val buf)))
+      (push-str buf "}"))
 
     (struct? v)
     (do
-      (prin "{")
+      (push-str buf "{")
       (var first? true)
       (each [k val] (pairs v)
-        (if first? (set first? false) (prin " "))
-        (print-value k)
-        (prin " ")
-        (print-value val))
-      (prin "}"))
+        (if first? (set first? false) (push-str buf " "))
+        (write-value k buf)
+        (push-str buf " ")
+        (write-value val buf))
+      (push-str buf "}"))
 
     (table? v)
     (do
-      (prin "{")
+      (push-str buf "{")
       (var first? true)
       (each [k val] (pairs v)
         (when (not= k :jolt/type)
-          (if first? (set first? false) (prin " "))
-          (print-value k)
-          (prin " ")
-          (print-value val)))
-      (prin "}"))))
+          (if first? (set first? false) (push-str buf " "))
+          (write-value k buf)
+          (push-str buf " ")
+          (write-value val buf)))
+      (push-str buf "}"))))
 
-(set print-value (fn [v]
+(set write-value (fn [v buf]
   (cond
-    (nil? v) (prin "nil")
-    (= true v) (prin "true")
-    (= false v) (prin "false")
-    (number? v) (prin v)
-    (string? v) (prin v)
-    (keyword? v) (prin ":") (prin (string v))
-    (tuple? v)
-    (do (print-collection v) (print))
-    (array? v)
-    (do (print-collection v) (print))
+    (nil? v) (push-str buf "nil")
+    (= true v) (push-str buf "true")
+    (= false v) (push-str buf "false")
+    (number? v) (push-str buf (string v))
+    (string? v) (push-str buf v)
+    (keyword? v) (do (push-str buf ":") (push-str buf (string v)))
     (and (struct? v) (= :symbol (get v :jolt/type)))
     (let [ns (get v :ns) name (get v :name)]
-      (if ns (prin ns "/" name) (prin name)))
+      (if ns
+        (push-str buf (string ns "/" name))
+        (push-str buf name)))
     (and (table? v) (= :jolt/var (v :jolt/type)))
-    (prin "#'" (ctx-current-ns ctx) "/" ((var-name v) :name))
-    (struct? v)
-    (do (print-collection v) (print))
-    (table? v)
-    (do (print-collection v) (print))
-    (print v))))
+    (push-str buf (string "#'" (ctx-current-ns ctx) "/" ((var-name v) :name)))
+    (or (tuple? v) (array? v) (struct? v) (table? v))
+    (write-collection v buf)
+    (push-str buf (string v)))))
+
+(defn print-value [v]
+  (def buf @"")
+  (write-value v buf)
+  (print (string buf)))
 
 (defn main [&]
   (print "Jolt — Clojure on Janet")
