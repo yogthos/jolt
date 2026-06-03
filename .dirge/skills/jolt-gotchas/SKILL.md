@@ -54,15 +54,14 @@ A bare expression in the last position of `cond` is treated as a **test** clause
 
 Without `true`, the last expression executes as a side-effect test between branches. Hit us in buffer-based write-value — raw tuple addresses leaked into REPL output.
 
-## Janet `cond` Requires `true` Guard for Catch-All
+## REPL: Buffer-Based Output Prevents C-Runtime Interleaving
 
-A bare expression in the last position of `cond` is treated as a **test** clause (not body). It executes between other branches as a side-effect test. Use `true` as the test to make it a proper catch-all:
+Janet's C runtime in `jpm build` executables interleaves native `<tuple 0x...>` output between `prin` statements. Solution: build entire output string in a buffer, then output atomically with a single `print` call. Use `write-value/v buf` + `print-value` creates buffer → `print (string buf)`.
 
-```janet
-(cond
-  (nil? x) (buf "nil")
-  (number? x) (buf (string x))
-  true (buf (string x)))  ; ← `true` required
-```
+## Janet `struct?` Returns `true` for Tuples
 
-Without `true`, `(push-str buf (string v))` in the last position leaked raw tuple addresses into REPL output.
+Always check `(tuple? x)` BEFORE `(struct? x)` in cond forms. Otherwise `(get tuple :key)` fails with "expected integer key for tuple in range [0, N), got :key". Hit us in `print-value` (symbol check on tuples) and `eval-form` struct handling.
+
+## PHM Internal Key Leakage
+
+PHM and set internal keys (`:jolt/deftype`, `:cnt`, `:buckets`, `:_meta`, `:jolt/type`, `:phm`) leak into `pairs`/`keys` iteration. Core fns that iterate collections (`core-merge`, `core-reduce`, `core-every?`, `core-filter`) must check for `set?`/`phm?` first and use type-aware helpers (`phm-to-struct`, `phs-seq`, `phm-keys`, `phm-entries`) before generic iteration.

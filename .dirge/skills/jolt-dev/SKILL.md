@@ -18,7 +18,37 @@ jpm test            # runs all tests
 janet test/foo.janet  # run a single test file from project root
 ```
 
-## Special Form Checklist
+## Testing Patterns
+
+```bash
+# Single test file
+janet test/compiler-test.janet
+
+# Full suite
+jpm test
+
+# Phase-specific tests
+janet test/phase5-test.janet  # multimethods
+janet test/phase8-test.janet  # protocol system
+janet test/phase10-test.janet # standard library
+
+# REPL test — pipe expressions in
+printf "(range 10)\n[1 2 3]\n{:a 1}\n" | janet src/jolt/main.janet
+```
+
+## Loading .clj Files
+
+`.clj` files are loaded via `eval-form` in the interpreter:
+```janet
+(def src (slurp "src/jolt/clojure/string.clj"))
+(var remaining src)
+(while (> (length (string/trim remaining)) 0)
+  (def [form rest] (parse-next remaining))
+  (set remaining rest)
+  (when form (eval-form ctx @{} form)))
+```
+
+**Critical constraint:** .clj files must NOT have docstrings on defn forms. Jolt's defn macro only handles 4-element forms: `(defn name [params] body)`. A 5-element form `(defn name "doc" [params] body)` causes "macro arity mismatch".
 
 To add a new special form to the evaluator:
 
@@ -31,7 +61,7 @@ The match arm receives `ctx`, `bindings`, and `form` (the full list). Use `(in f
 **Non-symbol heads** (keywords, etc.): `eval-list` first checks `(and (struct? first-form) (= :symbol (...)))` before extracting `name`. If not a symbol, falls through to default function application.
 
 ### Current special forms (37):
-`quote`, `syntax-quote`, `unquote`, `unquote-splicing`, `do`, `if`, `def`, `defmacro`, `fn*`, `let*`, `loop*`, `recur`, `throw`, `try`, `set!`, `var`, `locking`, `instance?`, `defmulti`, `defmethod`, `deftype`, `new`, `.`, `var-get`, `var-set`, `var?`, `alter-var-root`, `find-var`, `intern`, `alter-meta!`, `reset-meta!`, `disj`, `set?`, `protocol-dispatch`, `register-method`, `make-reified`, `satisfies?`
+`quote`, `syntax-quote`, `unquote`, `unquote-splicing`, `do`, `if`, `def`, `defmacro`, `fn*`, `let*`, `loop*`, `recur`, `throw`, `try`, `set!`, `var`, `locking`, `instance?`, `defmulti`, `defmethod`, `deftype`, `new`, `.`, `var-get`, `var-set`, `var?`, `alter-var-root`, `find-var`, `intern`, `alter-meta!`, `reset-meta!`, `disj`, `set?`, `satisfies?`, `protocol-dispatch`, `register-method`, `make-reified`
 
 ## Compiler Architecture
 

@@ -219,7 +219,7 @@
 (defn ns?
   "Check if x is a Jolt Namespace."
   [x]
-  (and (struct? x) (= :jolt/namespace (x :jolt/type))))
+  (and (or (struct? x) (table? x)) (= :jolt/namespace (x :jolt/type))))
 
 (defn ns-name
   "Return the name symbol of a namespace."

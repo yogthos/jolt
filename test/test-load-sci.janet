@@ -5,6 +5,20 @@
 
 (def ctx (init))
 
+(printf "Loading SCI stubs...\n")
+(defn load-stubs [ctx filepath]
+  (var s (slurp filepath))
+  (var count 0)
+  (while (> (length (string/trim s)) 0)
+    (def [form rest] (parse-next s))
+    (set s rest)
+    (++ count)
+    (when (not (nil? form))
+      (eval-form ctx @{} form)))
+  (printf "  Loaded %d stub forms\n" count))
+
+(load-stubs ctx "src/jolt/clojure/sci/lang_stubs.clj")
+
 (defn load-file [ctx path]
   (var s (slurp path))
   (var count 0)

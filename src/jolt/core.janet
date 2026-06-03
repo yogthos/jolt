@@ -1334,6 +1334,7 @@
     "IllegalStateException" core-IllegalStateException
     "definterface" core-definterface
     "defrecord" core-defrecord
+    "comment" core-comment
     "resolve" core-resolve
     "update" core-update
     "copy-core-var" core-copy-core-var

@@ -44,7 +44,7 @@ Order: qualified ns → local binding → core-symbol → bare symbol
 core-renames maps Clojure name strings → Janet function name strings (used by both emitter paths).
 core-fn-values maps Janet function name strings → actual function values (used by data-structure emitter only).
 
-MUST keep both in sync. When adding a new core fn, update BOTH.
+MUST keep both in sync. When adding a new core fn, update BOTH tables.
 **Missing entries → symbol treated as unknown global, returns nil.**
 
 Key name mappings:
@@ -68,9 +68,9 @@ Key name mappings:
 ## Throw/try compilation
 
 - `throw` → `(error val)` in Janet
-- `try/catch` → `(try body ([err] handler-body))` — Janet uses `([sym] handler)` format
+- `try/catch` → `(try body ([err] handler-body))` — Janet uses `([sym] handler)` format, NOT `(catch sym handler)`
 
-## emi-vector-expr critical fix
+## emit-vector-expr critical fix
 
 **Bare tuples in Janet eval are function calls**: `[1 2 3]` tries to call `1` as a function. Always emit `['tuple ...]` or `(tuple ...)`.
 
@@ -106,12 +106,48 @@ raw-form->janet converts Jolt symbols to Janet symbols, recursively for arrays/t
   (compile-and-eval form ctx)) ; compile
 ```
 
+## Protocol dispatch macros
+
+`core-extend-type` and `core-extend-protocol` emit `register-method` call forms. The fn* form MUST be `@[...]` (array) for `eval-list` to recognize it as a special form. Same for the outer call form wrapping `register-method`:
+
+```janet
+(defn core-extend-type [type-sym proto-sym & impls]
+  (each method-spec impls
+    (def fn-form @[{:name "fn*"} arg-vec ;body])    ; @[...] array
+    (array/push result @[
+      {:name "register-method"}                       ; @[...] array
+      type-sym proto-sym method-name fn-form])))
+```
+
+## defprotocol method dispatch
+
+Protocol methods emit fn forms that delegate to `protocol-dispatch` special form. The fn form uses `@[...]` for fn* and its body so eval-list dispatches correctly:
+
+```janet
+(def fn-form @[
+  {:name "fn*"}
+  @[{:name "this"} {:name "&"} {:name "rest-args"}]
+  @[{:name "protocol-dispatch"}
+    {:name "quote"} protocol-name
+    {:name "quote"} method-name
+    {:name "this"}
+    {:name "rest-args"}]])
+```
+
+In register-method, args (type-sym, proto-sym, method-name) are passed raw — evaluator resolves via `(in form N)`.
+
+## PHM integration in core functions
+
+~16 core functions have PHM-aware branches before generic struct/table handling:
+`core-get`, `core-assoc`, `core-dissoc`, `core-conj`, `core-contains?`, `core-count`, `core-keys`, `core-vals`, `core-merge`, `core-merge-with`, `core-empty?`, `core-seq`, `core-into`, `core-map?`, `core-=`, `core-hash-map`. Sets later added to 6 of these.
+
 ## Test files
 
 - `test/compiler-test.janet` — Phases 0-4 tests (source output + compile-eval + macro tests)
 - `test/phase6-final.janet` — Phase 6 comprehensive compile-mode tests (47 assertions)
 - `test/phase5-test.janet` — Phase 5 multimethod + hierarchy tests
 - `test/phase6-test.janet` — Phase 6 reader extension tests
+- `test/phase8-test.janet` — Phase 8 protocol system tests
 - `test/hash-map-test.janet` — Phase 2 PersistentHashMap tests
 
 Run: `janet test/<file>.janet` or `jpm test`
