@@ -1056,11 +1056,11 @@
     (array/push method-def method-name)
     (def fn-form @[])
     (array/push fn-form {:jolt/type :symbol :ns nil :name "fn*"})
-    (array/push fn-form @[{:jolt/type :symbol :ns nil :name "this"} {:jolt/type :symbol :ns nil :name "&"} {:jolt/type :symbol :ns nil :name "rest-args"}])
+    (array/push fn-form [{:jolt/type :symbol :ns nil :name "this"} {:jolt/type :symbol :ns nil :name "&"} {:jolt/type :symbol :ns nil :name "rest-args"}])
     (array/push fn-form @[
       {:jolt/type :symbol :ns nil :name "protocol-dispatch"}
-      {:jolt/type :symbol :ns nil :name "quote"} protocol-name
-      {:jolt/type :symbol :ns nil :name "quote"} method-name
+      protocol-name
+      method-name
       {:jolt/type :symbol :ns nil :name "this"}
       {:jolt/type :symbol :ns nil :name "rest-args"}])
     (array/push method-def fn-form)
@@ -1076,9 +1076,9 @@
     (def fn-form @[{:jolt/type :symbol :ns nil :name "fn*"} arg-vec ;body])
     (array/push result @[
       {:jolt/type :symbol :ns nil :name "register-method"}
-      {:jolt/type :symbol :ns nil :name "quote"} type-sym
-      {:jolt/type :symbol :ns nil :name "quote"} proto-sym
-      {:jolt/type :symbol :ns nil :name "quote"} method-name
+      type-sym
+      proto-sym
+      method-name
       fn-form]))
   result)
 
@@ -1087,21 +1087,32 @@
   (var i 0)
   (while (< i (length type-impls))
     (let [type-sym (type-impls i)
-          impls (type-impls (+ i 1))]
-      (var j 0)
-      (while (< j (length impls))
-        (let [method-spec (impls j)]
+          methods (type-impls (+ i 1))]
+      # methods is a single method spec array or an array of method specs
+      # If the first element is a symbol (method name), treat as single spec
+      (if (and (struct? (methods 0)) (= :symbol ((methods 0) :jolt/type)))
+        (let [method-spec methods]
           (def method-name (method-spec 0))
           (def arg-vec (method-spec 1))
           (def body (tuple/slice method-spec 2))
           (def fn-form @[{:jolt/type :symbol :ns nil :name "fn*"} arg-vec ;body])
           (array/push result @[
             {:jolt/type :symbol :ns nil :name "register-method"}
-            {:jolt/type :symbol :ns nil :name "quote"} type-sym
-            {:jolt/type :symbol :ns nil :name "quote"} proto-sym
-            {:jolt/type :symbol :ns nil :name "quote"} method-name
+            type-sym
+            proto-sym
+            method-name
             fn-form]))
-        (+= j 2)))
+        (each method-spec methods
+          (def method-name (method-spec 0))
+          (def arg-vec (method-spec 1))
+          (def body (tuple/slice method-spec 2))
+          (def fn-form @[{:jolt/type :symbol :ns nil :name "fn*"} arg-vec ;body])
+          (array/push result @[
+            {:jolt/type :symbol :ns nil :name "register-method"}
+            type-sym
+            proto-sym
+            method-name
+            fn-form]))))
     (+= i 2))
   result)
 
@@ -1116,12 +1127,12 @@
       (def method-name (method-spec 0))
       (def arg-vec (method-spec 1))
       (def body (tuple/slice method-spec 2))
-      (put methods (keyword method-name) @{:fn* true :args arg-vec :body body})
+      (put methods (keyword (if (struct? method-name) (method-name :name) method-name)) @{:fn* true :args arg-vec :body body})
       (+= i 2)))
   (array/push result @[
     {:jolt/type :symbol :ns nil :name "make-reified"}
-    {:jolt/type :symbol :ns nil :name "quote"} proto-sym
-    {:jolt/type :symbol :ns nil :name "quote"} methods])
+    proto-sym
+    methods])
   result)
 
 (def core-satisfies? (fn [proto-sym obj] false))

@@ -651,8 +651,8 @@
                       (let [fn-value (if (and (table? v) (get v :fn*))
                                      (let [args-vec (get v :args)
                                            body-forms (get v :body)]
-                                       (apply (eval-form ctx @{}
-                                         @[{:jolt/type :symbol :ns nil :name "fn*"} args-vec ;body-forms]) []))
+                                       (eval-form ctx @{}
+                                   @[{:jolt/type :symbol :ns nil :name "fn*"} args-vec ;body-forms]))
                                      v)]
                         (put (obj :jolt/protocol-methods) k fn-value)))
                     obj)
@@ -663,7 +663,9 @@
                                 (if (get obj :jolt/protocol-methods)
                                   (get obj :jolt/deftype)))]
                   (if type-tag
-                    (type-satisfies? ctx type-tag (proto-sym :name))
+                    (let [pn (proto-sym :name)
+                          pn-str (if (struct? pn) (pn :name) pn)]
+                      (type-satisfies? ctx type-tag pn-str))
                     false))
     "locking" (eval-form ctx bindings (in form 2))
     "instance?" (let [type-sym (in form 1)
