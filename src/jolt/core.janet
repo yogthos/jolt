@@ -86,14 +86,18 @@
       (while (and ok (< i (dec (length args))))
         (let [a (args i) b (args (+ i 1))]
           (set ok
-            (if (phm? a)
-              (deep= (phm-to-struct a) (if (phm? b) (phm-to-struct b) b))
-              (if (phm? b) (deep= a (phm-to-struct b))
-                (if (set? a)
-                  (deep= (phs-to-struct a) (if (set? b) (phs-to-struct b) b))
-                  (if (set? b) (deep= a (phs-to-struct b)) (deep= a b)))))))
+            (if (and (tuple? a) (array? b))
+              (deep= a (tuple/slice (tuple ;b)))
+              (if (and (array? a) (tuple? b))
+                (deep= (tuple/slice (tuple ;a)) b)
+                (if (phm? a)
+                  (deep= (phm-to-struct a) (if (phm? b) (phm-to-struct b) b))
+                  (if (phm? b) (deep= a (phm-to-struct b))
+                    (if (set? a)
+                      (deep= (phs-to-struct a) (if (set? b) (phs-to-struct b) b))
+                      (if (set? b) (deep= a (phs-to-struct b)) (deep= a b)))))))
         (++ i))
-      ok)))
+      ok)))))
 
 (defn core-not= [& args] (not (apply core-= args)))
 
@@ -196,7 +200,7 @@
 (defn core-rest [coll]
   (if (lazy-seq? coll) (ls-rest coll)
     (if (or (nil? coll) (= 0 (length coll)))
-      nil
+      @[]
       (if (tuple? coll)
         (tuple/slice coll 1)
         (array/slice coll 1)))))
@@ -509,6 +513,14 @@
   (if (var? x) (var-meta x)
     (if (struct? x) (get x :meta) nil)))
 
+(defn core-every-pred [& preds]
+  (fn [x]
+    (var ok true) (var i 0)
+    (while (and ok (< i (length preds)))
+      (if (not ((preds i) x)) (set ok false))
+      (++ i))
+    ok))
+
 (def core-comp
   (fn [& fs]
     (case (length fs)
@@ -616,20 +628,6 @@
 
 (def core-print print)
 (def core-println (fn [& xs] (apply print xs) (print "\n") nil))
-
-(defn core-pr-str [& xs]
-  "Returns a string representation of xs suitable for reading."
-  (var buf @"")
-  (var first? true)
-  (each x xs
-    (if first? (set first? false) (buffer/push buf " "))
-    (if (nil? x) (buffer/push buf "nil")
-      (= true x) (buffer/push buf "true")
-      (= false x) (buffer/push buf "false")
-      (keyword? x) (do (buffer/push buf ":") (buffer/push buf (string x)))
-      (string? x) (do (buffer/push buf "\"") (buffer/push buf x) (buffer/push buf "\""))
-      (buffer/push buf (string x))))
-  (string buf))
 
 (defn core-pr [& xs]
   (var i 0)
