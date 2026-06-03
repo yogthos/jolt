@@ -287,3 +287,49 @@
 (print "  passed")
 
 (print "\nAll Phase 3 tests passed!")
+
+# ============================================================
+# 19. Phase 4: deftype
+# ============================================================
+(print "19: deftype...")
+(use ../src/jolt/api)
+
+(let [ctx (init)]
+  (eval-string ctx "(deftype Point [x y])")
+  (assert (not (nil? (eval-string ctx "(Point. 3 4)"))) "deftype constructs")
+  (assert (= 3 (eval-string ctx "(. (Point. 3 4) x)")) ".x access")
+  (assert (= 4 (eval-string ctx "(. (Point. 3 4) y)")) ".y access")
+  (assert (= 10 (eval-string ctx "(let [p (Point. 3 4)] (set! (.-x p) 10) (. p x))")) "set! field")
+  (assert (= true (eval-string ctx "(instance? Point (Point. 1 2))")) "instance?")
+  (assert (= false (eval-string ctx "(instance? Point {:x 1})")) "instance? false")
+  (assert (= 5 (eval-string ctx "(. (->Point 5 6) x)")) "arrow factory"))
+(print "  passed")
+
+# ============================================================
+# 20. Phase 4: defrecord
+# ============================================================
+(print "20: defrecord...")
+(let [ctx (init)]
+  (eval-string ctx "(defrecord Person [name age])")
+  (assert (not (nil? (eval-string ctx "(Person. \"Alice\" 30)"))) "record constructs")
+  (assert (= true (eval-string ctx "(map? (Person. \"Alice\" 30))")) "record is map?")
+  (assert (= "Alice" (eval-string ctx "(:name (Person. \"Alice\" 30))")) "keyword access")
+  (assert (= 30 (eval-string ctx "(get (Person. \"Alice\" 30) :age)")) "get access")
+  (assert (= "Alice" (eval-string ctx "(. (Person. \"Alice\" 30) name)")) ".name access")
+  (assert (= 30 (eval-string ctx "(. (Person. \"Alice\" 30) age)")) ".age access")
+  (assert (= 2 (eval-string ctx "(count (Person. \"Alice\" 30))")) "count")
+  (assert (= "Bob" (eval-string ctx "(:name (->Person \"Bob\" 25))")) "arrow factory"))
+
+(print "  passed")
+
+# ============================================================
+# 21. Phase 4: record equality
+# ============================================================
+(print "21: record equality...")
+(let [ctx (init)]
+  (eval-string ctx "(defrecord Point3D [x y z])")
+  (assert (= true (eval-string ctx "(= (Point3D. 1 2 3) (Point3D. 1 2 3))")) "same values")
+  (assert (= false (eval-string ctx "(= (Point3D. 1 2 3) (Point3D. 4 5 6))")) "different values"))
+(print "  passed")
+
+(print "\nAll Phase 4 tests passed!")

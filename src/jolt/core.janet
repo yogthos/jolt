@@ -17,7 +17,7 @@
 (defn core-keyword? [x] (keyword? x))
 (defn core-symbol? [x] (and (struct? x) (= :symbol (x :jolt/type))))
 (defn core-vector? [x] (tuple? x))
-(defn core-map? [x] (or (phm? x) (struct? x)))
+(defn core-map? [x] (or (phm? x) (struct? x) (if (and (table? x) (get x :jolt/deftype)) true false)))
 (defn core-seq? [x] (or (array? x) (tuple? x)))
 (defn core-coll? [x] (or (array? x) (tuple? x) (struct? x)))
 
@@ -166,7 +166,10 @@
           (and (number? key) (>= key 0) (< key (length coll)))
           false)))))
 
-(defn core-count [coll] (if (phm? coll) (coll :cnt) (length coll)))
+(defn core-count [coll]
+  (if (phm? coll) (coll :cnt)
+    (if (and (table? coll) (get coll :jolt/deftype)) (- (length (keys coll)) 1)
+      (length coll))))
 
 (defn core-first [coll]
   (if (or (nil? coll) (= 0 (length coll))) nil
@@ -888,24 +891,33 @@
 (defn core-comment [& body]
   nil)
 
-# defrecord stub — emits constructor and factory functions
+# defrecord — creates a proper type via deftype + factory functions
 (defn core-defrecord [name-sym fields-vec & body]
-  (def ctor-name-str (string "->" (name-sym :name)))
-  (def ctor-name-sym {:jolt/type :symbol :ns nil :name ctor-name-str})
-  # Build the map expression at macro-expansion time: {"":a a, ":b b, ...}
-  (var kvs @[])
+  (def type-name (name-sym :name))
+  (def type-name-dot (string type-name "."))
+  (def arrow-name (string "->" type-name))
+  (def map-name (string "map->" type-name))
+  
+  # (deftype TypeName [fields...])
+  (def dt-form @[{:jolt/type :symbol :ns nil :name "deftype"} name-sym fields-vec])
+  
+  # Arrow factory: (def ->TypeName (fn [field1 field2 ...] (TypeName. field1 field2 ...)))
+  (def arrow-call @[{:jolt/type :symbol :ns nil :name type-name-dot}])
+  (each f fields-vec (array/push arrow-call f))
+  (def arrow-sym {:jolt/type :symbol :ns nil :name arrow-name})
+  (def arrow-body @[{:jolt/type :symbol :ns nil :name "fn"} fields-vec arrow-call])
+  
+  # map-> factory: (def map->TypeName (fn [m] (->TypeName (get m :field1) (get m :field2) ...)))
+  (def map-call @[{:jolt/type :symbol :ns nil :name arrow-name}])
   (each f fields-vec
-    (array/push kvs (keyword (f :name)))
-    (array/push kvs f))
-  (def map-expr @[{:jolt/type :symbol :ns nil :name "array-map"} ;kvs])
-  (def ctor-body
-    @[{:jolt/type :symbol :ns nil :name "fn*"}
-      @[fields-vec]
-      map-expr])
-  # Emit (do (def TypeName <ctor-fn>) (def ->TypeName <ctor-fn>))
+    (array/push map-call @[{:jolt/type :symbol :ns nil :name "core-get"} {:jolt/type :symbol :ns nil :name (string "m")} (keyword (f :name))]))
+  (def map-sym {:jolt/type :symbol :ns nil :name map-name})
+  (def map-body @[{:jolt/type :symbol :ns nil :name "fn"} @[{:jolt/type :symbol :ns nil :name (string "m")}] map-call])
+  
   @[{:jolt/type :symbol :ns nil :name "do"}
-    @[{:jolt/type :symbol :ns nil :name "def"} name-sym ctor-body]
-    @[{:jolt/type :symbol :ns nil :name "def"} ctor-name-sym ctor-body]])
+    dt-form
+    @[{:jolt/type :symbol :ns nil :name "def"} arrow-sym arrow-body]
+    @[{:jolt/type :symbol :ns nil :name "def"} map-sym map-body]])
 
 # prefer-method stub — multimethod preference ordering
 (defn core-prefer-method [multifn dispatch-val & dispatch-vals]

@@ -7,3 +7,5 @@ Phase 2 (PersistentHashMap): Live in src/jolt/phm.janet — separate module impo
 Macro expansion: resolve-macro at analyze time → expand → re-analyze. Loop: (do (var _loop_N nil) (set _loop_N (fn [params] body)) (_loop_N vals...)). Recur: emits (loop-name args...) via :loop-name in AST.
 §
 Test files: test/phase6-final.janet (47 tests, 58 assertions — collections, math, predicates, comparison, seq ops, special forms, macros, complex nesting). Phase 1 tests appended to test/compiler-test.janet (ns accessors, ns form extensions). All 317 tests pass.
+§
+Phase 3 (Var system): find-var (ctx-based, resolve-q/nq symbol), alter-meta!, reset-meta!, var-get/var-set/var?/alter-var-root all in types.janet + evaluator dispatch arms + core-bindings wrappers. core-meta fixed: (var? x) branch → var-meta, struct? branch → :meta. 10 tests pass.

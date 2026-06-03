@@ -545,31 +545,42 @@
                    (error err)))
                 (eval-form ctx bindings body-form))))
     "set!" (let [target (in form 1)
-                 val (eval-form ctx bindings (in form 2))]
-             # (set! (. obj -field) val) — instance field mutation
-             (if (and (array? target) (> (length target) 0)
-                      (struct? (first target))
-                      (= :symbol ((first target) :jolt/type))
-                      (= "." ((first target) :name)))
-               (let [obj (eval-form ctx bindings (in target 1))
-                     field-sym (in target 2)
-                     field-name (field-sym :name)
-                     field-key (keyword (if (and (> (length field-name) 0) (= "-" (string/slice field-name 0 1)))
-                                        (string/slice field-name 1)
-                                        field-name))]
-                 (if (get obj :jolt/deftype)
-                   (do (put obj field-key val) val)
-                   (error (string "Can't set! field on non-deftype: " (type obj)))))
-               # (set! var val) — normal var mutation
-               (let [target-sym target
-                     v (resolve-var ctx bindings target-sym)]
-                 (if v
-                   (do (var-set v val) val)
-                   # Auto-create var if it doesn't exist
-                   (let [ns-name (ctx-current-ns ctx)
-                         ns (ctx-find-ns ctx ns-name)]
-                     (def new-v (ns-intern ns (target-sym :name) val))
-                     val)))))
+                  val (eval-form ctx bindings (in form 2))]
+              # Handle (set! (.-field obj) val) — .-field shorthand as a list
+              (if (and (array? target) (> (length target) 1)
+                       (struct? (first target)) (= :symbol ((first target) :jolt/type))
+                       (> (length ((first target) :name)) 1)
+                       (= (string/slice ((first target) :name) 0 2) ".-"))
+                (let [obj (eval-form ctx bindings (in target 1))
+                      field-name (string/slice ((first target) :name) 2)
+                      field-key (keyword field-name)]
+                  (if (get obj :jolt/deftype)
+                    (do (put obj field-key val) val)
+                    (error (string "Can't set! field on non-deftype: " (type obj)))))
+                # (set! (. obj -field) val) — instance field mutation
+                (if (and (array? target) (> (length target) 0)
+                         (struct? (first target))
+                         (= :symbol ((first target) :jolt/type))
+                         (= "." ((first target) :name)))
+                  (let [obj (eval-form ctx bindings (in target 1))
+                        field-sym (in target 2)
+                        field-name (field-sym :name)
+                        field-key (keyword (if (and (> (length field-name) 0) (= "-" (string/slice field-name 0 1)))
+                                           (string/slice field-name 1)
+                                           field-name))]
+                    (if (get obj :jolt/deftype)
+                      (do (put obj field-key val) val)
+                      (error (string "Can't set! field on non-deftype: " (type obj)))))
+                  # (set! var val) — normal var mutation
+                  (let [target-sym target
+                        v (resolve-var ctx bindings target-sym)]
+                    (if v
+                      (do (var-set v val) val)
+                      # Auto-create var if it doesn't exist
+                      (let [ns-name (ctx-current-ns ctx)
+                            ns (ctx-find-ns ctx ns-name)]
+                        (def new-v (ns-intern ns (target-sym :name) val))
+                        val))))))
     "var" (let [target-sym (in form 1)
                  v (resolve-var ctx bindings target-sym)]
              (if v v (error (string "Unable to resolve var: " (sym-name-str target-sym) " in var"))))
