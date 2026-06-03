@@ -36,6 +36,12 @@ janet test/phase10-test.janet # standard library
 printf "(range 10)\n[1 2 3]\n{:a 1}\n" | janet src/jolt/main.janet
 ```
 
+## Test File Creation — Heredoc Workaround
+
+The `write` tool's syntax checker rejects `.janet` files with complex string escaping (e.g., `\"` inside Janet strings). **Workaround:** Use `bash` with `cat > file << 'EOF' ... EOF` heredocs for any test file containing Clojure source strings.
+
+**Paren-counting boundary:** Large single-file test suites (>6 sections) often hit a mysterious paren-counting parse error ("unexpected end of source") at section boundaries, even when parens are balanced. **Workaround:** Split into multiple files (e.g., `cljs-port-1a.janet`, `cljs-port-1b.janet`).
+
 ## Loading .clj Files
 
 `.clj` files are loaded via `eval-form` in the interpreter:

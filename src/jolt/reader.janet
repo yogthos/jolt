@@ -282,7 +282,35 @@
 (defn read-anon-fn [s pos]
   # pos is at #, next char is (
   (let [[form new-pos] (read-form s (+ pos 1))]
-    [(array/insert form 0 (sym "fn*")) new-pos]))
+    # Collect % arg references and rename them to gensyms
+    (var arg-map @{})
+    (defn- replace-pct [f]
+      (cond
+        (and (struct? f) (= :symbol (f :jolt/type)))
+        (let [nm (f :name)]
+          (if (and (> (length nm) 0) (= "%" (string/slice nm 0 1)))
+            (let [existing (get arg-map nm)]
+              (if existing
+                {:jolt/type :symbol :ns nil :name existing}
+                (let [gen (gensym)]
+                  (put arg-map nm (string gen))
+                  {:jolt/type :symbol :ns nil :name (string gen)})))
+            f))
+        (array? f) (array ;(map replace-pct f))
+        (tuple? f) (tuple ;(map replace-pct f))
+        f))
+    (def replaced (replace-pct form))
+    (def arg-names @[])
+    # Sort %1 %2 %3 ..., then %, then %&
+    (def sorted-keys (sort (keys arg-map)))
+    (each k sorted-keys
+      (array/push arg-names {:jolt/type :symbol :ns nil :name (get arg-map k)}))
+    (def result @[(sym "fn*")])
+    (if (> (length arg-names) 0)
+      (array/push result (tuple ;arg-names))
+      (array/push result (tuple)))  # no args
+    (array/push result replaced)
+    [result new-pos]))
 
 (defn read-reader-conditional [s pos]
   # pos is at #, next char is ? or ?@

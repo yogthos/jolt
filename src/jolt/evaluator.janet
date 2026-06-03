@@ -836,7 +836,15 @@
           (apply f args)
           (if (keyword? f)
             (get (first args) f)
-            (error (string "Cannot call " (type f) " as a function"))))))))
+            (if (and (table? f) (get f :jolt/deftype))
+              (let [ifn-fn (find-protocol-method ctx (get f :jolt/deftype) "IFn" "-invoke")]
+                (if ifn-fn (apply ifn-fn f args)
+                  (if (get f :jolt/protocol-methods)
+                    (let [invoke-fn (get (f :jolt/protocol-methods) :-invoke)]
+                      (if invoke-fn (apply invoke-fn f args)
+                        (error (string "Cannot call " (type f) " as a function"))))
+                    (error (string "Cannot call " (type f) " as a function")))))
+              (error (string "Cannot call " (type f) " as a function")))))))))
 
 (set eval-form (fn [ctx bindings form]
   (cond
