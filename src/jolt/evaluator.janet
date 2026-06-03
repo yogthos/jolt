@@ -20,7 +20,9 @@
       (= name "var-get") (= name "var-set") (= name "var?")
       (= name "alter-var-root") (= name "find-var") (= name "intern")
       (= name "alter-meta!") (= name "reset-meta!")
-      (= name "disj") (= name "set?")))
+      (= name "disj") (= name "set?")
+      (= name "satisfies?")
+      (= name "protocol-dispatch") (= name "register-method") (= name "make-reified")))
 
 (var eval-form nil)
 
@@ -610,6 +612,59 @@
                (apply phs-disj s ks)
                (error "disj expects a set")))
     "set?" (set? (eval-form ctx bindings (in form 1)))
+    "protocol-dispatch" (let [proto-sym (in form 1)
+                               method-sym (in form 2)
+                               obj (eval-form ctx bindings (in form 3))
+                               rest-args (eval-form ctx bindings (in form 4))
+                               type-tag (if (and (table? obj) (get obj :jolt/deftype))
+                                        (get obj :jolt/deftype)
+                                        (if (get obj :jolt/protocol-methods)
+                                          (get obj :jolt/deftype)))
+                               proto-name (proto-sym :name)
+                               method-name (method-sym :name)]
+                          (if (and (table? obj) (get obj :jolt/protocol-methods))
+                            (let [reified-fns (get obj :jolt/protocol-methods)
+                                  fn (get reified-fns (keyword method-name))]
+                              (if fn (apply fn obj rest-args)
+                                (error (string "No reified method " method-name " for " type-tag))))
+                            (if type-tag
+                              (let [fn (find-protocol-method ctx type-tag proto-name method-name)]
+                                (if fn (apply fn obj rest-args)
+                                  (error (string "No method " method-name " in " proto-name " for " type-tag))))
+                              (error (string "No dispatch for " method-name " on " (type obj))))))
+    "register-method" (let [type-sym (in form 1)
+                            proto-sym (in form 2)
+                            method-sym (in form 3)
+                            fn (eval-form ctx bindings (in form 4))
+                            ns-name (ctx-current-ns ctx)
+                            type-name (type-sym :name)
+                            type-tag (string ns-name "." type-name)
+                            proto-name (proto-sym :name)
+                            method-name (method-sym :name)]
+                       (register-protocol-method ctx type-tag proto-name method-name fn))
+    "make-reified" (let [proto-sym (in form 1)
+                         methods-map (eval-form ctx bindings (in form 2))
+                         proto-name (proto-sym :name)
+                         reified-tag (string "reified-" proto-name)]
+                    (def obj @{:jolt/deftype reified-tag :jolt/protocol-methods @{}})
+                    (loop [[k v] :pairs methods-map]
+                      (let [fn-value (if (and (table? v) (get v :fn*))
+                                     (let [args-vec (get v :args)
+                                           body-forms (get v :body)]
+                                       (apply (eval-form ctx @{}
+                                         @[{:jolt/type :symbol :ns nil :name "fn*"} args-vec ;body-forms]) []))
+                                     v)]
+                        (put (obj :jolt/protocol-methods) k fn-value)))
+                    obj)
+    "satisfies?" (let [proto-sym (eval-form ctx bindings (in form 1))
+                       obj (eval-form ctx bindings (in form 2))
+                       type-tag (if (and (table? obj) (get obj :jolt/deftype))
+                                (get obj :jolt/deftype)
+                                (if (get obj :jolt/protocol-methods)
+                                  (get obj :jolt/deftype)))]
+                  (if type-tag
+                    (type-satisfies? ctx type-tag (proto-sym :name))
+                    false))
     "locking" (eval-form ctx bindings (in form 2))
     "instance?" (let [type-sym (in form 1)
                       val (eval-form ctx bindings (in form 2))]

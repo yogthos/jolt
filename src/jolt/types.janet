@@ -314,6 +314,7 @@
               :current-ns "user"
               :compile? compile?
               :compiled-cache @{}
+              :type-registry @{}
               :data-readers (let [dr @{}]
                               (put dr (keyword "#inst") (fn [s] s))
                               (put dr (keyword "#uuid") (fn [s] s))
@@ -406,3 +407,35 @@
         (if v v
           (let [core-ns (ctx-find-ns ctx "clojure.core")]
             (ns-find core-ns name)))))))
+
+
+# ============================================================
+# Protocol type registry
+# ============================================================
+
+(defn register-protocol-method
+  "Register a protocol method implementation for a type."
+  [ctx type-tag protocol-name method-name fn]
+  (let [registry (get (ctx :env) :type-registry)
+        type-impls (or (get registry type-tag)
+                      (do (put registry type-tag @{}) (get registry type-tag)))
+        proto-impls (or (get type-impls protocol-name)
+                       (do (put type-impls protocol-name @{}) (get type-impls protocol-name)))]
+    (put proto-impls method-name fn)))
+
+(defn find-protocol-method
+  "Find a protocol method implementation for a type."
+  [ctx type-tag protocol-name method-name]
+  (let [registry (get (ctx :env) :type-registry)
+        type-impls (get registry type-tag)]
+    (when type-impls
+      (let [proto-impls (get type-impls protocol-name)]
+        (when proto-impls
+          (get proto-impls method-name))))))
+
+(defn type-satisfies?
+  "Check if a type satisfies a protocol."
+  [ctx type-tag protocol-name]
+  (let [registry (get (ctx :env) :type-registry)
+        type-impls (get registry type-tag)]
+    (if (and type-impls (get type-impls protocol-name)) true false)))

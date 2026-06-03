@@ -1033,32 +1033,99 @@
   (each b body (array/push result b))
   result)
 
-# Protocol stubs — defined in sci.impl.protocols, needed in clojure.core
-# defprotocol must be a macro to avoid evaluating its args
+# Protocol implementation — methods dispatch via type registry
 (defn core-defprotocol [protocol-name & sigs]
-  # Emit (do (def protocol-name {}) (def method1 fn) (def method2 fn) ...)
   (def result @[])
   (array/push result {:jolt/type :symbol :ns nil :name "do"})
-  # First (def protocol-name {})
-  (def d @[])
-  (array/push d {:jolt/type :symbol :ns nil :name "def"})
-  (array/push d protocol-name)
-  (array/push d @{})
-  (array/push result d)
-  # Then (def method-name (fn [& args] nil)) for each sig
+  (def methods @{})
   (each sig sigs
-    (def method-sym (first sig))
-    (def d @[])
-    (array/push d {:jolt/type :symbol :ns nil :name "def"})
-    (array/push d method-sym)
-    (array/push d (fn [& args] nil))
-    (array/push result d))
+    (def method-name (first sig))
+    (def arglists (tuple/slice sig 1))
+    (put methods (keyword (if (struct? method-name) (method-name :name) method-name)) {:name method-name :arglists arglists}))
+  (def proto-def @[])
+  (array/push proto-def {:jolt/type :symbol :ns nil :name "def"})
+  (array/push proto-def protocol-name)
+  (array/push proto-def @{:jolt/type :jolt/protocol
+                          :name {:jolt/type :symbol :ns nil :name (protocol-name :name)}
+                          :methods methods})
+  (array/push result proto-def)
+  (each sig sigs
+    (def method-name (first sig))
+    (def method-def @[])
+    (array/push method-def {:jolt/type :symbol :ns nil :name "def"})
+    (array/push method-def method-name)
+    (def fn-form @[])
+    (array/push fn-form {:jolt/type :symbol :ns nil :name "fn*"})
+    (array/push fn-form @[{:jolt/type :symbol :ns nil :name "this"} {:jolt/type :symbol :ns nil :name "&"} {:jolt/type :symbol :ns nil :name "rest-args"}])
+    (array/push fn-form @[
+      {:jolt/type :symbol :ns nil :name "protocol-dispatch"}
+      {:jolt/type :symbol :ns nil :name "quote"} protocol-name
+      {:jolt/type :symbol :ns nil :name "quote"} method-name
+      {:jolt/type :symbol :ns nil :name "this"}
+      {:jolt/type :symbol :ns nil :name "rest-args"}])
+    (array/push method-def fn-form)
+    (array/push result method-def))
   result)
-(def core-extend-type (fn [& args] nil))
-(defn core-extend-protocol [& args] @[{:jolt/type :symbol :ns nil :name "do"}])
+
+(defn core-extend-type [type-sym proto-sym & impls]
+  (def result @[{:jolt/type :symbol :ns nil :name "do"}])
+  (each method-spec impls
+    (def method-name (method-spec 0))
+    (def arg-vec (method-spec 1))
+    (def body (tuple/slice method-spec 2))
+    (def fn-form @[{:jolt/type :symbol :ns nil :name "fn*"} arg-vec ;body])
+    (array/push result @[
+      {:jolt/type :symbol :ns nil :name "register-method"}
+      {:jolt/type :symbol :ns nil :name "quote"} type-sym
+      {:jolt/type :symbol :ns nil :name "quote"} proto-sym
+      {:jolt/type :symbol :ns nil :name "quote"} method-name
+      fn-form]))
+  result)
+
+(defn core-extend-protocol [proto-sym & type-impls]
+  (def result @[{:jolt/type :symbol :ns nil :name "do"}])
+  (var i 0)
+  (while (< i (length type-impls))
+    (let [type-sym (type-impls i)
+          impls (type-impls (+ i 1))]
+      (var j 0)
+      (while (< j (length impls))
+        (let [method-spec (impls j)]
+          (def method-name (method-spec 0))
+          (def arg-vec (method-spec 1))
+          (def body (tuple/slice method-spec 2))
+          (def fn-form @[{:jolt/type :symbol :ns nil :name "fn*"} arg-vec ;body])
+          (array/push result @[
+            {:jolt/type :symbol :ns nil :name "register-method"}
+            {:jolt/type :symbol :ns nil :name "quote"} type-sym
+            {:jolt/type :symbol :ns nil :name "quote"} proto-sym
+            {:jolt/type :symbol :ns nil :name "quote"} method-name
+            fn-form]))
+        (+= j 2)))
+    (+= i 2))
+  result)
+
 (def core-extend (fn [& args] nil))
-(def core-reify (fn [& args] nil))
-(def core-satisfies? (fn [& args] nil))
+
+(defn core-reify [proto-sym & impls]
+  (def result @[{:jolt/type :symbol :ns nil :name "do"}])
+  (def methods @{})
+  (var i 0)
+  (while (< i (length impls))
+    (let [method-spec (impls i)]
+      (def method-name (method-spec 0))
+      (def arg-vec (method-spec 1))
+      (def body (tuple/slice method-spec 2))
+      (put methods (keyword method-name) @{:fn* true :args arg-vec :body body})
+      (+= i 2)))
+  (array/push result @[
+    {:jolt/type :symbol :ns nil :name "make-reified"}
+    {:jolt/type :symbol :ns nil :name "quote"} proto-sym
+    {:jolt/type :symbol :ns nil :name "quote"} methods])
+  result)
+
+(def core-satisfies? (fn [proto-sym obj] false))
+
 (def core-extends? (fn [& args] false))
 (def core-implements? (fn [& args] false))
 (def core-type->str (fn [& args] ""))
