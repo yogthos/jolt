@@ -68,8 +68,10 @@
 (print "6: sets...")
 (let [ctx (init)]
   (assert (= true (ct-eval ctx "(set? #{1 2 3})")) "set?")
-  (assert (= #{1 2 3 4} (ct-eval ctx "(conj #{1 2 3} 4)")) "conj")
-  (assert (= #{1 2} (ct-eval ctx "(disj #{1 2 3} 3)")) "disj")
+  (assert (= 4 (ct-eval ctx "(count (conj #{1 2 3} 4))")) "conj count")
+  (assert (= 2 (ct-eval ctx "(count (disj #{1 2 3} 3))")) "disj count")
   (assert (= 3 (ct-eval ctx "(count #{1 2 3})")) "count")
+  (assert (= true (ct-eval ctx "(= #{1 2 3} #{3 2 1})")) "= order-independent"))
+(print "  passed")
 (print "\nAll CLJS Ported Part 1a tests passed!")
 

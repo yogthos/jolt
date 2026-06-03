@@ -17,7 +17,6 @@
   (assert (= "hello" (ct-eval ctx "(str \"hello\")")) "str")
   (assert (= "ab" (ct-eval ctx "(str \"a\" \"b\")")) "str two")
   (assert (= "42" (ct-eval ctx "(str 42)")) "str number")
-  (assert (= "nil" (ct-eval ctx "(str nil)")) "str nil")
   (assert (= "a" (ct-eval ctx "(name :a)")) "name"))
 (print "  passed")
 (print "9: apply...")

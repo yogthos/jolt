@@ -130,7 +130,7 @@ Use dynamic table construction: `(let [dr @{}] (put dr (keyword "#inst") fn) dr)
 - Use `indexed?` not `tuple?` for realized sequences (may be arrays from `cons`/`concat`)
 - Avoid `val'` (apostrophe in symbol names) — use `vf` instead
 
-## Janet Gotchas
+
 
 - `def` creates constants; use `(var x nil)` for mutable locals
 - Bare tuples in `eval` are function calls: `[1 2 3]` tries to call `1`
