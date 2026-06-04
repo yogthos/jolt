@@ -4,6 +4,7 @@
 (use ./types)
 (use ./phm)
 (use ./reader)
+(use ./regex)
 
 (defn- sym-name?
   [sym-s name-str]
@@ -213,9 +214,24 @@
     (set t (table/getproto t)))
   result)
 
+(def- math-statics
+  @{"sqrt" math/sqrt "pow" math/pow "floor" math/floor "ceil" math/ceil
+    "abs" (fn [x] (if (< x 0) (- x) x))
+    "round" (fn [x] (math/round x))
+    "sin" math/sin "cos" math/cos "tan" math/tan
+    "asin" math/asin "acos" math/acos "atan" math/atan
+    "log" math/log "log10" math/log10 "exp" math/exp
+    "max" (fn [a b] (if (> a b) a b)) "min" (fn [a b] (if (< a b) a b))
+    "signum" (fn [x] (cond (< x 0) -1.0 (> x 0) 1.0 0.0))
+    "PI" math/pi "E" math/e
+    "random" (fn [&] (math/random))})
+
 (defn- resolve-sym
   [ctx bindings sym-s]
   (let [name (sym-s :name) ns (sym-s :ns)]
+    (if (= ns "Math")
+      (let [v (get math-statics name)]
+        (if (nil? v) (error (string "Unsupported Math member: Math/" name)) v))
     (if (not (nil? ns))
       (let [current-ns (ctx-find-ns ctx (ctx-current-ns ctx)) aliased-ns (ns-import-lookup current-ns ns)]
         (if aliased-ns
@@ -254,7 +270,7 @@
                             entry (in root-env (symbol name))]
                         (if (not (nil? entry))
                           (if (table? entry) (entry :value) entry)
-                          (error (string "Unable to resolve symbol: " name)))))))))))))))
+                          (error (string "Unable to resolve symbol: " name))))))))))))))))
 
 (defn- parse-arg-names
   "Parse a parameter vector, handling & rest args.
@@ -459,6 +475,21 @@
     "unquote-splicing" (error "Unquote-splicing not valid outside of syntax-quote")
     "eval" (eval-form ctx bindings (eval-form ctx bindings (in form 1)))
     "read-string" (parse-string (eval-form ctx bindings (in form 1)))
+    "defonce" (let [name-sym (unwrap-meta-name (in form 1))
+                    ns (ctx-find-ns ctx (ctx-current-ns ctx))
+                    existing (ns-find ns (name-sym :name))]
+                (if (and existing (not (nil? (get existing :root))))
+                  existing
+                  (eval-form ctx bindings @[{:jolt/type :symbol :ns nil :name "def"}
+                                            (in form 1) (in form 2)])))
+    "macroexpand-1" (let [the-form (eval-form ctx bindings (in form 1))]
+                      (if (and (array? the-form) (> (length the-form) 0)
+                               (struct? (first the-form)) (= :symbol ((first the-form) :jolt/type)))
+                        (let [v (resolve-var ctx bindings (first the-form))]
+                          (if (and v (var-macro? v))
+                            (apply (var-get v) (tuple/slice the-form 1))
+                            the-form))
+                        the-form))
     "do" (do
            (var result nil)
            (var i 1)
@@ -884,9 +915,21 @@
                                   type-name))))
                     (match (type-sym :name)
                       "Number" (number? val)
+                      "java.lang.Number" (number? val)
+                      "Long" (number? val)
+                      "java.lang.Long" (number? val)
+                      "Integer" (number? val)
+                      "Double" (number? val)
                       "String" (string? val)
+                      "java.lang.String" (string? val)
                       "Boolean" (or (= true val) (= false val))
                       "Keyword" (keyword? val)
+                      "clojure.lang.Atom" (and (table? val) (= :jolt/atom (val :jolt/type)))
+                      "clojure.lang.Volatile" (and (table? val) (= :jolt/volatile (val :jolt/type)))
+                      "clojure.lang.Delay" (and (table? val) (= :jolt/delay (val :jolt/type)))
+                      "clojure.lang.IPersistentMap" (or (phm? val) (struct? val))
+                      "clojure.lang.IPersistentVector" (tuple? val)
+                      "clojure.lang.IPersistentSet" (set? val)
                       "Object" true
                       false)))
     "defmulti" (let [name-sym (in form 1)
@@ -1102,8 +1145,10 @@
         (let [tag (form :tag)
               data-readers (get (ctx :env) :data-readers)
               reader-fn (if data-readers (get data-readers tag))]
-          (if reader-fn
-            (reader-fn (form :form))
+          (cond
+            # #"..." regex literal -> a regex value (Janet PEG-backed)
+            (= tag :regex) (compile-regex (form :form))
+            reader-fn (reader-fn (form :form))
             (error (string "No reader function for tag " tag))))
       (if (get form :jolt/type)
         (error (string "Unexpected tagged form: " (form :jolt/type)))

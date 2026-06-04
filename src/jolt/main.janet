@@ -75,6 +75,27 @@
           (write-value k buf)))
       (push-str buf "}"))
 
+    (and (table? v) (= :jolt/regex (v :jolt/type)))
+    (do (push-str buf "#\"") (push-str buf (v :source)) (push-str buf "\""))
+
+    (and (table? v) (= :jolt/sorted-map (v :jolt/type)))
+    (do
+      (push-str buf "{")
+      (var first? true)
+      (each k (sort (array ;(keys (v :map))))
+        (if first? (set first? false) (push-str buf ", "))
+        (write-value k buf) (push-str buf " ") (write-value (get (v :map) k) buf))
+      (push-str buf "}"))
+
+    (and (table? v) (= :jolt/sorted-set (v :jolt/type)))
+    (do
+      (push-str buf "#{")
+      (var first? true)
+      (each x (v :items)
+        (if first? (set first? false) (push-str buf " "))
+        (write-value x buf))
+      (push-str buf "}"))
+
     (and (table? v) (get v :jolt/deftype))
     (do
       (push-str buf "{")

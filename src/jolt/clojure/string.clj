@@ -35,26 +35,26 @@
   ([separator coll] (str-join coll separator)))
 
 (defn replace
-  
   [s match replacement]
-  (str-replace-all match s replacement))
+  (str-replace-all match replacement s))
 
 (defn replace-first
-  
   [s match replacement]
-  (str-replace match s replacement))
+  (str-replace match replacement s))
+
+(defn reverse
+  [s]
+  (str-reverse-b s))
 
 (defn str-reverse
-  
   [s]
   (str-reverse-b s))
 
 (defn split
-  
   ([s re]
-   (map str-trim (str-split re s)))
+   (vec (str-split re s)))
   ([s re limit]
-   (take limit (split s re))))
+   (vec (take limit (str-split re s)))))
 
 (defn starts-with?
   

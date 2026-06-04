@@ -125,6 +125,107 @@
    ["lazy take-while inf" "(quote (0 1 2 3 4))" "(take-while (fn [x] (< x 5)) (range))"]
    ["lazy remove inf"     "(quote (0 2 4 6 8))" "(take 5 (remove odd? (range)))"]
    ["filter finite"       "(quote (2 4))"       "(filter even? [1 2 3 4 5])"]
+
+   ### ==== atoms (full support) ====
+   ["swap! args"        "7"     "(do (def a (atom 1)) (swap! a + 2 4) @a)"]
+   ["reset! ret"        "9"     "(do (def a (atom 1)) (reset! a 9))"]
+   ["compare-and-set!"  "true"  "(do (def a (atom 1)) (compare-and-set! a 1 2))"]
+   ["compare-and-set! no" "false" "(do (def a (atom 1)) (compare-and-set! a 5 2))"]
+   ["swap-vals!"        "[1 2]" "(do (def a (atom 1)) (swap-vals! a inc))"]
+   ["reset-vals!"       "[1 9]" "(do (def a (atom 1)) (reset-vals! a 9))"]
+   ["atom map swap"     "{:a 1 :b 2}" "(do (def a (atom {:a 1})) (swap! a assoc :b 2) @a)"]
+   ["add-watch"         "[:k 1 2]" "(do (def lg (atom nil)) (def a (atom 1)) (add-watch a :k (fn [k r o n] (reset! lg [k o n]))) (swap! a inc) @lg)"]
+   ["atom validator"    "5"     "(do (def a (atom 1 :validator pos?)) (reset! a 5) @a)"]
+   ["instance? Atom"    "true"  "(instance? clojure.lang.Atom (atom 1))"]
+
+   ### ==== volatiles / delays ====
+   ["volatile"          "2"     "(do (def v (volatile! 1)) (vreset! v 2) @v)"]
+   ["vswap!"            "2"     "(do (def v (volatile! 1)) (vswap! v inc) @v)"]
+   ["volatile?"         "true"  "(volatile? (volatile! 1))"]
+   ["delay force"       "3"     "(force (delay (+ 1 2)))"]
+   ["delay deref once"  "1"     "(do (def c (atom 0)) (def d (delay (swap! c inc))) @d @d @c)"]
+   ["realized? delay"   "true"  "(do (def d (delay 1)) @d (realized? d))"]
+   ["realized? not"     "false" "(realized? (delay 1))"]
+
+   ### ==== numbers / math ====
+   ["quot neg"          "-2"    "(quot -7 3)"]
+   ["rem neg"           "-1"    "(rem -7 3)"]
+   ["mod neg"           "2"     "(mod -7 3)"]
+   ["bit ops"           "[4 14 10]" "[(bit-and 12 6) (bit-or 12 6) (bit-xor 12 6)]"]
+   ["bit-shift"         "[8 2]" "[(bit-shift-left 1 3) (bit-shift-right 8 2)]"]
+   ["Math/sqrt"         "3.0"   "(Math/sqrt 9)"]
+   ["Math/pow"          "8.0"   "(Math/pow 2 3)"]
+   ["min-key"           "1"     "(min-key abs 1 -2 3)"]
+   ["max-key"           "-4"    "(max-key abs 1 -2 -4 3)"]
+
+   ### ==== strings (clojure.string) ====
+   ["str/trim"          "\"hi\"" "(do (require (quote [clojure.string :as s])) (s/trim \"  hi  \"))"]
+   ["str/split regex"   "[\"a\" \"b\" \"c\"]" "(do (require (quote [clojure.string :as s])) (s/split \"a,b,c\" #\",\"))"]
+   ["str/split ws"      "[\"a\" \"b\" \"c\"]" "(do (require (quote [clojure.string :as s])) (s/split \"a  b   c\" #\"\\s+\"))"]
+   ["str/replace"       "\"hexxo\"" "(do (require (quote [clojure.string :as s])) (s/replace \"hello\" \"ll\" \"xx\"))"]
+   ["str/replace regex" "\"ab\""  "(do (require (quote [clojure.string :as s])) (s/replace \"a1b2\" #\"[0-9]\" \"\"))"]
+   ["str/includes?"     "true"  "(do (require (quote [clojure.string :as s])) (s/includes? \"hello\" \"ell\"))"]
+   ["str/reverse"       "\"cba\"" "(do (require (quote [clojure.string :as s])) (s/reverse \"abc\"))"]
+   ["subs"              "\"ell\"" "(subs \"hello\" 1 4)"]
+
+   ### ==== regex ====
+   ["re-find"           "\"123\"" "(re-find #\"[0-9]+\" \"abc123def\")"]
+   ["re-matches"        "\"abc\"" "(re-matches #\"a.c\" \"abc\")"]
+   ["re-matches no"     "nil"   "(re-matches #\"a.c\" \"abcd\")"]
+   ["re-seq"            "(quote (\"12\" \"34\"))" "(re-seq #\"[0-9]+\" \"a12b34\")"]
+
+   ### ==== sequences ====
+   ["split-at"          "[[1 2] [3 4 5]]" "(split-at 2 [1 2 3 4 5])"]
+   ["split-with"        "[[1 2] [3 4 1]]" "(split-with (fn [x] (< x 3)) [1 2 3 4 1])"]
+   ["interpose"         "(quote (1 0 2 0 3))" "(interpose 0 [1 2 3])"]
+   ["partition step"    "(quote ((1 2) (3 4)))" "(partition 2 2 [1 2 3 4 5])"]
+   ["not-every?"        "true"  "(not-every? pos? [1 -2 3])"]
+   ["not-any?"          "true"  "(not-any? neg? [1 2 3])"]
+   ["take-nth"          "(quote (0 2 4))" "(take-nth 2 [0 1 2 3 4])"]
+   ["butlast"           "(quote (1 2))" "(butlast [1 2 3])"]
+   ["filterv"           "[2 4]" "(filterv even? [1 2 3 4])"]
+   ["mapv"              "[2 3 4]" "(mapv inc [1 2 3])"]
+   ["reduced early"     "3"     "(reduce (fn [a x] (if (> a 2) (reduced a) (+ a x))) 0 [1 2 3 4 5])"]
+   ["sort cmp"          "[3 2 1]" "(sort > [1 3 2])"]
+   ["frequencies"       "{1 2 2 1}" "(frequencies [1 1 2])"]
+   ["empty"             "[]"    "(empty [1 2 3])"]
+   ["not-empty"         "nil"   "(not-empty [])"]
+   ["rseq"              "(quote (3 2 1))" "(rseq [1 2 3])"]
+   ["replace map"       "[:a :b :a]" "(replace {1 :a 2 :b} [1 2 1])"]
+
+   ### ==== data structures ====
+   ["sorted-map seq"    "(quote ([:a 1] [:b 2] [:c 3]))" "(seq (sorted-map :c 3 :a 1 :b 2))"]
+   ["sorted-set seq"    "(quote (1 2 3))" "(seq (sorted-set 3 1 2))"]
+   ["assoc vector"      "[1 9 3]" "(assoc [1 2 3] 1 9)"]
+   ["update vector"     "[1 3 3]" "(update [1 2 3] 1 inc)"]
+   ["coll? set"         "true"  "(coll? #{1 2})"]
+   ["find entry"        "[:a 1]" "(find {:a 1} :a)"]
+   ["conj map entry"    "{:a 1 :b 2}" "(conj {:a 1} [:b 2])"]
+   ["conj list prepend" "(quote (0 1 2))" "(conj (list 1 2) 0)"]
+
+   ### ==== keywords / symbols ====
+   ["keyword ns"        ":a/b"  "(keyword \"a\" \"b\")"]
+   ["name ns-kw"        "\"b\""  "(name :a/b)"]
+   ["namespace"         "\"a\""  "(namespace :a/b)"]
+   ["namespace none"    "nil"   "(namespace :a)"]
+
+   ### ==== metadata / vars ====
+   ["vary-meta"         "{:x 2}" "(meta (vary-meta (with-meta [1] {:x 1}) update :x inc))"]
+   ["defonce no-redef"  "1"     "(do (defonce dv1 1) (defonce dv1 2) dv1)"]
+   ["binding dynamic"   "10"    "(do (def ^:dynamic *x* 1) (binding [*x* 10] *x*))"]
+
+   ### ==== try / catch ====
+   ["try catch"         ":caught" "(try (throw (ex-info \"e\" {})) (catch :default e :caught))"]
+   ["ex-data"           "{:a 1}" "(try (throw (ex-info \"m\" {:a 1})) (catch :default e (ex-data e)))"]
+   ["ex-message"        "\"m\""  "(try (throw (ex-info \"m\" {})) (catch :default e (ex-message e)))"]
+
+   ### ==== macros ====
+   ["macroexpand-1"     "true"  "(do (defmacro mm [x] (list (quote inc) x)) (= (quote (inc 5)) (macroexpand-1 (quote (mm 5)))))"]
+   ["doto"              "{:a 1}" "(deref (doto (atom {}) (swap! assoc :a 1)))"]
+
+   ### ==== printing ====
+   ["pr-str vec"        "\"[1 2 3]\"" "(pr-str [1 2 3])"]
+   ["prn-str"           "\"1\\n\"" "(prn-str 1)"]
   ])
 
 (var pass 0)
