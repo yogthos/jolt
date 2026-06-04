@@ -126,8 +126,18 @@ MED:
 - Lazy `filter`/`take-while`/`remove` over lazy input
 - REPL: lazy-seq printer walks full chain (capped); `def`/`defn` print `#'ns/name`
 
-Deferred (niche / opt-in): `transduce` + transducer arities; compiler-path IFn
-dispatch (the interpreter is the live path — `init` never enables `:compile?`).
+**Gap-closing batch** (conformance grew to 157 cases): full atoms; typed
+volatiles + delays (deref/force/realized?); quot/rem/mod sign semantics; a regex
+subsystem (`src/jolt/regex.janet`, regex→PEG, `#"..."` literals, re-find/matches/
+seq, string split/replace); sorted-map/sorted-set; `Math/*` statics; ex-info/
+ex-data/ex-message; namespaced keywords; ~40 added core fns (split-at, take-nth,
+butlast, filterv/mapv, reduced, min/max-key, find, some-fn, sequential?/ifn?/…)
+plus defonce/macroexpand-1/letfn/doseq; and fixes to doto, assoc/update-on-vector,
+frequencies, coll?, sort, partition.
+
+Deferred (niche / opt-in): char type (chars are 1-char strings); full regex
+(lookaround/backrefs); `transduce` + transducer arities; compiler-path IFn
+dispatch (interpreter is the live path). STM (refs/agents) intentionally skipped.
 
 ### Phase 17: Optimization
 
