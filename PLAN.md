@@ -135,9 +135,16 @@ butlast, filterv/mapv, reduced, min/max-key, find, some-fn, sequential?/ifn?/…
 plus defonce/macroexpand-1/letfn/doseq; and fixes to doto, assoc/update-on-vector,
 frequencies, coll?, sort, partition.
 
-Deferred (niche / opt-in): char type (chars are 1-char strings); full regex
-(lookaround/backrefs); `transduce` + transducer arities; compiler-path IFn
-dispatch (interpreter is the live path). STM (refs/agents) intentionally skipped.
+**Feature batch** (conformance now 184): proper **char type** (`\a` reads to a
+char value, char?/char/int/str, string seq/first/nth yield chars, `\a` printing);
+**transducers** (map/filter/take/… no-coll arity returns a transducer; transduce/
+into-xform/sequence/eduction/reduced; reduce honors reduced); **compiler-path
+IFn dispatch** (jolt-call makes collections callable in `:compile?` mode; compiled
+set/char literals); and a **multi-line REPL** (accumulates until the form is
+balanced).
+
+Deferred: full regex (lookaround/backrefs — the PEG-backed engine covers the
+common subset). STM (refs/agents/dosync) intentionally skipped.
 
 ### Phase 17: Optimization
 
