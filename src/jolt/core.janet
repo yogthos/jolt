@@ -799,13 +799,72 @@
 # String functions
 # ============================================================
 
+# Readable rendering of a value (Clojure pr semantics): strings quoted,
+# keywords with leading ':', symbols by name, collections with their reader
+# syntax. Used by both pr-str (readable) and str (collection elements).
+(var pr-render nil)
+
+(defn- pr-render-seq [buf items open close]
+  (buffer/push-string buf open)
+  (var first true)
+  (each x items
+    (if first (set first false) (buffer/push-string buf " "))
+    (pr-render buf x))
+  (buffer/push-string buf close))
+
+(defn- pr-render-pairs [buf pairs]
+  (buffer/push-string buf "{")
+  (var first true)
+  (each pair pairs
+    (if first (set first false) (buffer/push-string buf ", "))
+    (pr-render buf (in pair 0))
+    (buffer/push-string buf " ")
+    (pr-render buf (in pair 1)))
+  (buffer/push-string buf "}"))
+
+(set pr-render
+  (fn [buf v]
+    (cond
+      (nil? v) (buffer/push-string buf "nil")
+      (= true v) (buffer/push-string buf "true")
+      (= false v) (buffer/push-string buf "false")
+      (string? v) (do (buffer/push-string buf "\"") (buffer/push-string buf v) (buffer/push-string buf "\""))
+      (buffer? v) (do (buffer/push-string buf "\"") (buffer/push-string buf (string v)) (buffer/push-string buf "\""))
+      (keyword? v) (do (buffer/push-string buf ":") (buffer/push-string buf (string v)))
+      (number? v) (buffer/push-string buf (string v))
+      (and (struct? v) (= :symbol (v :jolt/type)))
+        (buffer/push-string buf (if (v :ns) (string (v :ns) "/" (v :name)) (v :name)))
+      (lazy-seq? v) (pr-render-seq buf (realize-for-iteration v) "(" ")")
+      (set? v) (pr-render-seq buf (phs-seq v) "#{" "}")
+      (phm? v) (pr-render-pairs buf (phm-entries v))
+      (and (table? v) (get v :jolt/deftype)) (buffer/push-string buf (string v))
+      (tuple? v) (pr-render-seq buf v "[" "]")
+      (array? v) (pr-render-seq buf v "(" ")")
+      (struct? v) (pr-render-pairs buf (pairs v))
+      (table? v) (pr-render-pairs buf (pairs v))
+      true (buffer/push-string buf (string v)))))
+
+(defn- str-render-one
+  "Render one value with Clojure's `str`/.toString semantics (bare strings,
+  nil -> empty, keywords/symbols by name, collections via pr-render)."
+  [v]
+  (cond
+    (nil? v) ""
+    (string? v) v
+    (buffer? v) (string v)
+    (keyword? v) (string ":" (string v))
+    (and (struct? v) (= :symbol (v :jolt/type)))
+      (if (v :ns) (string (v :ns) "/" (v :name)) (v :name))
+    (number? v) (string v)
+    (= true v) "true"
+    (= false v) "false"
+    (let [buf @""] (pr-render buf v) (string buf))))
+
 (defn core-str [& xs]
   (if (= 0 (length xs)) ""
     (do
       (var result @[])
-      (each x xs
-        (if (nil? x) (array/push result "nil")
-          (array/push result (if (string? x) x (string x)))))
+      (each x xs (array/push result (str-render-one x)))
       (string/join result ""))))
 
 (defn core-name
@@ -856,14 +915,7 @@
   (var i 0)
   (let [n (length xs)]
     (while (< i n)
-      (def v (xs i))
-      (cond
-        (nil? v) (buffer/push-string buf "nil")
-        (string? v) (do (buffer/push-string buf "\"") (buffer/push-string buf v) (buffer/push-string buf "\""))
-        (keyword? v) (do (buffer/push-string buf ":") (buffer/push-string buf (string v)))
-        (= true v) (buffer/push-string buf "true")
-        (= false v) (buffer/push-string buf "false")
-        (buffer/push-string buf (string v)))
+      (pr-render buf (xs i))
       (when (< (+ i 1) n) (buffer/push-string buf " "))
       (++ i)))
   (string buf))
