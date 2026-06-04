@@ -60,7 +60,8 @@
                             (= head-name "deftype") (= head-name "defmulti") (= head-name "defmethod")
                             (= head-name "require") (= head-name "in-ns")
                             (= head-name "syntax-quote") (= head-name "set!")
-                            (= head-name "var") (= head-name ".") (= head-name "new"))]
+                            (= head-name "var") (= head-name ".") (= head-name "new")
+                            (= head-name "eval"))]
           (if stateful?
             (eval-form ctx @{} form)
             (compile-and-eval form ctx)))
@@ -77,6 +78,20 @@
   [ctx s bindings]
   (let [form (parse-string s)]
     (eval-form ctx bindings form)))
+
+(defn load-string
+  "Evaluate all forms from a Clojure source string.
+  Uses parse-next to load every top-level form in sequence.
+  Returns the result of the last form evaluated."
+  [ctx s]
+  (var cur s)
+  (var result nil)
+  (while (> (length (string/trim cur)) 0)
+    (def [form rest] (parse-next cur))
+    (set cur rest)
+    (when (not (nil? form))
+      (set result (eval-form ctx @{} form))))
+  result)
 
 (defn compile-string
   "Compile a Clojure source string to Janet source.

@@ -32,6 +32,22 @@
           (++ i)))
       (push-str buf "]"))
 
+    # LazySeq — realize and print as a list
+    (and (table? v) (= :jolt/lazy-seq (v :jolt/type)))
+    (do
+      (def val (if (get v :realized) (v :val) (let [vf ((v :fn))] (put v :realized true) (put v :val vf) vf)))
+      (if (nil? val)
+        (push-str buf "()")
+        (do
+          (push-str buf "(")
+          (var i 0)
+          (let [n (length val)]
+            (while (< i n)
+              (write-value (in val i) buf)
+              (when (< (+ i 1) n) (push-str buf " "))
+              (++ i)))
+          (push-str buf ")"))))
+
     (array? v)
     (do
       (push-str buf "(")
@@ -106,7 +122,7 @@
     (push-str buf (string "#'" (ctx-current-ns ctx) "/" ((var-name v) :name)))
     (or (tuple? v) (array? v) (struct? v) (table? v))
     (write-collection v buf)
-    (push-str buf (string v)))))
+    true (push-str buf (string v)))))
 
 (defn print-value [v]
   (def buf @"")

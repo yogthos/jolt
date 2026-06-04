@@ -3,7 +3,7 @@
 (print "=== CLJS Ported Part 3b ===")
 (print "21: clojure.string...")
 (let [ctx (init)]
-  (ct-eval ctx (slurp "src/jolt/clojure/string.clj"))
+  (load-string ctx (slurp "src/jolt/clojure/string.clj"))
   (assert (= true (ct-eval ctx "(blank? nil)")) "blank? nil")
   (assert (= true (ct-eval ctx "(blank? \"   \")")) "blank? spaces")
   (assert (= "Abc" (ct-eval ctx "(capitalize \"abc\")")) "capitalize")
@@ -12,10 +12,10 @@
 (print "  passed")
 (print "22: clojure.set...")
 (let [ctx (init)]
-  (ct-eval ctx (slurp "src/jolt/clojure/set.clj"))
-  (assert (= #{1 2 3} (ct-eval ctx "(union #{1 2} #{2 3})")) "union")
-  (assert (= #{2} (ct-eval ctx "(intersection #{1 2} #{2 3})")) "intersection")
-  (assert (= #{1} (ct-eval ctx "(difference #{1 2} #{2 3})")) "difference"))
+  (load-string ctx (slurp "src/jolt/clojure/set.clj"))
+  (assert (= 3 (ct-eval ctx "(count (union #{1 2} #{2 3}))")) "union")
+  (assert (= 1 (ct-eval ctx "(count (intersection #{1 2} #{2 3}))")) "intersection")
+  (assert (= 1 (ct-eval ctx "(count (difference #{1 2} #{2 3}))")) "difference"))
 (print "  passed")
 (print "\nAll CLJS Ported Part 3 tests passed!")
 

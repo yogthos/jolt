@@ -106,8 +106,10 @@
       (= name "if") (= name "def") (= name "defmacro") (= name "fn*")
       (= name "let*") (= name "loop*") (= name "recur") (= name "throw")
       (= name "try") (= name "set!") (= name "var") (= name ".")
+      (= name "eval")
       (= name "new") (= name "deftype") (= name "instance?")
-      (= name "defmulti") (= name "defmethod") (= name "locking")))
+      (= name "defmulti") (= name "defmethod") (= name "locking")
+      (= name "prefer-method") (= name "remove-method") (= name "remove-all-methods")))
 
 # ============================================================
 # Macro resolution

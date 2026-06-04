@@ -36,7 +36,8 @@
 (let [ctx (init)]
   (assert (= "hello" (ct-eval ctx "(str \"hello\")")) "str")
   (assert (= "42" (ct-eval ctx "(str 42)")) "str number")
-  (assert (= "a" (ct-eval ctx "(name :a)")) "name"))
+  (assert (= "a" (ct-eval ctx "(name :a)")) "name")
+  (assert (= ":hello" (ct-eval ctx "(pr-str :hello)")) "pr-str keyword"))
 (print "  ok")
 (print "17: apply...")
 (let [ctx (init)]
@@ -47,7 +48,8 @@
 (let [ctx (init)]
   (assert (= true (ct-eval ctx "(= {:a 1 :b 2} {:b 2 :a 1})")) "map order-independent")
   (assert (= false (ct-eval ctx "(= {:a 1} {:a 2})")) "map different values")
-  (assert (= 3 (ct-eval ctx "(count (quote (1 2 3)))")) "quote list count"))
+  (assert (= 1 (ct-eval ctx "(:a (with-meta {:a 1} {:c 3}))")) "with-meta preserves value")
+  (assert (= 3 (ct-eval ctx "(:c (with-meta {:a 1} {:c 3}))")) "with-meta preserves meta via get"))
 (print "  ok")
 (print "19: higher-order...")
 (let [ctx (init)]
@@ -58,6 +60,8 @@
 (print "20: seq edge cases...")
 (let [ctx (init)]
   (assert (= nil (ct-eval ctx "(seq [])")) "seq empty")
+  (assert (= nil (ct-eval ctx "(seq nil)")) "seq nil")
+  (assert (= nil (ct-eval ctx "(first nil)")) "first nil")
   (assert (= 1 (ct-eval ctx "(first [1 2 3])")) "first vector"))
 (print "  ok")
 (print "21: atoms extended...")
@@ -67,6 +71,7 @@
   (ct-eval ctx "(reset! a 42)")
   (assert (= 42 (ct-eval ctx "(deref a)")) "reset!")
   (ct-eval ctx "(swap! a inc)")
-  (assert (= 43 (ct-eval ctx "(deref a)")) "swap! inc"))
+  (assert (= 43 (ct-eval ctx "(deref a)")) "swap! inc")
+  (assert (= 43 (ct-eval ctx "@a")) "@ deref macro"))
 (print "  ok")
 (print "\nAll CLJS Ported Part 2 tests passed!")

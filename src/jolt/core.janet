@@ -343,15 +343,17 @@
 (defn core-take [n coll]
   (var result @[])
   (var i 0)
-  (while (and (< i n) (< i (length coll)))
-    (array/push result (coll i))
+  (var c (if (lazy-seq? coll) (realize-ls coll) coll))
+  (while (and (< i n) (< i (length c)))
+    (array/push result (c i))
     (++ i))
-  (if (tuple? coll) (tuple/slice (tuple ;result)) result))
+  (if (tuple? c) (tuple/slice (tuple ;result)) result))
 
 (defn core-drop [n coll]
-  (if (tuple? coll)
-    (tuple/slice coll (min n (length coll)))
-    (array/slice coll (min n (length coll)))))
+  (var c (if (lazy-seq? coll) (realize-ls coll) coll))
+  (if (tuple? c)
+    (tuple/slice c (min n (length c)))
+    (array/slice c (min n (length c)))))
 
 (defn core-take-while [pred coll]
   (var result @[])
@@ -360,59 +362,67 @@
   (if (tuple? coll) (tuple/slice (tuple ;result)) result))
 
 (defn core-drop-while [pred coll]
+  (var c (if (lazy-seq? coll) (realize-ls coll) coll))
   (var start 0)
-  (while (and (< start (length coll)) (pred (coll start)))
+  (while (and (< start (length c)) (pred (c start)))
     (++ start))
-  (if (tuple? coll)
-    (tuple/slice coll start)
-    (array/slice coll start)))
+  (if (tuple? c)
+    (tuple/slice c start)
+    (array/slice c start)))
 
 (defn core-concat [& colls]
   (var result @[])
   (each c colls
-    (each x c (array/push result x)))
+    (def c-realized (if (lazy-seq? c) (realize-ls c) c))
+    (each x c-realized (array/push result x)))
   result)
 
 (defn core-reverse [coll]
+  (var c (if (lazy-seq? coll) (realize-ls coll) coll))
   (var result @[])
-  (var i (dec (length coll)))
+  (var i (dec (length c)))
   (while (>= i 0)
-    (array/push result (coll i))
+    (array/push result (c i))
     (-- i))
-  (if (tuple? coll) (tuple/slice (tuple ;result)) result))
+  (if (tuple? c) (tuple/slice (tuple ;result)) result))
 
 (defn core-nth
   "Return the nth element of a sequential collection."
   [coll idx &opt default]
-  (if (and (>= idx 0) (< idx (length coll)))
-    (in coll idx)
+  (var c (if (lazy-seq? coll) (realize-ls coll) coll))
+  (if (and (>= idx 0) (< idx (length c)))
+    (in c idx)
     (if (nil? default)
-      (error (string "Index " idx " out of bounds, length: " (length coll)))
+      (error (string "Index " idx " out of bounds, length: " (length c)))
       default)))
 
 (defn core-sort [coll]
-  (let [arr (if (tuple? coll) (array/slice coll) coll)
+  (var c (if (lazy-seq? coll) (realize-ls coll) coll))
+  (let [arr (if (tuple? c) (array/slice c) c)
         sorted (sort arr)]
-    (if (tuple? coll) (tuple/slice (tuple ;sorted)) sorted)))
+    (if (tuple? c) (tuple/slice (tuple ;sorted)) sorted)))
 
 (defn core-sort-by [keyfn coll]
-  (let [arr (if (tuple? coll) (array/slice coll) coll)
+  (var c (if (lazy-seq? coll) (realize-ls coll) coll))
+  (let [arr (if (tuple? c) (array/slice c) c)
         sorted (sort-by keyfn arr)]
-    (if (tuple? coll) (tuple/slice (tuple ;sorted)) sorted)))
+    (if (tuple? c) (tuple/slice (tuple ;sorted)) sorted)))
 
 (defn core-distinct [coll]
   (var seen @{})
   (var result @[])
-  (each x coll
+  (var c (if (lazy-seq? coll) (realize-ls coll) coll))
+  (each x c
     (if (nil? (seen x))
       (do
         (put seen x true)
         (array/push result x))))
-  (if (tuple? coll) (tuple/slice (tuple ;result)) result))
+  (if (tuple? c) (tuple/slice (tuple ;result)) result))
 
 (defn core-group-by [f coll]
   (var result @{})
-  (each x coll
+  (var c (if (lazy-seq? coll) (realize-ls coll) coll))
+  (each x c
     (let [k (f x)]
       (put result k (array/push (core-get result k @[]) x))))
   result)
@@ -511,7 +521,7 @@
 (defn core-meta [x]
   "Returns the metadata of x, or nil."
   (if (var? x) (var-meta x)
-    (if (struct? x) (get x :meta) nil)))
+    (if (table? x) (or (get x :jolt/meta) (get x :meta)) nil)))
 
 (defn core-every-pred [& preds]
   (fn [x]
@@ -582,6 +592,14 @@
   @[{:jolt/type :symbol :ns nil :name "make-lazy-seq"}
     @[{:jolt/type :symbol :ns nil :name "fn*"} [] ;body]])
 
+(defn core-lazy-cat [& colls]
+  "Macro: (lazy-cat & colls) — concatenate lazy sequences, wrapping each coll in lazy-seq."
+  (def result @[])
+  (array/push result {:jolt/type :symbol :ns nil :name "concat"})
+  (each c colls
+    (array/push result @[{:jolt/type :symbol :ns nil :name "lazy-seq"} c]))
+  result)
+
 (defn core-set [coll]
   (apply core-hash-set (if (tuple? coll) (array/slice coll) coll)))
 
@@ -597,7 +615,7 @@
     (do
       (var result @[])
       (each x xs
-        (if (nil? x) nil  # skip nil
+        (if (nil? x) (array/push result "nil")
           (array/push result (if (string? x) x (string x)))))
       (string/join result ""))))
 
@@ -963,6 +981,20 @@
                  (do (put mm-var :jolt/prefers @{}) (mm-var :jolt/prefers)))]
     (put prefs dispatch-val-a dispatch-val-b) mm-var))
 
+(defn core-with-meta [obj meta]
+  (var new-obj @{})
+  (each k (keys obj)
+    (put new-obj k (get obj k)))
+  # table/setproto requires a table, convert struct meta to table
+  (var meta-tab @{})
+  (each k (keys meta) (put meta-tab k (get meta k)))
+  (table/setproto new-obj meta-tab)
+  (put new-obj :jolt/meta meta)
+  new-obj)
+
+(defn core-var-dynamic? [v]
+  (var-dynamic? v))
+
 # Java interop stubs
 (def core-Object (fn [] (struct ;[:jolt/type :jolt/java-object])))
 
@@ -1234,6 +1266,7 @@
     "keys" core-keys
     "vals" core-vals
     "select-keys" core-select-keys
+    "with-meta" core-with-meta
     "zipmap" core-zipmap
     "map" core-map
     "filter" core-filter
@@ -1274,6 +1307,7 @@
     "set?" core-set?
     "disj" core-disj
     "lazy-seq" core-lazy-seq
+    "lazy-cat" core-lazy-cat
     "make-lazy-seq" make-lazy-seq
     "str" core-str
     "name" core-name
@@ -1380,6 +1414,7 @@
     "var-get" core-var-get
     "var-set" core-var-set
     "var?" core-var?
+    "var-dynamic?" core-var-dynamic?
     "alter-var-root" core-alter-var-root
     "alter-meta!" core-alter-meta!
     "reset-meta!" core-reset-meta!
@@ -1399,7 +1434,7 @@
 (defn core-macro-names
   "Set of core binding names that are macros."
   []
-  @{"and" true "or" true "when" true "when-not" true "if-let" true "when-let" true "if-some" true "when-some" true "doto" true "defn" true "defn-" true "declare" true "fn" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "comment" true "binding" true "lazy-seq" true})
+  @{"and" true "or" true "when" true "when-not" true "if-let" true "when-let" true "if-some" true "when-some" true "doto" true "defn" true "defn-" true "declare" true "fn" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "comment" true "binding" true "lazy-seq" true "lazy-cat" true})
 
 (def init-core!
   (fn [& args]

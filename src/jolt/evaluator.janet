@@ -15,6 +15,7 @@
       (= name "def") (= name "defmacro") (= name "fn*") (= name "let*") (= name "loop*")
       (= name "recur") (= name "throw") (= name "try")
       (= name "set!") (= name "var") (= name "locking")
+      (= name "eval")
       (= name "instance?") (= name "defmulti") (= name "defmethod")
       (= name "deftype") (= name "new") (= name ".")
       (= name "var-get") (= name "var-set") (= name "var?")
@@ -22,7 +23,8 @@
       (= name "alter-meta!") (= name "reset-meta!")
       (= name "disj") (= name "set?")
       (= name "satisfies?")
-      (= name "protocol-dispatch") (= name "register-method") (= name "make-reified")))
+      (= name "protocol-dispatch") (= name "register-method") (= name "make-reified")
+      (= name "prefer-method") (= name "remove-method") (= name "remove-all-methods")))
 
 (var eval-form nil)
 
@@ -244,6 +246,7 @@
     "syntax-quote" (syntax-quote* ctx bindings (in form 1))
     "unquote" (error "Unquote not valid outside of syntax-quote")
     "unquote-splicing" (error "Unquote-splicing not valid outside of syntax-quote")
+    "eval" (eval-form ctx bindings (eval-form ctx bindings (in form 1)))
     "do" (do
            (var result nil)
            (var i 1)
@@ -259,10 +262,16 @@
     "def" (let [raw-name (in form 1)
                 name-sym (unwrap-meta-name raw-name)
                 val (eval-form ctx bindings (in form 2))
+                # Check for ^:dynamic metadata
+                dynamic? (and (array? raw-name) (> (length raw-name) 0)
+                             (sym-name? (first raw-name) "with-meta")
+                             (= :dynamic (last raw-name)))
                 ns-name (ctx-current-ns ctx)
                 ns (ctx-find-ns ctx ns-name)]
-            (ns-intern ns (name-sym :name) val)
-            (var-get (ns-intern ns (name-sym :name))))
+            (def v (ns-intern ns (name-sym :name) val))
+            (when dynamic?
+              (put v :dynamic true))
+            (var-get v))
     "defmacro" (let [name-sym (in form 1)
                      rest-form (tuple/slice form 2)
                      # optional docstring
@@ -458,15 +467,24 @@
                             (def kname (if (keyword? k) (string k) (k :name)))
                             (bind-put new-bindings kname (get val (keyword kname))))
                           (bind-put new-bindings (pat :name) val)))
-                      (if (indexed? pat)
+                        (if (indexed? pat)
                         # Sequential destructuring (vector pattern)
                         (do
                           (var di 0)
                           (while (< di (length pat))
                             (let [inner-pat (in pat di)]
-                              (if (struct? inner-pat)
-                                (bind-put new-bindings (inner-pat :name) (get val di))
-                                (bind-put new-bindings inner-pat (get val di))))
+                              (if (and (struct? inner-pat) (= :symbol (inner-pat :jolt/type)) (= "&" (inner-pat :name)))
+                                # & rest: next element gets (drop di val)
+                                (do
+                                  (+= di 1)
+                                  (when (< di (length pat))
+                                    (let [rest-pat (in pat di)]
+                                      (bind-put new-bindings
+                                        (if (struct? rest-pat) (rest-pat :name) rest-pat)
+                                        (tuple/slice val di)))))
+                                (if (struct? inner-pat)
+                                  (bind-put new-bindings (inner-pat :name) (get val di))
+                                  (bind-put new-bindings inner-pat (get val di)))))
                             (+= di 1)))
                         # Plain symbol binding
                         (bind-put new-bindings (pat :name) val)))
@@ -761,6 +779,33 @@
                              result)]
                   (put methods dispatch-val impl)
                   mm-var)
+    "prefer-method" (let [mm-arg (in form 1)
+                          mm-var (if (and (struct? mm-arg) (= :symbol (mm-arg :jolt/type)))
+                                  (resolve-var ctx bindings mm-arg)
+                                  (eval-form ctx bindings mm-arg))
+                          # Auto-create multimethod if it doesn't exist
+                          mm-var (if mm-var mm-var
+                                   (let [ns (ctx-find-ns ctx (ctx-current-ns ctx))
+                                         dummy-fn (fn [& args] nil)]
+                                     (def v (ns-intern ns (mm-arg :name) dummy-fn))
+                                     (put v :jolt/methods @{})
+                                     v))
+                          dispatch-val-a (eval-form ctx bindings (in form 2))
+                          dispatch-val-b (eval-form ctx bindings (in form 3))
+                          prefs (or (get mm-var :jolt/prefers)
+                                   (do (put mm-var :jolt/prefers @{}) (mm-var :jolt/prefers)))]
+                     (put prefs dispatch-val-a dispatch-val-b)
+                     mm-var)
+    "remove-method" (let [mm-var (eval-form ctx bindings (in form 1))
+                          dispatch-val (eval-form ctx bindings (in form 2))]
+                     (if mm-var
+                       (let [methods (get mm-var :jolt/methods)]
+                         (put methods dispatch-val nil)))
+                     mm-var)
+    "remove-all-methods" (let [mm-var (eval-form ctx bindings (in form 1))]
+                          (if mm-var
+                            (put mm-var :jolt/methods @{}))
+                          mm-var)
     "deftype" (let [raw-name (in form 1)
                     type-name (unwrap-meta-name raw-name)
                     fields-vec (in form 2)
@@ -792,9 +837,14 @@
                 ctor (eval-form ctx bindings type-sym)]
             (apply ctor args))
     "." (let [target (eval-form ctx bindings (in form 1))
-              member-sym (in form 2)
-              member-name (member-sym :name)
-              field-name (if (and (> (length member-name) 0) (= "-" (string/slice member-name 0 1)))
+              member-raw (in form 2)
+              # Resolve member name: symbols have :name, keywords use string, strings as-is
+              member-name (if (and (struct? member-raw) (= :symbol (member-raw :jolt/type)))
+                           (member-raw :name)
+                           (if (keyword? member-raw)
+                             (string member-raw)
+                             member-raw))
+              field-name (if (and (string? member-name) (> (length member-name) 0) (= "-" (string/slice member-name 0 1)))
                           (string/slice member-name 1)
                           member-name)]
           (if (> (length form) 3)
@@ -803,8 +853,20 @@
               (if (target :jolt/deftype)
                 (let [method-key (keyword field-name)]
                   (apply (get target method-key) target ;args))
-                (error (string "Cannot call method " field-name " on non-deftype"))))
-            # field access: (. obj field)
+                # Janet-native interop: try field lookup + call
+                (if (or (table? target) (struct? target))
+                  (let [method (get target (keyword field-name))]
+                    (if (or (function? method) (cfunction? method))
+                      (method target ;args)
+                      # If stored as fn* form (array), compile to function then call
+                      (if (array? method)
+                        (let [method-fn (eval-form ctx bindings method)]
+                          (if (or (function? method-fn) (cfunction? method-fn))
+                            (method-fn target ;args)
+                            (error (string "Cannot call non-function " field-name " on " (type target)))))
+                        (error (string "Cannot call non-function " field-name " on " (type target))))))
+                  (error (string "Cannot call method " field-name " on " (type target))))))
+            # field access: (. obj field) — works on tables, structs, and deftypes
             (get target (keyword field-name))))
     # default: function application — check for macros
     (if (and (struct? first-form) (= :symbol (first-form :jolt/type)))

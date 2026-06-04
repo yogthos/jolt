@@ -122,7 +122,7 @@
   [x]
   (and (table? x) (= :jolt/lazy-seq (x :jolt/type))))
 
-(defn- realize-ls
+(defn realize-ls
   "Force a LazySeq. Returns the realized value, caching it."
   [ls]
   (if (get ls :realized)

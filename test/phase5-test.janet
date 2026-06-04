@@ -56,4 +56,14 @@
   (assert (ct-eval ctx "(try (rmtest {:k :a}) (catch Exception e true))") "removed method errors"))
 (print "  passed")
 
+# 27. remove-all-methods
+(print "27: remove-all-methods...")
+(let [ctx (init)]
+  (ct-eval ctx "(defmulti alltest :k)")
+  (ct-eval ctx "(defmethod alltest :a [_] 1)")
+  (ct-eval ctx "(defmethod alltest :b [_] 2)")
+  (ct-eval ctx "(remove-all-methods (var alltest))")
+  (assert (ct-eval ctx "(try (alltest {:k :a}) (catch Exception e true))") "all methods removed errors"))
+(print "  passed")
+
 (print "\nAll Phase 5 tests passed!")

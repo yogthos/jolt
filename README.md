@@ -73,6 +73,38 @@ Runs all tests: API, bootstrap, core, evaluator, macro, namespace, reader, types
 
 `(init)` returns a context with `clojure.core` loaded. Pass it to `eval-string` to evaluate Clojure source. Each context is isolated — use separate contexts for separate evaluation environments.
 
+## Janet-native interop
+
+Jolt provides CLJS-style host interop through the `.` special form on any Janet table or struct:
+
+```clojure
+;; Field access on tables and structs
+user=> (def t {:a 1 :b 2})
+user=> (. t :a)          ;; → 1
+user=> (.-a t)           ;; → 1 (reader sugar)
+
+;; Method calls — self is passed as first arg
+user=> (def obj {:greet (fn [self name] (str "Hello " name))})
+user=> (. obj greet "Alice")  ;; → "Hello Alice"
+
+;; Multi-arg methods
+user=> (def calc {:add (fn [_ a b] (+ a b))})
+user=> (. calc add 3 4)       ;; → 7
+```
+
+Any table or struct field that holds a Janet function or C function can be called via `.` with implicit `self` dispatch. This pattern mirrors CLJS `.method` call semantics and unifies deftype protocol dispatch with plain Janet host interop.
+
+**Janet host functions** — Janet's standard library (`os/shell`, `net/request`, etc.) is accessible through Jolt's `jolt.interop` namespace:
+
+```clojure
+user=> (require '[jolt.interop :as j])
+user=> (j/janet-eval "(+ 1 2)")            ;; → 3
+user=> (j/janet-table-keys {:a 1 :b 2})    ;; → [:a :b]
+user=> (j/janet-describe "hello")           ;; → Janet type info
+```
+
+The existing `jolt.shell`, `jolt.http`, and `jolt.interop` modules demonstrate the pattern: Clojure functions call Janet C functions through the Jolt bridge.
+
 ## Project structure
 
 ```
