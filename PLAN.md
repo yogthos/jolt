@@ -96,6 +96,39 @@ Three layers:
 - ✅ 16 total CLJS ported test files, 440 assertions across 31 test files
 - ✅ 317/317 tests pass, 0 failing scripts
 
+### Phase 19: Clojure Conformance Hardening ✅
+
+Added `test/conformance.janet` — a harness that evaluates `(= expected actual)`
+inside jolt (using jolt's own `=`, i.e. real Clojure semantics), seeded from
+`~/src/clojure/test`. Drove fixes for a large class of real-Clojure idioms the
+bespoke `.janet` suite never exercised. **80/80 conformance, 46/46 legacy suite,
+0 SCI-load failures.**
+
+CRITICAL (core semantics):
+- Collections as IFn (`([v] i)`, `({m} k)`, `(#{s} x)`) via unified `jolt-invoke`
+- Unified vector representation on Janet tuples (PersistentVector was broken/disconnected)
+- `=`/`reduce`/`vec`/`into` now realize lazy-seqs; `into {}`/`into ()` fixed
+- Lazy `iterate`/`range`(infinite)/single-coll `map` (over lazy input)
+- Truly lazy `concat` → self-referential `lazy-cat`/`lazy-seq` work (`fib-seq`)
+
+HIGH:
+- Unified recursive destructuring (nested seq/map, `:strs`/`:syms`/`:or`/`:as`, fn-params)
+- `defn` docstring/attr-map handling (docstring'd fns were silently param-less)
+- Clojure `str`/`pr-str` (nil→"", keywords/symbols, collections render readably)
+- `update`/`update-in`/`assoc-in` on immutable maps; multimethod `:default` key dispatch
+- defrecord inline protocol methods with field scope
+- `require` loads stdlib namespaces from disk + aliased-ns resolution (`s/join`)
+
+MED:
+- New: peek/pop/subvec/reduce-kv/cycle/partition-all/reductions/dedupe/
+  keep-indexed/map-indexed/trampoline/format/read-string/fnil + letfn/doseq macros
+- Recursive `jolt-equal?` (nested sequential + order-independent map equality)
+- Lazy `filter`/`take-while`/`remove` over lazy input
+- REPL: lazy-seq printer walks full chain (capped); `def`/`defn` print `#'ns/name`
+
+Deferred (niche / opt-in): `transduce` + transducer arities; compiler-path IFn
+dispatch (the interpreter is the live path — `init` never enables `:compile?`).
+
 ### Phase 17: Optimization
 
 - Compiler improvements: inline small core functions
