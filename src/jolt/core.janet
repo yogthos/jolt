@@ -9,6 +9,10 @@
 # Predicates
 # ============================================================
 
+(defn core-char? [x] (and (struct? x) (= :jolt/char (x :jolt/type))))
+(defn char-code [c] (c :ch))
+(defn char->string [c] (string/from-bytes (c :ch)))
+
 (defn core-nil? [x] (nil? x))
 (defn core-not [x] (if x false true))
 (defn core-some? [x] (not (nil? x)))
@@ -302,15 +306,16 @@
     (core-sorted-set? coll) (let [i (coll :items)] (if (empty? i) nil (in i 0)))
     (lazy-seq? coll) (ls-first coll)
     (or (nil? coll) (= 0 (length coll))) nil
+    (string? coll) (make-char (in coll 0))
     (in coll 0)))
 
 (defn core-rest [coll]
-  (if (lazy-seq? coll) (ls-rest coll)
-    (if (or (nil? coll) (= 0 (length coll)))
-      @[]
-      (if (tuple? coll)
-        (tuple/slice coll 1)
-        (array/slice coll 1)))))
+  (cond
+    (lazy-seq? coll) (ls-rest coll)
+    (or (nil? coll) (= 0 (length coll))) @[]
+    (string? coll) (tuple ;(map make-char (string/bytes (string/slice coll 1))))
+    (tuple? coll) (tuple/slice coll 1)
+    (array/slice coll 1)))
 
 (defn core-next [coll]
   (let [r (core-rest coll)]
@@ -329,7 +334,7 @@
     (set? coll) (phs-seq coll)
     (phm? coll) (tuple ;(phm-entries coll))
     (tuple? coll) (tuple/slice coll)
-    (string? coll) (map |(string/from-bytes $) (string/bytes coll))
+    (string? coll) (if (= 0 (length coll)) nil (tuple ;(map make-char (string/bytes coll))))
     (struct? coll) (tuple ;(keys coll))
     coll))
 
@@ -662,7 +667,7 @@
     (do
       (var c (if (lazy-seq? coll) (realize-ls coll) coll))
       (if (and (>= idx 0) (< idx (length c)))
-        (in c idx)
+        (if (string? c) (make-char (in c idx)) (in c idx))
         (if (nil? default)
           (error (string "Index " idx " out of bounds, length: " (length c)))
           default)))))
@@ -1022,6 +1027,12 @@
       (string? v) (do (buffer/push-string buf "\"") (buffer/push-string buf v) (buffer/push-string buf "\""))
       (buffer? v) (do (buffer/push-string buf "\"") (buffer/push-string buf (string v)) (buffer/push-string buf "\""))
       (keyword? v) (do (buffer/push-string buf ":") (buffer/push-string buf (string v)))
+      (core-char? v) (do (buffer/push-string buf "\\")
+                         (buffer/push-string buf
+                           (case (v :ch)
+                             10 "newline" 32 "space" 9 "tab" 13 "return"
+                             12 "formfeed" 8 "backspace" 0 "nul"
+                             (char->string v))))
       (regex? v) (do (buffer/push-string buf "#\"") (buffer/push-string buf (v :source)) (buffer/push-string buf "\""))
       (number? v) (buffer/push-string buf (string v))
       (and (struct? v) (= :symbol (v :jolt/type)))
@@ -1046,6 +1057,7 @@
     (nil? v) ""
     (string? v) v
     (buffer? v) (string v)
+    (core-char? v) (char->string v)
     (keyword? v) (string ":" (string v))
     (and (struct? v) (= :symbol (v :jolt/type)))
       (if (v :ns) (string (v :ns) "/" (v :name)) (v :name))
@@ -1156,7 +1168,14 @@
 # Integer coercion
 # ============================================================
 
-(def core-int (fn [x] (math/trunc x)))
+(def core-int (fn [x] (if (core-char? x) (x :ch) (math/trunc x))))
+(defn core-char [x]
+  "(char code-or-char) -> a character value."
+  (cond
+    (core-char? x) x
+    (number? x) (make-char (math/trunc x))
+    (string? x) (make-char (in x 0))
+    (error "char expects a number or character")))
 (def core-unchecked-inc (fn [x] (+ x 1)))
 (def core-unchecked-dec (fn [x] (- x 1)))
 (def core-unchecked-add (fn [& xs] (+ ;xs)))
@@ -2487,6 +2506,8 @@
     "unsigned-bit-shift-right" core-unsigned-bit-shift-right
     # Integer coercion / unchecked math
     "int" core-int
+    "char" core-char
+    "char?" core-char?
     "unchecked-inc" core-unchecked-inc
     "unchecked-dec" core-unchecked-dec
     "unchecked-add" core-unchecked-add

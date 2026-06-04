@@ -8,6 +8,8 @@
 #   Maps {:a 1}     → Janet struct {:a 1}
 #   Sets #{1 2}     → tagged struct {:jolt/type :jolt/set :value [1 2]}
 
+(use ./types)
+
 # Forward declaration for mutual recursion
 (var read-form nil)
 
@@ -274,10 +276,10 @@
     pos))
 
 (defn read-char [s pos]
-  # pos is at backslash
+  # pos is at backslash; produce a char value directly (self-evaluating)
   (let [end (read-char-name-end s (+ pos 1))
         char-name (string/slice s (+ pos 1) end)]
-    [{:jolt/type :char :name char-name} end]))
+    [(char-from-name char-name) end]))
 
 (defn read-anon-fn [s pos]
   # pos is at #, next char is (

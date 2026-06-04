@@ -128,13 +128,13 @@
 (assert (deep= @[(sym "+") 1 3] (parse-string "(+ 1 #?(:clj 3 :cljs 4))"))
         "#? inside list picks :clj")
 
-# Characters
+# Characters — the reader now produces char values {:jolt/type :jolt/char :ch N}
 (let [form (parse-string "\\newline")]
   (assert (struct? form) "char is struct")
-  (assert (= :char (form :jolt/type)) "char type")
-  (assert (= "newline" (form :name)) "char name"))
+  (assert (= :jolt/char (form :jolt/type)) "char type")
+  (assert (= 10 (form :ch)) "newline codepoint"))
 
 (let [form (parse-string "\\a")]
-  (assert (= "a" (form :name)) "simple char name"))
+  (assert (= 97 (form :ch)) "simple char codepoint"))
 
 (print "All reader tests passed!")

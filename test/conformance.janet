@@ -226,6 +226,23 @@
    ### ==== printing ====
    ["pr-str vec"        "\"[1 2 3]\"" "(pr-str [1 2 3])"]
    ["prn-str"           "\"1\\n\"" "(prn-str 1)"]
+
+   ### ==== characters ====
+   ["char?"             "true"  "(char? \\a)"]
+   ["char not string"   "false" "(= \\a \"a\")"]
+   ["char eq"           "true"  "(= \\a \\a)"]
+   ["int of char"       "97"    "(int \\a)"]
+   ["char of int"       "true"  "(= \\A (char 65))"]
+   ["str of chars"      "\"abc\"" "(str \\a \\b \\c)"]
+   ["seq of string"     "(quote (\\a \\b))" "(seq \"ab\")"]
+   ["first of string"   "\\h"   "(first \"hello\")"]
+   ["nth of string"     "\\e"   "(nth \"hello\" 1)"]
+   ["char newline"      "10"    "(int \\newline)"]
+   ["char space"        "32"    "(int \\space)"]
+   ["char unicode"      "65"    "(int \\u0041)"]
+   ["pr-str char"       "\"\\\\a\"" "(pr-str \\a)"]
+   ["chars in vec"      "[\\a \\b]" "[\\a \\b]"]
+   ["apply str chars"   "\"hi\"" "(apply str [\\h \\i])"]
   ])
 
 (var pass 0)

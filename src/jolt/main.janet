@@ -4,6 +4,7 @@
 (use ./api)
 (use ./types)
 (use ./phm)
+(use ./reader)
 
 (def ctx (init))
 (ctx-set-current-ns ctx "user")
@@ -140,6 +141,12 @@
     (number? v) (push-str buf (string v))
     (string? v) (push-str buf v)
     (keyword? v) (do (push-str buf ":") (push-str buf (string v)))
+    (and (struct? v) (= :jolt/char (get v :jolt/type)))
+    (do (push-str buf "\\")
+        (push-str buf (case (v :ch)
+                        10 "newline" 32 "space" 9 "tab" 13 "return"
+                        12 "formfeed" 8 "backspace" 0 "nul"
+                        (string/from-bytes (v :ch)))))
     (and (struct? v) (= :symbol (get v :jolt/type)))
     (let [ns (get v :ns) name (get v :name)]
       (if ns
@@ -161,12 +168,25 @@
   (print "Type (exit) to quit.\n")
 
   (var running true)
+  (var pending "")   # accumulates a form split across multiple input lines
   (while running
-    (let [line (read-line (string (ctx-current-ns ctx) "=> "))]
-      (if (nil? line) (set running false)
-        (if (= line "(exit)") (set running false)
-          (if (not (= "" line))
-            (try
-              (print-value (eval-string ctx line))
-              ([err]
-               (eprint "Error: " err)))))))))
+    (let [prompt (if (= pending "") (string (ctx-current-ns ctx) "=> ") "  #_=> ")
+          line (read-line prompt)]
+      (cond
+        (nil? line) (set running false)
+        (let [input (if (= pending "") line (string pending "\n" line))
+              trimmed (string/trim input)]
+          (cond
+            (= trimmed "(exit)") (set running false)
+            (= trimmed "") (set pending "")
+            # Try to parse the accumulated input; if it's an incomplete form
+            # (unterminated list/vector/map/string), keep reading more lines.
+            (let [parsed (protect (parse-string input))]
+              (if (and (= (parsed 0) false)
+                       (string/find "nterminated" (string (parsed 1))))
+                (set pending input)
+                (do
+                  (set pending "")
+                  (try
+                    (print-value (eval-string ctx input))
+                    ([err] (eprint "Error: " err))))))))))))

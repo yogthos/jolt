@@ -1139,6 +1139,8 @@
     (struct? form)
     (if (= :symbol (form :jolt/type))
       (resolve-sym ctx bindings form)
+      (if (= :jolt/char (form :jolt/type))
+        form
       (if (= :jolt/set (form :jolt/type))
         (apply make-phs (form :value))
       (if (= :jolt/tagged (form :jolt/type))
@@ -1152,7 +1154,7 @@
             (error (string "No reader function for tag " tag))))
       (if (get form :jolt/type)
         (error (string "Unexpected tagged form: " (form :jolt/type)))
-        form))))
+        form)))))
     (array? form)
     (if (= 0 (length form))
       @[]
