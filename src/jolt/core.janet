@@ -2634,7 +2634,8 @@
 
 # Exceptions (ex-info / ex-data / ex-message)
 (defn core-ex-info [msg data & more]
-  @{:jolt/type :jolt/ex-info :message msg :data data})
+  @{:jolt/type :jolt/ex-info :message msg :data data
+    :cause (if (> (length more) 0) (in more 0) nil)})
 (defn core-ex-info? [x] (and (table? x) (= :jolt/ex-info (x :jolt/type))))
 (defn- unwrap-ex [e]
   (if (and (or (table? e) (struct? e)) (= :jolt/exception (get e :jolt/type))) (get e :value) e))
@@ -2766,6 +2767,44 @@
             (rf (in a 0) (in a 1))))))))
 (defn core-re-groups [m] (error "re-groups: stateful matchers are not supported in Jolt"))
 
+# Transients — Jolt's collections are persistent, so transients are correctness-
+# only aliases (no in-place optimization, but semantically correct).
+(defn core-transient [coll] coll)
+(defn core-persistent! [coll] coll)
+(defn core-conj! [coll & xs] (apply core-conj coll xs))
+(defn core-assoc! [coll & kvs] (apply core-assoc coll kvs))
+(defn core-dissoc! [coll & ks] (apply core-dissoc coll ks))
+(defn core-pop! [coll] (core-pop coll))
+
+# Unchecked arithmetic — Jolt numbers don't overflow, so these are plain ops.
+(defn core-unchecked-add [a b] (+ a b))
+(defn core-unchecked-subtract [a b] (- a b))
+(defn core-unchecked-multiply [a b] (* a b))
+(defn core-unchecked-negate [a] (- a))
+(defn core-unchecked-inc [a] (+ a 1))
+(defn core-unchecked-dec [a] (- a 1))
+(defn core-unchecked-divide-int [a b] (math/trunc (/ a b)))
+(defn core-unchecked-remainder-int [a b] (% a b))
+(defn core-unchecked-int [a] (math/trunc a))
+
+# Hashing helpers
+# Hashes are masked to 24 bits at each step so intermediate products stay within
+# Janet's integer range (a float here would make band error).
+(defn- h24 [x] (band (hash x) 0xffffff))
+(defn core-hash-combine [a b] (band (bxor (h24 a) (+ (h24 b) 0x9e3779)) 0xffffff))
+(defn core-hash-ordered-coll [coll]
+  (var h 1) (each x (realize-for-iteration coll) (set h (band (+ (* 31 h) (h24 x)) 0xffffff))) h)
+(defn core-hash-unordered-coll [coll]
+  (var h 0) (each x (realize-for-iteration coll) (set h (band (+ h (h24 x)) 0xffffff))) h)
+
+(defn core-ex-cause [e] (and (table? e) (get e :cause)))
+(defn core-prefers [mm-var] (or (get mm-var :jolt/prefers) {}))
+
+(defn core-random-uuid []
+  (defn hx [n] (string/format "%x" (math/floor (* (math/random) n))))
+  (string (hx 0x10000) (hx 0x10000) "-" (hx 0x10000) "-4" (hx 0x1000)
+          "-" (hx 0x1000) "-" (hx 0x10000) (hx 0x10000) (hx 0x10000)))
+
 (def- core-bindings
   "Map of symbol name → function for all core functions."
   @{"nil?" core-nil?
@@ -2891,6 +2930,34 @@
     "unreduced" core-unreduced
     "halt-when" core-halt-when
     "re-groups" core-re-groups
+    "transient" core-transient
+    "persistent!" core-persistent!
+    "conj!" core-conj!
+    "assoc!" core-assoc!
+    "dissoc!" core-dissoc!
+    "pop!" core-pop!
+    "unchecked-add" core-unchecked-add
+    "unchecked-add-int" core-unchecked-add
+    "unchecked-subtract" core-unchecked-subtract
+    "unchecked-subtract-int" core-unchecked-subtract
+    "unchecked-multiply" core-unchecked-multiply
+    "unchecked-multiply-int" core-unchecked-multiply
+    "unchecked-negate" core-unchecked-negate
+    "unchecked-negate-int" core-unchecked-negate
+    "unchecked-inc" core-unchecked-inc
+    "unchecked-inc-int" core-unchecked-inc
+    "unchecked-dec" core-unchecked-dec
+    "unchecked-dec-int" core-unchecked-dec
+    "unchecked-divide-int" core-unchecked-divide-int
+    "unchecked-remainder-int" core-unchecked-remainder-int
+    "unchecked-int" core-unchecked-int
+    "unchecked-long" core-unchecked-int
+    "hash-combine" core-hash-combine
+    "hash-ordered-coll" core-hash-ordered-coll
+    "hash-unordered-coll" core-hash-unordered-coll
+    "ex-cause" core-ex-cause
+    "prefers" core-prefers
+    "random-uuid" core-random-uuid
     "ffirst" core-ffirst
     "nfirst" core-nfirst
     "fnext" core-fnext

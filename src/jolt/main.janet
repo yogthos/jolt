@@ -96,10 +96,9 @@
     (do
       (push-str buf "#{")
       (var first? true)
-      (each k (keys (v :phm))
-        (when (not= k :jolt/deftype)
-          (if first? (set first? false) (push-str buf " "))
-          (write-value k buf)))
+      (each k (phs-seq v)
+        (if first? (set first? false) (push-str buf " "))
+        (write-value k buf))
       (push-str buf "}"))
 
     (and (table? v) (= :jolt/regex (v :jolt/type)))
