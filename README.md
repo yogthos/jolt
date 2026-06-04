@@ -1,58 +1,34 @@
 # Jolt
 
-A Clojure interpreter running on [Janet](https://janet-lang.org). Jolt reads Clojure source text, evaluates it using an interpreter written in pure Janet, and exposes a Clojure-compatible standard library. The goal is a Janet-hosted [SCI](https://github.com/borkdude/sci) runtime — minimal bootstrapping, with SCI as the standard library.
+A Clojure interpreter running on [Janet](https://janet-lang.org). Jolt reads Clojure source, evaluates it with an interpreter written in pure Janet, and ships a Clojure-compatible standard library. The goal is a Janet-hosted [SCI](https://github.com/borkdude/sci) runtime — a minimal bootstrap that loads SCI's Clojure source as its standard library.
 
-## What's inside
-
-Jolt implements the core of Clojure in a single-process Janet project:
-
-**Reader** — A recursive descent parser for Clojure syntax: symbols, keywords, numbers, strings, characters, lists, vectors, maps, sets, quote forms, reader macros (`#()`, `#_`, `#?`), metadata, deref, and tagged literals.
-
-**Evaluator** — A tree-walking interpreter with 22 special forms (`quote`, `do`, `if`, `def`, `defmacro`, `fn*`, `let*`, `loop*`/`recur`, `throw`, `try`, `set!`, `var`, `locking`, `instance?`, `defmulti`, `defmethod`, `deftype`, `new`, `.`, etc.), syntax-quote with unquote and unquote-splicing, a macro system with `&env` support, destructuring (`:keys` and sequential), and namespace forms (`ns`, `require`, `in-ns`).
-
-**Core library** — 145+ bindings from `clojure.core`: predicates, math with Clojure arity semantics, comparison, collections, sequences, higher-order functions, string functions, I/O, atoms, macros (`when`, `when-not`, `if-let`, `when-let`, `if-some`, `when-some`, `doto`, `fn`, `let`, `defn`, `defrecord`, `defprotocol`), and SCI bootstrap stubs.
-
-**SCI bootstrap** — All 317 forms from SCI's 9 core source files (`macros`, `protocols`, `types`, `unrestrict`, `vars`, `lang`, `utils`, `namespaces`, `core`) load with zero failures. 46 namespaces are populated with 900+ bindings. SCI's `eval-string` is replaced with a Jolt-native implementation.
-
-## Quick start
+## Build
 
 ```bash
 git clone https://github.com/yogthos/jolt.git
 cd jolt
 git submodule update --init   # pulls vendor/sci
-jpm build                      # compiles build/jolt
-build/jolt                     # drops into REPL
+jpm build                     # compiles build/jolt
 ```
 
-## Build
-
-```
-jpm build
-```
-
-This compiles `src/jolt/*.janet` into a standalone `build/jolt` executable. Requires Janet ≥ 1.36 and `jpm`.
+Requires Janet ≥ 1.36 and `jpm`.
 
 ## Run
 
 ```
 build/jolt                 # start a REPL
-build/jolt file.clj [args] # run a Clojure file (binds *command-line-args*)
+build/jolt file.clj [args] # run a file (binds *command-line-args* and *file*)
 build/jolt -e EXPR [args]  # evaluate EXPR and print the result
 build/jolt -h              # help
 ```
 
-With no arguments it drops into a read-eval-print loop (multi-line forms are
-accumulated until balanced):
+The REPL accumulates multi-line forms until they balance:
 
 ```
-user=> (+ 1 2)
-3
-user=> (map inc [1 2 3])
-[2 3 4]
 user=> (defn fib [n] (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))
 #'user/fib
-user=> (fib 10)
-55
+user=> (map fib (range 10))
+(0 1 1 2 3 5 8 13 21 34)
 ```
 
 Running a file evaluates its top-level forms:
@@ -63,72 +39,54 @@ $ build/jolt hello.clj
 hello 42
 ```
 
-## Test
-
-```
-jpm test
-```
-
-Runs all tests: API, bootstrap, core, evaluator, macro, namespace, reader, types, and SCI load.
-
 ## Use as a library
 
 ```janet
 (use jolt/api)
 
 (def ctx (init))
-(eval-string ctx "(+ 1 2)")       ;; → 3
-(eval-string ctx "(map inc [1 2 3])") ;; → [2 3 4]
-(eval-string ctx "(def x 42)")    ;; → #'user/x
-(eval-string ctx "x")             ;; → 42
+(eval-string ctx "(+ 1 2)")            # → 3
+(eval-string ctx "(map inc [1 2 3])")  # → [2 3 4]
 ```
 
-`(init)` returns a context with `clojure.core` loaded. Pass it to `eval-string` to evaluate Clojure source. Each context is isolated — use separate contexts for separate evaluation environments.
+`(init)` returns a context with `clojure.core` loaded. Each context is isolated; use separate contexts for separate environments.
 
-## Janet-native interop
+## Host interop
 
-Jolt provides CLJS-style host interop through the `.` special form on any Janet table or struct:
+Jolt exposes CLJS-style host interop through `.` on any Janet table or struct — a field holding a function is called with the receiver as the first argument:
 
 ```clojure
-;; Field access on tables and structs
-user=> (def t {:a 1 :b 2})
-user=> (. t :a)          ;; → 1
-user=> (.-a t)           ;; → 1 (reader sugar)
-
-;; Method calls — self is passed as first arg
-user=> (def obj {:greet (fn [self name] (str "Hello " name))})
-user=> (. obj greet "Alice")  ;; → "Hello Alice"
-
-;; Multi-arg methods
-user=> (def calc {:add (fn [_ a b] (+ a b))})
-user=> (. calc add 3 4)       ;; → 7
+(def obj {:greet (fn [self name] (str "Hello " name))})
+(. obj greet "Alice")   ; → "Hello Alice"
+(.-greet obj)           ; field access (reader sugar for (. obj :greet))
 ```
 
-Any table or struct field that holds a Janet function or C function can be called via `.` with implicit `self` dispatch. This pattern mirrors CLJS `.method` call semantics and unifies deftype protocol dispatch with plain Janet host interop.
-
-**Janet host functions** — Janet's standard library (`os/shell`, `net/request`, etc.) is accessible through Jolt's `jolt.interop` namespace:
+Janet's standard library is reachable through `jolt.interop` (and the `jolt.shell` / `jolt.http` helpers built on it):
 
 ```clojure
-user=> (require '[jolt.interop :as j])
-user=> (j/janet-eval "(+ 1 2)")            ;; → 3
-user=> (j/janet-table-keys {:a 1 :b 2})    ;; → [:a :b]
-user=> (j/janet-describe "hello")           ;; → Janet type info
+(require '[jolt.interop :as j])
+(j/janet-type [1 2])              ; → :tuple
+(j/janet-table-keys {:a 1 :b 2})  ; → [:b :a]
 ```
 
-The existing `jolt.shell`, `jolt.http`, and `jolt.interop` modules demonstrate the pattern: Clojure functions call Janet C functions through the Jolt bridge.
+## Differences from Clojure
 
-## Project structure
+Jolt targets Clojure semantics but runs on Janet, not the JVM. The notable divergences:
+
+- **Host platform.** No JVM and no Java interop — `import`, `gen-class`, `proxy` of Java classes, and `java.*` are unavailable. `instance?` recognizes a small set of built-in types (`clojure.lang.Atom`, `Number`, `String`, …).
+- **Numbers.** Janet integers and doubles only — no bignums, ratios, or `BigDecimal`. `(/ 1 3)` is `0.3333…`, large products lose precision, and there are no auto-promoting `+'`/`*'`. `quot`/`rem`/`mod` follow Clojure's sign rules. `bigint`, `rational?`, and `class` are not provided.
+- **Collections.** Vectors are Janet tuples, lists are Janet arrays; maps and sets are persistent hash structures. Value equality and sequence operations are Clojure-compatible, but hash-map/hash-set iteration order is unspecified and differs from Clojure — use `sorted-map`/`sorted-set` when order matters.
+- **Concurrency / STM.** Single-threaded. No refs, `dosync`, agents, or `send`; `locking` evaluates its body without real locking. Atoms, volatiles, and delays are supported.
+- **Regex.** Compiled to Janet's PEG engine (Janet has no regex). Supported: capturing groups (`[whole g1 …]`), greedy and lazy quantifiers with backtracking, `(?:…)`, lookahead `(?=…)`/`(?!…)`, alternation, anchors `^ $ \b \B`, character classes, and the `(?i)` flag. Not supported: lookbehind, backreferences (`\1`), and named groups (`(?<name>…)`).
+- **Not implemented.** Transients (`transient`/`persistent!`), JVM reflection, and `proxy`. (`reify` and `extend-protocol` work for Jolt protocols.)
+
+Supported and Clojure-compatible: chars as a distinct type, lazy/infinite sequences, transducers, destructuring, multimethods with hierarchies, protocols/records, metadata, namespaces, and the reader (`#()`, `#_`, `#?`, tagged literals, `#"…"`).
+
+## Test
 
 ```
-src/jolt/
-  types.janet       — Var, Namespace, Context, symbol helpers
-  reader.janet      — recursive descent parser for Clojure syntax
-  evaluator.janet   — tree-walking interpreter
-  core.janet        — 145+ clojure.core bindings
-  api.janet         — public API: init, eval-string, eval-string*
-  main.janet        — REPL entry point
-test/                — 8 test suites + SCI load test
-vendor/sci/          — SCI submodule (git submodule)
+jpm test                       # full test suite
+janet test/conformance.janet   # Clojure-conformance battery
 ```
 
 ## License
