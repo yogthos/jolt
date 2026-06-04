@@ -499,25 +499,26 @@
           nil)))))
 
 (defn core-concat [& colls]
-  "Lazy concatenation. Each rest-thunk captures its own (cur, cs) state
-  so that independent traversal paths do not corrupt each other."
+  "Truly lazy concatenation. `step` returns a 0-arg thunk that is only forced
+  when the consumer asks for the next cell, so nothing in `colls` is realized at
+  construction time. This is essential for self-referential lazy seqs (e.g.
+  (def fib (lazy-cat [0 1] (map + (rest fib) fib)))): the later colls must not be
+  forced until after the surrounding `def` has bound the var."
   (defn step [cs]
-    (if (= 0 (length cs))
-      (fn [] nil)
-      (let [c (in cs 0)
-            remaining (array/slice cs 1)]
-        (if (lazy-seq? c)
-          (let [val (ls-first c)]
-            (if (nil? val) (step remaining)
-              (let [rest-ls (ls-rest c)
-                    next-step (step (array/insert remaining 0 rest-ls))]
-                (fn [] @[val next-step]))))
-          (let [cell (coll->cells c)]
-            (if (nil? cell) (step remaining)
-              (let [rest-fn (in cell 1)
-                    next-step (if (nil? rest-fn) (step remaining)
-                                (step (array/insert remaining 0 rest-fn)))]
-                (fn [] @[(in cell 0) next-step]))))))))
+    (fn []
+      (if (= 0 (length cs))
+        nil
+        (let [c (in cs 0)
+              remaining (array/slice cs 1)
+              cell (coll->cells c)]
+          (if (nil? cell)
+            # current coll is empty: advance to the next one
+            ((step remaining))
+            (let [val (in cell 0)
+                  rest-fn (in cell 1)]
+              @[val (step (if (nil? rest-fn)
+                            remaining
+                            (array/insert remaining 0 rest-fn)))]))))))
   (make-lazy-seq (step (if (tuple? colls) (array/slice colls) colls))))
 
 (defn core-reverse [coll]
