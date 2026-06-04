@@ -1646,14 +1646,18 @@
     (var i 0)
     (while (< i (length bvec))
       (def bind (bvec i))
-      (def coll (bvec (+ i 1)))
+      (var coll (bvec (+ i 1)))
       (def mods @[])
       (+= i 2)
       (while (and (< i (length bvec)) (keyword? (bvec i)))
         (case (bvec i)
           :when (do (array/push mods @[{:jolt/type :symbol :ns nil :name "when"} (bvec (+ i 1))]) (+= i 2))
           :let (do (array/push mods @[{:jolt/type :symbol :ns nil :name "let"} (bvec (+ i 1))]) (+= i 2))
-          :while (do (+= i 2))
+          # :while terminates iteration of this binding's collection
+          :while (do (set coll @[{:jolt/type :symbol :ns nil :name "take-while"}
+                                 @[{:jolt/type :symbol :ns nil :name "fn"} [bind] (bvec (+ i 1))]
+                                 coll])
+                     (+= i 2))
           (do (+= i 1))))
       (array/push groups @[bind coll mods]))
     groups)
@@ -1998,9 +2002,11 @@
   # map-> factory: (def map->TypeName (fn [m] (->TypeName (get m :field1) (get m :field2) ...)))
   (def map-call @[{:jolt/type :symbol :ns nil :name arrow-name}])
   (each f fields-vec
-    (array/push map-call @[{:jolt/type :symbol :ns nil :name "core-get"} {:jolt/type :symbol :ns nil :name (string "m")} (keyword (f :name))]))
+    (array/push map-call @[{:jolt/type :symbol :ns nil :name "get"} {:jolt/type :symbol :ns nil :name (string "m")} (keyword (f :name))]))
   (def map-sym {:jolt/type :symbol :ns nil :name map-name})
-  (def map-body @[{:jolt/type :symbol :ns nil :name "fn"} @[{:jolt/type :symbol :ns nil :name (string "m")}] map-call])
+  # params must be a tuple (a vector), not an array — fn* treats an array
+  # first-arg as multi-arity clauses
+  (def map-body @[{:jolt/type :symbol :ns nil :name "fn"} [{:jolt/type :symbol :ns nil :name "m"}] map-call])
   
   (def out @[{:jolt/type :symbol :ns nil :name "do"}
     dt-form

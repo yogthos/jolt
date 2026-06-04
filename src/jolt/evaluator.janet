@@ -466,6 +466,42 @@
                   (destructure-bind ctx bindings k v))))))
       true (error (string "Unsupported destructuring pattern: " (string/format "%q" pat))))))
 
+# ---- host-type protocol extension (extend-protocol String/Number/... ) ----
+(def- host-type-names
+  {"Long" true "Integer" true "Short" true "Byte" true "BigInteger" true "BigInt" true
+   "Double" true "Float" true "Number" true "BigDecimal" true "Ratio" true
+   "String" true "CharSequence" true "Boolean" true "Character" true
+   "Keyword" true "Symbol" true "Object" true "IFn" true "Fn" true
+   "PersistentVector" true "PersistentList" true "PersistentHashMap" true
+   "PersistentHashSet" true "IPersistentMap" true "IPersistentVector" true
+   "IPersistentSet" true "IPersistentCollection" true "ISeq" true "Atom" true "nil" true})
+
+(defn- canonical-host-tag
+  "If type-name names a host type (optionally java.*/clojure.lang.* qualified),
+  return its bare canonical name; else nil (it's a deftype/record name)."
+  [type-name]
+  (let [base (cond
+               (string/has-prefix? "java.lang." type-name) (string/slice type-name 10)
+               (string/has-prefix? "java.util." type-name) (string/slice type-name 10)
+               (string/has-prefix? "clojure.lang." type-name) (string/slice type-name 13)
+               type-name)]
+    (if (get host-type-names base) base nil)))
+
+(defn- value-host-tags
+  "Candidate host type-tags for a runtime value, most-specific first."
+  [obj]
+  (cond
+    (number? obj) ["Long" "Integer" "Number" "Double" "Object"]
+    (string? obj) ["String" "CharSequence" "Object"]
+    (or (= true obj) (= false obj)) ["Boolean" "Object"]
+    (keyword? obj) ["Keyword" "Object"]
+    (and (struct? obj) (= :jolt/char (get obj :jolt/type))) ["Character" "Object"]
+    (and (struct? obj) (= :symbol (get obj :jolt/type))) ["Symbol" "Object"]
+    (or (tuple? obj) (array? obj)) ["PersistentVector" "IPersistentVector" "IPersistentCollection" "ISeq" "Object"]
+    (or (function? obj) (cfunction? obj)) ["IFn" "Fn" "Object"]
+    (nil? obj) ["nil" "Object"]
+    ["Object"]))
+
 # Dispatch a special form by its string name.
 (defn- unwrap-meta-name
   "Recursively unwrap (with-meta sym meta) forms to extract the underlying symbol.
@@ -884,14 +920,24 @@
                               (let [fn (find-protocol-method ctx type-tag proto-name method-name)]
                                 (if fn (apply fn obj rest-args)
                                   (error (string "No method " method-name " in " proto-name " for " type-tag))))
-                              (error (string "No dispatch for " method-name " on " (type obj))))))
+                              # host value: try candidate host type-tags (Long/String/Object/...)
+                              (let [cands (value-host-tags obj)]
+                                (var found nil)
+                                (each tag cands
+                                  (when (nil? found)
+                                    (set found (find-protocol-method ctx tag proto-name method-name))))
+                                (if found (apply found obj rest-args)
+                                  (error (string "No dispatch for " method-name " on " (type obj))))))))
     "register-method" (let [type-sym (in form 1)
                             proto-sym (in form 2)
                             method-sym (in form 3)
                             fn (eval-form ctx bindings (in form 4))
                             ns-name (ctx-current-ns ctx)
                             type-name (type-sym :name)
-                            type-tag (string ns-name "." type-name)
+                            host (canonical-host-tag type-name)
+                            # host types register under a bare canonical tag;
+                            # deftype/record names stay namespace-qualified
+                            type-tag (if host host (string ns-name "." type-name))
                             proto-name (proto-sym :name)
                             method-name (method-sym :name)]
                        (register-protocol-method ctx type-tag proto-name method-name fn))
