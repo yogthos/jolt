@@ -867,6 +867,15 @@
       (each x xs (array/push result (str-render-one x)))
       (string/join result ""))))
 
+(defn core-str-join
+  "clojure.string/join: stringify each element (Clojure semantics), then join."
+  [coll &opt sep]
+  (default sep "")
+  (let [items (realize-for-iteration coll)
+        parts @[]]
+    (each x items (array/push parts (str-render-one x)))
+    (string/join parts (str-render-one sep))))
+
 (defn core-name
   "Returns the name string of a keyword, symbol, or string."
   [x]
@@ -1975,7 +1984,7 @@
     "str-replace" string/replace
     "str-replace-all" string/replace-all
     "str-reverse-b" string/reverse
-    "str-join" string/join
+    "str-join" core-str-join
     "str-split" string/split
     "str-triml" string/triml
     "str-trimr" string/trimr

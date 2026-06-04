@@ -3,6 +3,7 @@
 
 (use ./types)
 (use ./phm)
+(use ./reader)
 
 (defn- sym-name?
   [sym-s name-str]
@@ -129,6 +130,38 @@
   [sym-s]
   (if (sym-s :ns) (string (sym-s :ns) "/" (sym-s :name)) (sym-s :name)))
 
+(defn- ns->path
+  "Map a namespace name to its Jolt stdlib source path (dots->dirs, dashes->_)."
+  [ns-name]
+  (string "src/jolt/"
+          (string/replace-all "." "/" (string/replace-all "-" "_" ns-name))
+          ".clj"))
+
+(defn- load-ns-file
+  "Parse and evaluate every form in a .clj file in the given context."
+  [ctx path]
+  (var s (slurp path))
+  (while (> (length (string/trim s)) 0)
+    (def [f r] (parse-next s))
+    (set s r)
+    (when (not (nil? f)) (eval-form ctx @{} f))))
+
+(defn- maybe-require-ns
+  "If namespace ns-name isn't populated yet and a stdlib source file exists,
+  load it. Restores the current namespace afterwards (the file's `ns` form
+  changes it). No-op for already-loaded namespaces."
+  [ctx ns-name]
+  (let [ns (ctx-find-ns ctx ns-name)]
+    (when (and (= 0 (length (ns :mappings))) (not= ns-name "clojure.core"))
+      (let [path (ns->path ns-name)]
+        (when (os/stat path)
+          (let [saved (ctx-current-ns ctx)]
+            # Jolt stdlib files have no `ns` form; switch into the target ns so
+            # their defs intern there, then restore.
+            (ctx-set-current-ns ctx ns-name)
+            (load-ns-file ctx path)
+            (ctx-set-current-ns ctx saved)))))))
+
 (defn- eval-require
   [ctx spec]
   (let [ns-sym (in spec 0)
@@ -149,7 +182,7 @@
                 (set refer-syms (in spec (+ i 1)))
                 (set i slen))
               (++ i))))))
-    (ctx-find-ns ctx ns-name)
+    (maybe-require-ns ctx ns-name)
     (when alias
       (let [current-ns (ctx-find-ns ctx (ctx-current-ns ctx))]
         (ns-import current-ns alias ns-name)))
