@@ -35,10 +35,14 @@ This compiles `src/jolt/*.janet` into a standalone `build/jolt` executable. Requ
 ## Run
 
 ```
-build/jolt
+build/jolt                 # start a REPL
+build/jolt file.clj [args] # run a Clojure file (binds *command-line-args*)
+build/jolt -e EXPR [args]  # evaluate EXPR and print the result
+build/jolt -h              # help
 ```
 
-Drops into a read-eval-print loop where you can type Clojure expressions:
+With no arguments it drops into a read-eval-print loop (multi-line forms are
+accumulated until balanced):
 
 ```
 user=> (+ 1 2)
@@ -49,6 +53,14 @@ user=> (defn fib [n] (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))
 #'user/fib
 user=> (fib 10)
 55
+```
+
+Running a file evaluates its top-level forms:
+
+```
+$ echo '(println "hello" (* 6 7))' > hello.clj
+$ build/jolt hello.clj
+hello 42
 ```
 
 ## Test

@@ -163,10 +163,9 @@
   (write-value v buf)
   (print (string buf)))
 
-(defn main [&]
+(defn- run-repl []
   (print "Jolt — Clojure on Janet")
   (print "Type (exit) to quit.\n")
-
   (var running true)
   (var pending "")   # accumulates a form split across multiple input lines
   (while running
@@ -190,3 +189,44 @@
                   (try
                     (print-value (eval-string ctx input))
                     ([err] (eprint "Error: " err))))))))))))
+
+(defn- set-command-line-args [argv]
+  # bind clojure.core/*command-line-args* to a vector of the remaining args
+  (ns-intern (ctx-find-ns ctx "clojure.core") "*command-line-args*"
+             (tuple/slice (tuple ;argv))))
+
+(defn- run-file [path argv]
+  (set-command-line-args argv)
+  (ns-intern (ctx-find-ns ctx "clojure.core") "*file*" path)
+  (if (not (os/stat path))
+    (do (eprint "Error: file not found: " path) (os/exit 1))
+    (let [src (slurp path)]
+      (try
+        (load-string ctx src)
+        ([err] (eprint "Error: " err) (os/exit 1))))))
+
+(defn- run-eval [expr argv]
+  (set-command-line-args argv)
+  (try
+    (let [v (load-string ctx expr)]
+      (when (not (nil? v)) (print-value v)))
+    ([err] (eprint "Error: " err) (os/exit 1))))
+
+(defn- print-help []
+  (print "Jolt — a Clojure interpreter on Janet\n")
+  (print "Usage:")
+  (print "  jolt                 Start a REPL")
+  (print "  jolt FILE.clj [args] Run a Clojure file (binds *command-line-args*)")
+  (print "  jolt -e EXPR [args]  Evaluate EXPR and print the result")
+  (print "  jolt -h | --help     Show this help"))
+
+(defn main [&]
+  (def args (or (dyn :args) @[]))            # @["jolt" arg1 arg2 ...]
+  (def argv (if (> (length args) 1) (array/slice args 1) @[]))
+  (ctx-set-current-ns ctx "user")
+  (cond
+    (empty? argv) (run-repl)
+    (or (= (argv 0) "-h") (= (argv 0) "--help")) (print-help)
+    (= (argv 0) "-e") (run-eval (get argv 1 "") (array/slice argv 2))
+    (= (argv 0) "-") (run-file "/dev/stdin" (array/slice argv 1))
+    (run-file (argv 0) (array/slice argv 1))))

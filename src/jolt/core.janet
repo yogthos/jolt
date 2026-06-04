@@ -1207,20 +1207,32 @@
 # I/O — minimal wrappers
 # ============================================================
 
-(def core-print print)
-(def core-println (fn [& xs] (apply print xs) (print "\n") nil))
+# print/println use str semantics (bare strings); pr/prn use readable (quoted).
+# All space-separate their args, like Clojure.
+(defn core-print [& xs]
+  (var i 0)
+  (while (< i (length xs))
+    (if (> i 0) (prin " "))
+    (prin (str-render-one (xs i)))
+    (++ i))
+  nil)
+
+(defn core-println [& xs]
+  (apply core-print xs)
+  (prin "\n")
+  nil)
 
 (defn core-pr [& xs]
   (var i 0)
   (while (< i (length xs))
     (if (> i 0) (prin " "))
-    (prin (xs i))
+    (let [b @""] (pr-render b (xs i)) (prin (string b)))
     (++ i))
   nil)
 
 (defn core-prn [& xs]
   (apply core-pr xs)
-  (print "\n")
+  (prin "\n")
   nil)
 
 (defn core-pr-str [& xs]
