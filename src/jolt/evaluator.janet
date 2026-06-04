@@ -860,10 +860,11 @@
                                     (if (keyword? raw)
                                       (fn [x] (get x raw))
                                       raw))
-                      # Parse options: :default val and :hierarchy h
+                      # Parse options: :default dispatch-key (defaults to :default)
+                      # and :hierarchy h
                       opts (tuple/slice form 3)
-                      default-val (do
-                                    (var dv nil) (var i 0)
+                      default-key (do
+                                    (var dv :default) (var i 0)
                                     (while (< i (length opts))
                                       (if (= :default (in opts i))
                                         (do (set dv (in opts (+ i 1))) (set i (length opts)))
@@ -881,23 +882,23 @@
                                     method (get methods dv)]
                                 (if method
                                   (apply method args)
-                                  (if hierarchy
-                                    (let [found (do
-                                                 (var f nil) (var i 0)
-                                                 (let [ks (keys methods)]
-                                                   (while (and (nil? f) (< i (length ks)))
-                                                     (if (isa? hierarchy dv (ks i)) (set f (get methods (ks i))))
-                                                     (++ i))) f)]
-                                      (if found (apply found args)
-                                        (if (not (nil? default-val)) default-val
+                                  # hierarchy-based match
+                                  (let [found (if hierarchy
+                                                (do (var f nil) (var i 0)
+                                                  (let [ks (keys methods)]
+                                                    (while (and (nil? f) (< i (length ks)))
+                                                      (if (isa? hierarchy dv (ks i)) (set f (get methods (ks i))))
+                                                      (++ i))) f)
+                                                nil)]
+                                    (if found (apply found args)
+                                      # fall back to the method registered under the default key
+                                      (let [dm (get methods default-key)]
+                                        (if dm (apply dm args)
                                           (error (string "No method in multimethod "
-                                                         (name-sym :name) " for dispatch value: " dv)))))
-                                    (if (not (nil? default-val)) default-val
-                                      (error (string "No method in multimethod "
-                                                     (name-sym :name) " for dispatch value: " dv)))))))]
+                                                         (name-sym :name) " for dispatch value: " dv)))))))))]
                  (def v (ns-intern ns (name-sym :name) mm-fn))
                  (put v :jolt/methods methods)
-                 (when default-val (put v :jolt/default default-val))
+                 (put v :jolt/default default-key)
                  (when hierarchy (put v :jolt/hierarchy hierarchy))
                  (var-get v))
     "defmethod" (let [mm-sym (in form 1)

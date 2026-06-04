@@ -27,6 +27,9 @@
 (let [ctx (init)]
   (ct-eval ctx "(defmulti classify :type :default :unknown)")
   (ct-eval ctx "(defmethod classify :a [_] :alpha)")
+  # :default :unknown renames the catch-all dispatch key; a method must be
+  # registered under it (Clojure semantics).
+  (ct-eval ctx "(defmethod classify :unknown [_] :unknown)")
   (assert (= :alpha (ct-eval ctx "(classify {:type :a})")) "known dispatch")
   (assert (= :unknown (ct-eval ctx "(classify {:type :z})")) "default fallback"))
 (print "  passed")
@@ -40,6 +43,8 @@
   (ct-eval ctx "(defmulti animal-sound (fn [x] x) :default :unknown :hierarchy h)")
   (ct-eval ctx "(defmethod animal-sound ::animal [_] \"rawr\")")
   (ct-eval ctx "(defmethod animal-sound ::dog [_] \"woof\")")
+  # catch-all method registered under the renamed default key :unknown
+  (ct-eval ctx "(defmethod animal-sound :unknown [_] :unknown)")
   (assert (= "woof" (ct-eval ctx "(animal-sound ::dog)")) "direct dispatch")
   (assert (= "rawr" (ct-eval ctx "(animal-sound ::mammal)")) "hierarchy fallback")
   (assert (= :unknown (ct-eval ctx "(animal-sound ::rock)")) "default fallback"))

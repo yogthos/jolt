@@ -1639,10 +1639,42 @@
   (def map-sym {:jolt/type :symbol :ns nil :name map-name})
   (def map-body @[{:jolt/type :symbol :ns nil :name "fn"} @[{:jolt/type :symbol :ns nil :name (string "m")}] map-call])
   
-  @[{:jolt/type :symbol :ns nil :name "do"}
+  (def out @[{:jolt/type :symbol :ns nil :name "do"}
     dt-form
     @[{:jolt/type :symbol :ns nil :name "def"} arrow-sym arrow-body]
     @[{:jolt/type :symbol :ns nil :name "def"} map-sym map-body]])
+  # Process inline protocol/interface implementations:
+  #   (defrecord T [fs] Proto (m [this] body) ... Proto2 (m2 [this] body))
+  # Emit an extend-type per protocol. Each method body is wrapped in a let that
+  # binds the record's fields from the instance (first method param), matching
+  # Clojure's field-in-scope semantics for deftype/defrecord methods.
+  (var i 0)
+  (while (< i (length body))
+    (def elem (in body i))
+    (if (and (struct? elem) (= :symbol (elem :jolt/type)))
+      # protocol name; collect following method specs
+      (let [proto-sym elem
+            et @[{:jolt/type :symbol :ns nil :name "extend-type"} name-sym proto-sym]]
+        (++ i)
+        (while (and (< i (length body)) (not (and (struct? (in body i)) (= :symbol ((in body i) :jolt/type)))))
+          (let [spec (in body i)
+                mname (spec 0)
+                argv (spec 1)
+                mbody (tuple/slice spec 2)
+                instance (in argv 0)
+                # (let [f0 (core-get instance :f0) ...] body...)
+                field-binds @[]
+                _ (each f fields-vec
+                    (array/push field-binds f)
+                    (array/push field-binds @[{:jolt/type :symbol :ns nil :name "get"}
+                                              instance (keyword (f :name))]))
+                wrapped @[{:jolt/type :symbol :ns nil :name "let"}
+                          (tuple/slice (tuple ;field-binds)) ;mbody]]
+            (array/push et @[mname argv wrapped]))
+          (++ i))
+        (array/push out et))
+      (++ i)))
+  out)
 
 
 # resolve stub — returns nil (symbols not found in Jolt's clojure.core)
