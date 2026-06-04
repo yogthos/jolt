@@ -4,6 +4,7 @@
 (use ./types)
 (use ./phm)
 (use ./regex)
+(use ./config)
 
 # ============================================================
 # Predicates
@@ -195,7 +196,8 @@
     (tuple/slice (tuple ;(array/concat (array/slice coll) xs)))
     (if (array? coll)
       (do
-        (var result coll)
+        # lists prepend; copy first unless built in mutable mode
+        (var result (if mutable? coll (array/slice coll)))
         (var i 0)
         (while (< i (length xs))
           (set result (array/insert result 0 (xs i)))
