@@ -304,61 +304,58 @@
 
 (defn core-map [f & colls]
   (if (= 1 (length colls))
-    # Single-collection: eagerly realized (common case, fine for most uses)
+    # Single-collection: eagerly realized
     (let [c (realize-for-iteration (colls 0))
           result (do
                    (var res @[])
                    (each x c (array/push res (f x)))
                    res)]
       (if (tuple? c) (tuple/slice (tuple ;result)) result))
-    # Multi-collection: return a lazy-seq
-    (let [n (length colls)
-          cursors (array/new-filled n nil)
-          idxs (array/new-filled n 0)
-          realized (array/new-filled n nil)]
-      # Initialize: detect lazy-seqs vs realized collections  
-      (var i 0)
-      (while (< i n)
-        (let [coll (colls i)]
-          (if (lazy-seq? coll)
-            (put cursors i coll)
-            (do
-              (put realized i coll)
-              (put cursors i nil))))
-        (++ i))
-      # Helper: get next element from collection i, advancing state.
-      # Returns the element or nil if exhausted.
-      (defn next-elem [i]
-        (let [cur (cursors i)
-              ridx (idxs i)]
-          (if (not (nil? cur))
-            (let [val (ls-first cur)]
-              (if (nil? val) nil
-                (do
-                  (put cursors i (ls-rest cur))
-                  (put idxs i (+ ridx 1))
-                  val)))
-            (let [coll (realized i)]
-              (if (nil? coll)
-                (let [rc (realize-for-iteration (colls i))]
-                  (put realized i rc)
-                  (if (>= ridx (length rc)) nil
-                    (do (put idxs i (+ ridx 1)) (rc ridx))))
-                (if (>= ridx (length coll)) nil
-                  (do (put idxs i (+ ridx 1)) (coll ridx))))))))
-      # Build a lazy-seq of mapped results
-      (defn build-cell []
-        (var args @[])
-        (var i 0)
-        (while (< i n)
-          (let [v (next-elem i)]
-            (if (nil? v) (break nil))
-            (array/push args v))
-          (++ i))
-        (if (= (length args) n)
-          @[(apply f args) (fn [] (build-cell))]
-          nil))
-      (make-lazy-seq build-cell))))
+    # Multi-collection: lazy-seq with per-element independent state
+    (let [init-cs (array/new-filled (length colls) nil)
+          init-idxs (array/new-filled (length colls) 0)
+          init-reals (array/new-filled (length colls) nil)
+          _ (do
+              (var i 0)
+              (while (< i (length colls))
+                (let [c (in colls i)]
+                  (if (lazy-seq? c)
+                    (put init-cs i c)
+                    (do (put init-cs i nil) (put init-reals i c))))
+                (++ i))
+              nil)]
+      (defn step [cs idxs reals]
+        "cs: current lazy-seq cursors, idxs: indices, reals: realized colls"
+        (fn []
+          (var args @[])
+          (var next-cs (array/new-filled (length cs) nil))
+          (var next-idxs (array/new-filled (length idxs) 0))
+          (var next-reals (array/new-filled (length reals) nil))
+          (var ok true)
+          (var i 0)
+          (while (< i (length cs))
+            (let [cur (in cs i) ridx (in idxs i) real (in reals i)]
+              (if (not (nil? cur))
+                (let [val (ls-first cur)]
+                  (if (nil? val) (do (set ok false) (break))
+                    (do (array/push args val)
+                        (put next-cs i (ls-rest cur))
+                        (put next-idxs i (+ ridx 1))
+                        (put next-reals i nil))))
+                (let [c (if (nil? real)
+                          (let [rc (realize-for-iteration (in colls i))]
+                            (put next-reals i rc) rc)
+                          real)]
+                  (if (>= ridx (length c)) (do (set ok false) (break))
+                    (do (array/push args (in c ridx))
+                        (put next-cs i nil)
+                        (put next-idxs i (+ ridx 1))
+                        (put next-reals i c))))))
+            (++ i))
+          (if (and ok (= (length args) (length cs)))
+            @[(apply f args) (step next-cs next-idxs next-reals)]
+            nil)))
+      (make-lazy-seq (step init-cs init-idxs init-reals)))))
 
 (defn core-filter [pred coll]
   (var result @[])
@@ -463,21 +460,26 @@
           nil)))))
 
 (defn core-concat [& colls]
-  "Lazy concatenation — returns a lazy-seq that yields elements one at a time."
-  (var cs (if (tuple? colls) (array/slice colls) colls))
-  (var cur nil)
-  (defn next-cell []
-    (var cell (coll->cells cur))
-    (while (and (nil? cell) (not (nil? cs)) (> (length cs) 0))
-      (set cur (in cs 0))
-      (set cs (array/slice cs 1))
-      (set cell (coll->cells cur)))
-    (if (nil? cell) nil
-      @[(in cell 0)
-        (fn []
-          (set cur (in cell 1))
-          (next-cell))]))
-  (make-lazy-seq next-cell))
+  "Lazy concatenation. Each rest-thunk captures its own (cur, cs) state
+  so that independent traversal paths do not corrupt each other."
+  (defn step [cs]
+    (if (= 0 (length cs))
+      (fn [] nil)
+      (let [c (in cs 0)
+            remaining (array/slice cs 1)]
+        (if (lazy-seq? c)
+          (let [val (ls-first c)]
+            (if (nil? val) (step remaining)
+              (let [rest-ls (ls-rest c)
+                    next-step (step (array/insert remaining 0 rest-ls))]
+                (fn [] @[val next-step]))))
+          (let [cell (coll->cells c)]
+            (if (nil? cell) (step remaining)
+              (let [rest-fn (in cell 1)
+                    next-step (if (nil? rest-fn) (step remaining)
+                                (step (array/insert remaining 0 rest-fn)))]
+                (fn [] @[(in cell 0) next-step]))))))))
+  (make-lazy-seq (step (if (tuple? colls) (array/slice colls) colls))))
 
 (defn core-reverse [coll]
   (if (nil? coll) @[]
