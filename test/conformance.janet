@@ -257,6 +257,25 @@
    ["transduce remove"  "[1 3 5]" "(into [] (remove even?) [1 2 3 4 5])"]
    ["transduce take-while" "[1 2]" "(into [] (take-while (fn [x] (< x 3))) [1 2 3 4 1])"]
    ["transduce map-indexed" "[[0 :a] [1 :b]]" "(into [] (map-indexed (fn [i x] [i x])) [:a :b])"]
+
+   ### ==== regex (capturing groups, backtracking, flags, lookahead) ====
+   ["re-find groups"    "[\"12-34\" \"12\" \"34\"]" "(re-find #\"(\\d+)-(\\d+)\" \"x12-34y\")"]
+   ["re-find no-groups" "\"123\"" "(re-find #\"\\d+\" \"ab123\")"]
+   ["re-matches groups" "[\"1.2\" \"1\" \"2\"]" "(re-matches #\"(\\d+)\\.(\\d+)\" \"1.2\")"]
+   ["re-matches no"     "nil"   "(re-matches #\"a.c\" \"abcd\")"]
+   ["re-seq"            "[\"foo\" \"bar\"]" "(re-seq #\"\\w+\" \"foo bar\")"]
+   ["greedy backtrack"  "\"xxfoo\"" "(re-find #\".*foo\" \"xxfoo\")"]
+   ["greedy thru group" "[\"a,b,c\" \"a,b\" \"c\"]" "(re-find #\"(.*),(.*)\" \"a,b,c\")"]
+   ["lazy quantifier"   "[\"<a>\" \"a\"]" "(re-find #\"<(.+?)>\" \"<a><b>\")"]
+   ["flag case-insens"  "\"CAT\"" "(re-find #\"(?i)cat\" \"a CAT\")"]
+   ["lookahead"         "\"foo\"" "(re-find #\"foo(?=bar)\" \"foobar\")"]
+   ["neg-lookahead"     "\"foo\"" "(re-find #\"foo(?!bar)\" \"foobaz\")"]
+   ["word-boundary"     "\"word\"" "(re-find #\"\\bword\\b\" \"a word!\")"]
+   ["word-boundary no"  "nil"   "(re-find #\"\\bword\\b\" \"swordfish\")"]
+   ["optional group"    "[\"1.2.3\" \"1\" \"2\" \"3\" nil]" "(re-find #\"(\\d+)\\.(\\d+)\\.(\\d+)(?:-([a-z]+))?\" \"1.2.3\")"]
+   ["alternation"       "\"dog\"" "(re-find #\"cat|dog\" \"a dog cat\")"]
+   ["str/replace $1"    "\"he[ll]o\"" "(do (require (quote [clojure.string :as s])) (s/replace \"hello\" #\"(l+)\" \"[$1]\"))"]
+   ["str/replace regex" "\"X-X\"" "(do (require (quote [clojure.string :as s])) (s/replace \"a-b\" #\"[a-z]\" \"X\"))"]
   ])
 
 (var pass 0)

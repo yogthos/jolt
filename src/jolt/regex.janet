@@ -1,182 +1,406 @@
-# Minimal regex support for Jolt, backed by Janet's PEG engine.
+# Regex support for Jolt, compiled to Janet's PEG engine.
 #
-# Janet has no regex engine, so we translate a common subset of regex syntax to
-# a PEG grammar and compile it. Supported: literals, `.`, character classes
-# `[...]` (incl. ranges and `[^...]`), escapes `\d \w \s \D \W \S \b` (literal),
-# quantifiers `* + ? {n} {n,m}`, groups `(...)` and non-capturing `(?:...)`,
-# alternation `|`, and anchors `^ $`. Exotic constructs (lookaround,
-# backreferences, named groups) are NOT supported and may translate loosely.
+# Path A: a real regex parser -> AST -> PEG grammar with continuation passing
+# and position-based group captures. This gives genuine backtracking (greedy and
+# lazy) that threads through capturing groups, plus capturing groups returned in
+# Clojure's [whole g1 g2 ...] order, lookahead, anchors, classes, flags.
+#
+# Supported: literals, `.`, char classes `[...]`/`[^...]` (ranges, POSIX,
+# `\d \w \s` etc.), quantifiers `* + ? {n} {n,} {n,m}` (greedy + lazy `?`),
+# groups `(...)` (numbered), non-capturing `(?:...)`, lookahead `(?=...)`/`(?!...)`,
+# alternation `|`, anchors `^ $ \b \B`, escapes, inline flag `(?i)`.
+# Not supported: lookbehind, backreferences, named groups (rare; documented).
 
 (defn- chr [s] (get s 0))
-
 (defn regex? [x] (and (table? x) (= :jolt/regex (x :jolt/type))))
 
-# ---- regex source -> PEG (data) ----
+# ============================================================
+# Parser: regex source -> AST
+# ============================================================
+# AST nodes (structs): {:op ...}
+#   :char {:b byte :ci bool}        :any {:dotall bool}
+#   :class {:peg <frag> :neg bool}  :pred {:peg <frag>}
+#   :seq {:items [...]}             :alt {:items [...]}
+#   :star/:plus/:quest {:item ast :greedy bool}
+#   :rep {:item ast :min n :max m-or-nil :greedy bool}
+#   :group {:n num :item ast}       :ncgroup {:item ast}
+#   :look {:neg bool :item ast}
+#   :anchor {:kind :start/:end/:wordb/:nwordb}
 
-(defn- class-peg [body]
-  # body is the inside of [...]; supports ranges a-z and negation ^
-  (let [neg (and (> (length body) 0) (= (body 0) (chr "^")))
-        b (if neg (string/slice body 1) body)
-        parts @[]]
-    (var i 0)
-    (while (< i (length b))
-      (let [c (b i)]
-        (if (and (< (+ i 2) (length b)) (= (b (+ i 1)) (chr "-")))
-          (do (array/push parts ~(range ,(string/from-bytes c (b (+ i 2))))) (+= i 3))
-          (do (array/push parts ~(set ,(string/from-bytes c))) (+= i 1)))))
-    (let [alt (if (= 1 (length parts)) (parts 0) ~(choice ,;parts))]
-      (if neg ~(if-not ,alt 1) alt))))
+(defn- lower-b [b] (if (and (>= b 65) (<= b 90)) (+ b 32) b))
+(defn- upper-b [b] (if (and (>= b 97) (<= b 122)) (- b 32) b))
 
-(defn- esc-peg [c]
+(defn- pred-frag [c]
   (case c
     (chr "d") '(range "09")
     (chr "D") '(if-not (range "09") 1)
     (chr "w") '(choice (range "az" "AZ" "09") (set "_"))
     (chr "W") '(if-not (choice (range "az" "AZ" "09") (set "_")) 1)
-    (chr "s") '(set " \t\n\r\f")
-    (chr "S") '(if-not (set " \t\n\r\f") 1)
-    (chr "n") '(set "\n")
-    (chr "t") '(set "\t")
-    (chr "b") "" # word boundary: approximate as nothing
-    ~(set ,(string/from-bytes c)))) # escaped literal
+    (chr "s") '(set " \t\n\r\f\v")
+    (chr "S") '(if-not (set " \t\n\r\f\v") 1)
+    nil))
+
+(defn- esc-byte [c]
+  (case c
+    (chr "n") 10 (chr "t") 9 (chr "r") 13 (chr "f") 12 (chr "v") 11 (chr "0") 0
+    c))
+
+# Parse a [...] character class body, returns a PEG fragment + negation flag.
+(defn- parse-class [s start ci]
+  (var i start)
+  (def neg (and (< i (length s)) (= (s i) (chr "^"))))
+  (when neg (++ i))
+  (def alts @[])
+  (while (and (< i (length s)) (not= (s i) (chr "]")))
+    (cond
+      # POSIX class [:alpha:] etc.
+      (and (= (s i) (chr "[")) (< (+ i 1) (length s)) (= (s (+ i 1)) (chr ":")))
+        (let [close (string/find ":]" s i)
+              name (string/slice s (+ i 2) close)]
+          (array/push alts (case name
+                             "alpha" '(range "az" "AZ")
+                             "digit" '(range "09")
+                             "alnum" '(range "az" "AZ" "09")
+                             "space" '(set " \t\n\r\f\v")
+                             "upper" '(range "AZ")
+                             "lower" '(range "az")
+                             '(set "")))
+          (set i (+ close 2)))
+      # escape inside class
+      (= (s i) (chr "\\"))
+        (let [c (s (+ i 1)) p (pred-frag c)]
+          (if p (array/push alts p)
+            (array/push alts ~(set ,(string/from-bytes (esc-byte c)))))
+          (set i (+ i 2)))
+      # range a-z
+      (and (< (+ i 2) (length s)) (= (s (+ i 1)) (chr "-")) (not= (s (+ i 2)) (chr "]")))
+        (do
+          (if ci
+            (array/push alts ~(range ,(string/from-bytes (lower-b (s i)) (lower-b (s (+ i 2)))
+                                                          (upper-b (s i)) (upper-b (s (+ i 2))))))
+            (array/push alts ~(range ,(string/from-bytes (s i) (s (+ i 2))))))
+          (set i (+ i 3)))
+      # single char
+      (do
+        (if ci
+          (array/push alts ~(set ,(string/from-bytes (lower-b (s i)) (upper-b (s i)))))
+          (array/push alts ~(set ,(string/from-bytes (s i)))))
+        (++ i))))
+  (def frag (if (= 1 (length alts)) (alts 0) ~(choice ,;alts)))
+  [(if neg ~(if-not ,frag 1) frag) (+ i 1)])  # i is at ], skip it
 
 (var parse-alt nil)
 
-(defn- parse-atom [s i]
-  # returns [peg next-i]
-  (let [c (s i)]
-    (cond
-      (= c (chr "(")) (do
-        # group; support (?: ...)
-        (var start (+ i 1))
-        (when (and (< (+ i 2) (length s)) (= (s (+ i 1)) (chr "?")) (= (s (+ i 2)) (chr ":")))
-          (set start (+ i 3)))
-        # find matching close paren (no nesting beyond simple)
-        (var depth 1) (var j start)
-        (while (and (< j (length s)) (> depth 0))
-          (cond (= (s j) (chr "(")) (++ depth)
-                (= (s j) (chr ")")) (-- depth))
-          (when (> depth 0) (++ j)))
-        (let [inner (string/slice s start j)]
-          [(parse-alt inner) (+ j 1)]))
-      (= c (chr "[")) (let [close (string/find "]" s (+ i 1))]
-                        [(class-peg (string/slice s (+ i 1) close)) (+ close 1)])
-      (= c (chr ".")) ['(if-not (set "\n") 1) (+ i 1)]
-      (= c (chr "\\")) [(esc-peg (s (+ i 1))) (+ i 2)]
-      (= c (chr "^")) [~(constant nil) (+ i 1)] # anchor: handled loosely
-      (= c (chr "$")) ['-1 (+ i 1)]
-      [~(set ,(string/from-bytes c)) (+ i 1)])))
+(defn- parse-atom [st]
+  # returns ast; advances (st :pos)
+  (def s (st :s))
+  (def c (s (st :pos)))
+  (def ci (st :ci))
+  (cond
+    (= c (chr "("))
+      (let [nx (if (< (+ (st :pos) 1) (length s)) (s (+ (st :pos) 1)) 0)]
+        (if (= nx (chr "?"))
+          (let [k (s (+ (st :pos) 2))]
+            (cond
+              (= k (chr ":")) (do (+= (st :pos) 3)
+                                  (let [inner (parse-alt st)] (+= (st :pos) 1) {:op :ncgroup :item inner}))
+              (= k (chr "=")) (do (+= (st :pos) 3)
+                                  (let [inner (parse-alt st)] (+= (st :pos) 1) {:op :look :neg false :item inner}))
+              (= k (chr "!")) (do (+= (st :pos) 3)
+                                  (let [inner (parse-alt st)] (+= (st :pos) 1) {:op :look :neg true :item inner}))
+              # inline flags (?i) / (?i:...) — set case-insensitive
+              (do
+                (var j (+ (st :pos) 2))
+                (var seti false)
+                (while (and (< j (length s)) (not= (s j) (chr ")")) (not= (s j) (chr ":")))
+                  (when (= (s j) (chr "i")) (set seti true))
+                  (++ j))
+                (if (= (s j) (chr ":"))
+                  (do (set (st :pos) (+ j 1))
+                      (def saved (st :ci))
+                      (when seti (set (st :ci) true))
+                      (def inner (parse-alt st))
+                      (set (st :ci) saved)
+                      (+= (st :pos) 1)
+                      {:op :ncgroup :item inner})
+                  (do (set (st :pos) (+ j 1))   # (?i) — flag for rest of pattern
+                      (when seti (set (st :ci) true))
+                      {:op :seq :items @[]})))))
+          # capturing group
+          (let [n (++ (st :ngroup))]
+            (+= (st :pos) 1)
+            (let [inner (parse-alt st)]
+              (+= (st :pos) 1)  # skip )
+              {:op :group :n n :item inner}))))
+    (= c (chr "["))
+      (let [[frag np] (parse-class s (+ (st :pos) 1) ci)]
+        (set (st :pos) np)
+        {:op :class :peg frag})
+    (= c (chr "."))
+      (do (++ (st :pos)) {:op :any :dotall (st :dotall)})
+    (= c (chr "\\"))
+      (let [nc (s (+ (st :pos) 1)) p (pred-frag nc)]
+        (+= (st :pos) 2)
+        (cond
+          p {:op :pred :peg p}
+          (= nc (chr "b")) {:op :anchor :kind :wordb}
+          (= nc (chr "B")) {:op :anchor :kind :nwordb}
+          {:op :char :b (esc-byte nc) :ci ci}))
+    (= c (chr "^")) (do (++ (st :pos)) {:op :anchor :kind :start})
+    (= c (chr "$")) (do (++ (st :pos)) {:op :anchor :kind :end})
+    (do (++ (st :pos)) {:op :char :b c :ci ci})))
 
-(defn- parse-seq [s]
-  # one alternative (no top-level |); returns peg
-  (def items @[])
-  (var i 0)
-  (while (< i (length s))
-    (let [c (s i)]
-      (if (or (= c (chr "*")) (= c (chr "+")) (= c (chr "?")) (= c (chr "{")))
-        (error "quantifier without atom") # shouldn't happen; handled below
-        (let [[atom ni] (parse-atom s i)]
-          (var ii ni)
-          (var quantified false)
-          (when (< ii (length s))
-            (let [q (s ii)]
-              (cond
-                (= q (chr "*")) (do (array/push items ~(any ,atom)) (set quantified true) (++ ii))
-                (= q (chr "+")) (do (array/push items ~(some ,atom)) (set quantified true) (++ ii))
-                (= q (chr "?")) (do (array/push items ~(between 0 1 ,atom)) (set quantified true) (++ ii))
-                (= q (chr "{")) (let [close (string/find "}" s ii)
-                                      spec (string/slice s (+ ii 1) close)
-                                      comma (string/find "," spec)]
-                                  (if comma
-                                    (let [lo (scan-number (string/slice spec 0 comma))
-                                          hir (string/slice spec (+ comma 1))
-                                          hi (if (= 0 (length hir)) 1000 (scan-number hir))]
-                                      (array/push items ~(between ,lo ,hi ,atom)))
-                                    (let [n (scan-number spec)]
-                                      (array/push items ~(repeat ,n ,atom))))
-                                  (set quantified true) (set ii (+ close 1))))))
-          (when (not quantified) (array/push items atom))
-          (set i ii)))))
-  (if (= 1 (length items)) (items 0) ~(sequence ,;items)))
-
-(set parse-alt (fn [s]
-  # split on top-level | and build choice
-  (def alts @[]) (var depth 0) (var start 0) (var i 0)
-  (while (< i (length s))
-    (let [c (s i)]
+(defn- parse-quant [st]
+  (def atom (parse-atom st))
+  (def s (st :s))
+  (if (>= (st :pos) (length s))
+    atom
+    (let [q (s (st :pos))]
+      # called after advancing past the quantifier char: a trailing `?` -> lazy
+      (defn lazy? []
+        (if (and (< (st :pos) (length s)) (= (s (st :pos)) (chr "?")))
+          (do (++ (st :pos)) false)   # lazy -> greedy=false
+          true))
       (cond
-        (= c (chr "(")) (++ depth)
-        (= c (chr ")")) (-- depth)
-        (= c (chr "[")) (let [close (string/find "]" s i)] (set i (or close i)))
-        (and (= c (chr "|")) (= depth 0)) (do (array/push alts (string/slice s start i)) (set start (+ i 1)))))
-    (++ i))
-  (array/push alts (string/slice s start))
-  (if (= 1 (length alts))
-    (parse-seq (alts 0))
-    ~(choice ,;(map parse-seq alts)))))
+        (= q (chr "*")) (do (++ (st :pos)) {:op :star :item atom :greedy (lazy?)})
+        (= q (chr "+")) (do (++ (st :pos)) {:op :plus :item atom :greedy (lazy?)})
+        (= q (chr "?")) (do (++ (st :pos)) {:op :quest :item atom :greedy (lazy?)})
+        (= q (chr "{"))
+          (let [close (string/find "}" s (st :pos))
+                spec (string/slice s (+ (st :pos) 1) close)
+                comma (string/find "," spec)]
+            (set (st :pos) (+ close 1))
+            (def greedy (lazy?))
+            (if comma
+              (let [lo (scan-number (string/slice spec 0 comma))
+                    hs (string/slice spec (+ comma 1))
+                    hi (if (= 0 (length hs)) nil (scan-number hs))]
+                {:op :rep :item atom :min lo :max hi :greedy greedy})
+              {:op :rep :item atom :min (scan-number spec) :max (scan-number spec) :greedy greedy}))
+        atom))))
+
+(defn- parse-seq [st]
+  (def s (st :s))
+  (def items @[])
+  (while (and (< (st :pos) (length s))
+              (not= (s (st :pos)) (chr "|"))
+              (not= (s (st :pos)) (chr ")")))
+    (array/push items (parse-quant st)))
+  (if (= 1 (length items)) (items 0) {:op :seq :items items}))
+
+(set parse-alt (fn [st]
+  (def branches @[(parse-seq st)])
+  (def s (st :s))
+  (while (and (< (st :pos) (length s)) (= (s (st :pos)) (chr "|")))
+    (++ (st :pos))
+    (array/push branches (parse-seq st)))
+  (if (= 1 (length branches)) (branches 0) {:op :alt :items branches})))
+
+(defn- parse [source]
+  (def st @{:s source :pos 0 :ngroup 0 :ci false :dotall false})
+  (def ast (parse-alt st))
+  [ast (st :ngroup)])
+
+# ============================================================
+# Emit: AST -> PEG grammar (continuation passing)
+# ============================================================
+
+(def- word-frag '(choice (range "az" "AZ" "09") (set "_")))
+
+(defn- char-peg [b ci]
+  (if (and ci (not= (lower-b b) (upper-b b)))
+    ~(set ,(string/from-bytes (lower-b b) (upper-b b)))
+    ~(set ,(string/from-bytes b))))
+
+(defn- make-emitter [grammar]
+  (var ctr 0)
+  (defn fresh [] (++ ctr) (keyword (string "r" ctr)))
+  (var emit nil)
+  (set emit (fn [ast k]
+    (case (ast :op)
+      :char ~(sequence ,(char-peg (ast :b) (ast :ci)) ,k)
+      :any ~(sequence ,(if (ast :dotall) 1 ~(if-not "\n" 1)) ,k)
+      :class ~(sequence ,(ast :peg) ,k)
+      :pred ~(sequence ,(ast :peg) ,k)
+      :seq (do (var acc k) (var i (dec (length (ast :items))))
+               (while (>= i 0) (set acc (emit (in (ast :items) i) acc)) (-- i)) acc)
+      :alt (let [kr (fresh)]
+             (put grammar kr k)
+             ~(choice ,;(map (fn [a] (emit a (keyword kr))) (ast :items))))
+      :star (let [r (fresh)]
+              (put grammar r (if (ast :greedy)
+                               ~(choice ,(emit (ast :item) (keyword r)) ,k)
+                               ~(choice ,k ,(emit (ast :item) (keyword r)))))
+              (keyword r))
+      :plus (let [r (fresh)]
+              (put grammar r (if (ast :greedy)
+                               ~(choice ,(emit (ast :item) (keyword r)) ,k)
+                               ~(choice ,k ,(emit (ast :item) (keyword r)))))
+              (emit (ast :item) (keyword r)))
+      :quest (if (ast :greedy)
+               ~(choice ,(emit (ast :item) k) ,k)
+               ~(choice ,k ,(emit (ast :item) k)))
+      :rep (let [lo (ast :min) hi (ast :max) item (ast :item) greedy (ast :greedy)]
+             # desugar: lo required, then (hi-lo) optional, or star if hi is nil
+             (var tail (if (nil? hi)
+                         (let [r (fresh)]
+                           (put grammar r (if greedy
+                                            ~(choice ,(emit item (keyword r)) ,k)
+                                            ~(choice ,k ,(emit item (keyword r)))))
+                           (keyword r))
+                         (do (var acc k) (var c (- hi lo))
+                             (while (> c 0)
+                               (set acc (if greedy ~(choice ,(emit item acc) ,acc)
+                                                   ~(choice ,acc ,(emit item acc))))
+                               (-- c))
+                             acc)))
+             (var acc tail) (var c lo)
+             (while (> c 0) (set acc (emit item acc)) (-- c))
+             acc)
+      :group (let [n (ast :n)]
+               ~(sequence (/ (position) ,(fn [p] [n :s p]))
+                          ,(emit (ast :item)
+                                 ~(sequence (/ (position) ,(fn [p] [n :e p])) ,k))))
+      :ncgroup (emit (ast :item) k)
+      :look (if (ast :neg)
+              ~(sequence (not ,(emit (ast :item) 0)) ,k)
+              ~(sequence (not (not ,(emit (ast :item) 0))) ,k))
+      :anchor (case (ast :kind)
+                :start ~(sequence (not (look -1 1)) ,k)
+                :end ~(sequence (not 1) ,k)
+                :wordb ~(sequence (choice (sequence (look -1 ,word-frag) (not ,word-frag))
+                                          (sequence (not (look -1 ,word-frag)) (not (not ,word-frag))))
+                                  ,k)
+                :nwordb ~(sequence (choice (sequence (look -1 ,word-frag) (not (not ,word-frag)))
+                                           (sequence (not (look -1 ,word-frag)) (not ,word-frag)))
+                                   ,k)
+                ~(sequence 0 ,k))
+      (error (string "regex emit: unhandled op " (ast :op))))))
+  emit)
 
 (defn compile-regex [source]
-  (def body (parse-alt source))
+  (def [ast ngroups] (parse source))
+  (def grammar @{})
+  (def emit (make-emitter grammar))
+  # group 0 = whole match: mark start, body, mark end
+  (def body (emit ast ~(sequence (/ (position) ,(fn [p] [0 :e p])) 0)))
+  (put grammar :main ~(sequence (/ (position) ,(fn [p] [0 :s p])) ,body))
+  (def gstruct (table/to-struct grammar))
+  # anchored variant for re-matches: whole input must be consumed
+  (def anchored (table/to-struct (merge grammar {:main ~(sequence ,(grammar :main) -1)})))
   @{:jolt/type :jolt/regex
     :source source
-    :peg (peg/compile ~(<- ,body))           # capture a match anywhere
-    :anchored (peg/compile ~(sequence (<- ,body) -1))})  # whole-string match
+    :ngroups ngroups
+    :peg (peg/compile gstruct)
+    :anchored (peg/compile anchored)})
 
 (defn re-pattern [source]
   (if (regex? source) source (compile-regex source)))
 
-# ---- matching ops ----
+# ============================================================
+# Matching
+# ============================================================
+
+(defn- marks->groups [marks s ngroups]
+  # marks: array of [n :s pos] / [n :e pos]; build [g0 g1 ... gN], slicing input
+  (def starts (array/new-filled (+ ngroups 1)))
+  (def ends (array/new-filled (+ ngroups 1)))
+  (each m marks
+    (let [n (m 0)]
+      (if (= (m 1) :s) (put starts n (m 2)) (put ends n (m 2)))))
+  (def groups (array/new-filled (+ ngroups 1)))
+  (var n 0)
+  (while (<= n ngroups)
+    (if (and (not (nil? (in starts n))) (not (nil? (in ends n))))
+      (put groups n (string/slice s (in starts n) (in ends n)))
+      (put groups n nil))
+    (++ n))
+  groups)
+
+(defn- match-at [re s start]
+  # returns groups array or nil
+  (def marks (peg/match (re :peg) s start))
+  (if marks (marks->groups marks s (re :ngroups)) nil))
+
+(defn- groups->result [groups ngroups]
+  # 0 groups -> whole-match string; else tuple [whole g1 ...]
+  (if (= ngroups 0) (in groups 0) (tuple/slice groups)))
 
 (defn re-find [re s]
   (def re (re-pattern re))
   (var result nil) (var pos 0)
   (while (and (nil? result) (<= pos (length s)))
-    (let [m (peg/match (re :peg) s pos)]
-      (if m (set result (m 0)) (++ pos))))
+    (def g (match-at re s pos))
+    (if g (set result (groups->result g (re :ngroups))) (++ pos)))
   result)
 
 (defn re-matches [re s]
   (def re (re-pattern re))
-  (let [m (peg/match (re :anchored) s)]
-    (if m (m 0) nil)))
+  (def marks (peg/match (re :anchored) s 0))
+  (if marks (groups->result (marks->groups marks s (re :ngroups)) (re :ngroups)) nil))
 
 (defn re-seq [re s]
   (def re (re-pattern re))
   (def out @[]) (var pos 0)
   (while (<= pos (length s))
-    (let [m (peg/match (re :peg) s pos)]
-      (if m
-        (let [matched (m 0)]
-          (array/push out matched)
-          (set pos (+ pos (max 1 (length matched)))))
-        (++ pos))))
+    (def g (match-at re s pos))
+    (if g
+      (let [whole (in g 0)]
+        (array/push out (groups->result g (re :ngroups)))
+        (set pos (+ pos (max 1 (length whole)))))
+      (++ pos)))
   out)
 
-# split string s on matches of regex re; returns array of strings
 (defn re-split [re s]
   (def re (re-pattern re))
   (def out @[]) (var pos 0) (var last 0)
   (while (<= pos (length s))
-    (let [m (peg/match (re :peg) s pos)]
-      (if (and m (> (length (m 0)) 0))
-        (do (array/push out (string/slice s last pos))
-            (set pos (+ pos (length (m 0))))
-            (set last pos))
-        (++ pos))))
+    (def g (match-at re s pos))
+    (if (and g (> (length (in g 0)) 0))
+      (do (array/push out (string/slice s last pos))
+          (set pos (+ pos (length (in g 0))))
+          (set last pos))
+      (++ pos)))
   (array/push out (string/slice s last))
   out)
 
-# replace all matches of re in s with replacement string
+(defn- expand-replacement [repl groups]
+  # $0 / $1 ... substitution in replacement string
+  (def buf @"") (var i 0)
+  (while (< i (length repl))
+    (let [c (repl i)]
+      (if (and (= c (chr "$")) (< (+ i 1) (length repl)) (>= (repl (+ i 1)) 48) (<= (repl (+ i 1)) 57))
+        (let [n (- (repl (+ i 1)) 48)]
+          (when (and (< n (length groups)) (in groups n)) (buffer/push-string buf (in groups n)))
+          (set i (+ i 2)))
+        (do (buffer/push-string buf (string/from-bytes c)) (++ i)))))
+  (string buf))
+
 (defn re-replace-all [re s replacement]
   (def re (re-pattern re))
   (def buf @"") (var pos 0) (var last 0)
   (while (<= pos (length s))
-    (let [m (peg/match (re :peg) s pos)]
-      (if (and m (> (length (m 0)) 0))
-        (do (buffer/push-string buf (string/slice s last pos))
-            (buffer/push-string buf replacement)
-            (set pos (+ pos (length (m 0))))
-            (set last pos))
-        (++ pos))))
+    (def g (match-at re s pos))
+    (if (and g (> (length (in g 0)) 0))
+      (do (buffer/push-string buf (string/slice s last pos))
+          (buffer/push-string buf (if (string? replacement) (expand-replacement replacement g) replacement))
+          (set pos (+ pos (length (in g 0))))
+          (set last pos))
+      (++ pos)))
   (buffer/push-string buf (string/slice s last))
   (string buf))
+
+(defn re-replace-first [re s replacement]
+  (def re (re-pattern re))
+  (var pos 0) (var done nil)
+  (while (and (nil? done) (<= pos (length s)))
+    (def g (match-at re s pos))
+    (if (and g (> (length (in g 0)) 0))
+      (set done [pos g])
+      (++ pos)))
+  (if done
+    (let [[p g] done]
+      (string (string/slice s 0 p)
+              (if (string? replacement) (expand-replacement replacement g) replacement)
+              (string/slice s (+ p (length (in g 0))))))
+    s))

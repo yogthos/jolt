@@ -2384,8 +2384,7 @@
     (string/replace-all pat repl s)))
 (defn core-str-replace-first [pat repl s]
   (if (regex? pat)
-    (let [m (re-find pat s)]
-      (if m (let [i (string/find m s)] (string (string/slice s 0 i) repl (string/slice s (+ i (length m))))) s))
+    (re-replace-first pat s repl)
     (string/replace pat repl s)))
 
 (defn core-prn-str [& xs] (string (apply core-pr-str xs) "\n"))
