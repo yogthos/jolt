@@ -1081,7 +1081,10 @@
                                  (def v (ns-intern ns (mm-sym :name) dummy-fn))
                                  (put v :jolt/methods @{})
                                  v))
-                      methods (get mm-var :jolt/methods)]
+                      # The resolved var may be a plain fn (e.g. a copy-core-var'd
+                      # print-method) with no method table yet — initialize one.
+                      methods (or (get mm-var :jolt/methods)
+                                  (let [m @{}] (put mm-var :jolt/methods m) m))]
                   (put methods dispatch-val impl)
                   mm-var)
     "prefer-method" (let [mm-arg (in form 1)

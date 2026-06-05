@@ -61,6 +61,12 @@
   ["impl/records.cljc" nil]
   ["impl/core_protocols.cljc" nil]
   ["impl/hierarchies.cljc" nil]
+  # pure-Clojure macro/expander modules (loadable from SCI's real source)
+  ["impl/destructure.cljc" nil]
+  ["impl/doseq_macro.cljc" nil]
+  ["impl/for_macro.cljc" nil]
+  ["impl/fns.cljc" nil]
+  ["impl/multimethods.cljc" nil]
   ["impl/namespaces.cljc" nil]
   ["core.cljc" nil]
 ])

@@ -1567,6 +1567,7 @@
   (let [t (and (core-meta v) (get (core-meta v) :test))]
     (if t (do (t) :ok) :no-test)))
 
+
 # ============================================================
 # Bit operations (needed for persistent data structures)  
 # ============================================================
@@ -2789,6 +2790,57 @@
   (var parts @[]) (each x xs (array/push parts (str-render-one x)))
   (string (string/join parts " ") "\n"))
 
+# Iterator/enumeration seqs — Jolt has no Java iterators, so adapt to plain seq.
+(defn core-enumeration-seq [x] (core-seq x))
+(defn core-iterator-seq [x] (core-seq x))
+(defn core-xml-seq [root]
+  (def out @[])
+  (defn walk [n]
+    (array/push out n)
+    (when (and (core-map? n) (core-contains? n :content))
+      (each c (realize-for-iteration (core-get n :content)) (walk c))))
+  (walk root)
+  (tuple ;out))
+(defn core-line-seq [rdr]
+  (if (string? rdr) (core-seq (string/split "\n" rdr)) nil))
+(defn core-re-matcher [re s] @{:jolt/type :jolt/matcher :re re :s s :pos 0})
+
+# JVM reflection / proxies — not applicable on a Janet host; resolve-only.
+(defn core-bean [x] (if (core-map? x) x {}))
+(defn core-print-method [x writer] nil)
+(defn core-print-dup [x writer] nil)
+(defn core-proxy-call-with-super [f proxy meth] (f))
+(defn core-proxy-mappings [proxy] {})
+(defn core-update-proxy [proxy mappings] proxy)
+(defn core-undefined? [x] false)
+
+(def- char-escapes
+  {10 "\\n" 9 "\\t" 13 "\\r" 12 "\\f" 8 "\\b" 34 "\\\"" 92 "\\\\"})
+(def- char-names
+  {10 "newline" 9 "tab" 13 "return" 12 "formfeed" 8 "backspace" 32 "space"})
+(defn core-char-escape-string [c]
+  (get char-escapes (if (core-char? c) (char-code c) c)))
+(defn core-char-name-string [c]
+  (get char-names (if (core-char? c) (char-code c) c)))
+
+# subseq / rsubseq over sorted collections
+(defn- sorted-entries [sc]
+  (cond
+    (core-sorted-map? sc) (sorted-map-entries sc)
+    (core-sorted-set? sc) (map (fn [x] x) (sc :items))
+    (realize-for-iteration sc)))
+(defn- sorted-key-of [sc e] (if (core-sorted-map? sc) (in e 0) e))
+(defn core-subseq [sc & args]
+  (let [es (sorted-entries sc)]
+    (tuple ;(filter
+      (fn [e] (let [k (sorted-key-of sc e)]
+        (if (= 2 (length args))
+          (truthy? ((args 0) k (args 1)))
+          (and (truthy? ((args 0) k (args 1))) (truthy? ((args 2) k (args 3)))))))
+      es))))
+(defn core-rsubseq [sc & args]
+  (tuple ;(reverse (apply core-subseq sc args))))
+
 # ============================================================
 # Additional clojure.core functions
 # ============================================================
@@ -3275,6 +3327,22 @@
     "munge" core-munge
     "namespace-munge" core-namespace-munge
     "test" core-test
+    "enumeration-seq" core-enumeration-seq
+    "iterator-seq" core-iterator-seq
+    "xml-seq" core-xml-seq
+    "line-seq" core-line-seq
+    "re-matcher" core-re-matcher
+    "bean" core-bean
+    "print-method" core-print-method
+    "print-dup" core-print-dup
+    "proxy-call-with-super" core-proxy-call-with-super
+    "proxy-mappings" core-proxy-mappings
+    "update-proxy" core-update-proxy
+    "undefined?" core-undefined?
+    "char-escape-string" core-char-escape-string
+    "char-name-string" core-char-name-string
+    "subseq" core-subseq
+    "rsubseq" core-rsubseq
     # Bit operations
     "bit-and" core-bit-and
     "bit-or" core-bit-or
