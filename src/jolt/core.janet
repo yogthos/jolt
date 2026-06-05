@@ -40,6 +40,11 @@
   [xs]
   (if mutable? (array ;xs) (pv-from-indexed xs)))
 
+(defn core-transient?
+  "True when x is a transient (a mutable scratch collection). See `transient`."
+  [x]
+  (and (table? x) (= :jolt/transient (get x :jolt/type))))
+
 # Canonicalize a collection key/element to a value-hashable Janet struct/tuple so
 # the PHM/PHS treat value-equal maps/vectors as the same key (Janet hashes tables
 # by identity otherwise). Installed into phm via set-canonicalize-key!.
@@ -349,6 +354,11 @@
 (defn core-get [m k &opt default]
   (default default nil)
   (if (nil? m) default
+    (if (core-transient? m)
+      (case (m :kind)
+        :vector (if (and (number? k) (>= k 0) (< k (length (m :arr)))) (in (m :arr) k) default)
+        :map (let [p (get (m :tbl) (canon-key k))] (if p (in p 1) default))
+        :set (if (nil? (get (m :tbl) (canon-key k))) default k))
     (if (set? m) (phs-get m k default)
       (if (phm? m) (phm-get m k default)
         (if (pvec? m)
@@ -358,7 +368,7 @@
             (if (nil? v) default v))
           (if (and (or (tuple? m) (array? m)) (number? k) (>= k 0) (< k (length m)))
             (in m k)
-            default)))))))
+            default))))))))
 
 # Runtime invoke dispatch for COMPILED code (interpreter uses evaluator's
 # jolt-invoke). Handles real functions plus Clojure IFn collections.
@@ -409,6 +419,10 @@
   (if (nil? current) default current))
 
 (defn core-contains? [coll key]
+  (if (core-transient? coll)
+    (case (coll :kind)
+      :vector (and (number? key) (>= key 0) (< key (length (coll :arr))))
+      (not (nil? (get (coll :tbl) (canon-key key)))))
   (if (set? coll) (phs-contains? coll key)
     (if (phm? coll) (let [b (get (coll :buckets) (phm-hash-key key))] (if b (phm-bucket-contains? b key) false))
       (if (pvec? coll) (and (number? key) (>= key 0) (< key (pv-count coll)))
@@ -416,7 +430,7 @@
         (if (table? coll) (not (nil? (coll key)))
           (if (or (tuple? coll) (array? coll))
             (and (number? key) (>= key 0) (< key (length coll)))
-            false)))))))
+            false))))))))
 
 # Sorted collections — minimal: backed by a struct (map) / sorted array (set),
 # ordered by key/element on read. Defined early so seq/count/get can dispatch.
@@ -437,6 +451,7 @@
 (defn core-count [coll]
   (cond
     (nil? coll) 0
+    (core-transient? coll) (length (if (= :vector (coll :kind)) (coll :arr) (coll :tbl)))
     (core-sorted-map? coll) (length (keys (coll :map)))
     (core-sorted-set? coll) (length (coll :items))
     (lazy-seq? coll) (ls-count coll)
@@ -945,6 +960,8 @@
 (defn core-nth
   "Return the nth element of a sequential collection."
   [coll idx &opt default]
+  (if (core-transient? coll)
+    (let [a (coll :arr)] (if (and (>= idx 0) (< idx (length a))) (in a idx) default))
   (if (plist? coll)
     (let [a (pl->array coll)]
       (if (and (>= idx 0) (< idx (length a))) (in a idx)
@@ -970,7 +987,7 @@
         (if (string? c) (make-char (in c idx)) (in c idx))
         (if (nil? default)
           (error (string "Index " idx " out of bounds, length: " (length c)))
-          default)))))))
+          default))))))))
 
 (defn core-sort
   "(sort coll) or (sort comparator coll). Comparator may return a boolean or a
@@ -1374,6 +1391,7 @@
       (lazy-seq? v) (pr-render-seq buf (realize-for-iteration v) "(" ")")
       (set? v) (pr-render-seq buf (phs-seq v) "#{" "}")
       (phm? v) (pr-render-pairs buf (phm-entries v))
+      (core-transient? v) (buffer/push-string buf (string "#<transient " (v :kind) ">"))
       (pvec? v) (pr-render-seq buf (pv->array v) "[" "]")
       (plist? v) (pr-render-seq buf (pl->array v) "(" ")")
       (and (table? v) (get v :jolt/deftype)) (buffer/push-string buf (string v))
@@ -1591,7 +1609,6 @@
     (case (length a)
       0 (rf) 1 (rf (a 0))
       (do (var acc (a 0)) (each x (realize-for-iteration (a 1)) (set acc (rf acc x))) acc))))
-(defn core-disj! [s & ks] (apply core-disj s ks))
 (defn core-rationalize [x] x)
 (defn core-random-sample [prob & rest]
   (if (= 0 (length rest))
@@ -3048,14 +3065,73 @@
             (rf (in a 0) (in a 1))))))))
 (defn core-re-groups [m] (error "re-groups: stateful matchers are not supported in Jolt"))
 
-# Transients — Jolt's collections are persistent, so transients are correctness-
-# only aliases (no in-place optimization, but semantically correct).
-(defn core-transient [coll] coll)
-(defn core-persistent! [coll] coll)
-(defn core-conj! [coll & xs] (apply core-conj coll xs))
-(defn core-assoc! [coll & kvs] (apply core-assoc coll kvs))
-(defn core-dissoc! [coll & ks] (apply core-dissoc coll ks))
-(defn core-pop! [coll] (core-pop coll))
+# Transients — real mutable scratch collections backed by Janet's native arrays
+# and tables (host interop): O(1) conj!/assoc!/dissoc!/disj!/pop!, frozen back to
+# a persistent value by persistent!. A transient is a tagged table holding either
+# a Janet array (vectors) or a Janet table keyed by canonical key (maps/sets, so
+# collection keys still compare by value). The mutating ops return the transient.
+(defn core-transient [coll]
+  (cond
+    (pvec? coll)
+      @{:jolt/type :jolt/transient :kind :vector :arr (pv->array coll)}
+    (set? coll)
+      (let [t @{}] (each e (phs-seq coll) (put t (canon-key e) e))
+        @{:jolt/type :jolt/transient :kind :set :tbl t})
+    (or (phm? coll) (and (struct? coll) (nil? (get coll :jolt/type))))
+      (let [t @{}]
+        (each pair (realize-for-iteration coll)
+          (put t (canon-key (in pair 0)) @[(in pair 0) (in pair 1)]))
+        @{:jolt/type :jolt/transient :kind :map :tbl t})
+    # mutable-build arrays (vectors/lists) — copy into a transient vector
+    (array? coll) @{:jolt/type :jolt/transient :kind :vector :arr (array/slice coll)}
+    (error (string "Don't know how to create a transient from " (type coll)))))
+
+(defn- tr-conj! [t x]
+  (case (t :kind)
+    :vector (array/push (t :arr) x)
+    :set    (put (t :tbl) (canon-key x) x)
+    :map    (let [k (vnth x 0)] (put (t :tbl) (canon-key k) @[k (vnth x 1)])))
+  t)
+
+(defn- tr-assoc! [t k v]
+  (case (t :kind)
+    :vector (let [a (t :arr)] (if (= k (length a)) (array/push a v) (put a k v)))
+    :map    (put (t :tbl) (canon-key k) @[k v])
+    (error "assoc! expects a transient vector or map"))
+  t)
+
+(defn core-conj! [t & xs]
+  (if (core-transient? t)
+    (do (each x xs (tr-conj! t x)) t)
+    (apply core-conj t xs)))           # lenient fallback for a persistent coll
+
+(defn core-assoc! [t & kvs]
+  (if (core-transient? t)
+    (do (var i 0) (while (< i (length kvs)) (tr-assoc! t (in kvs i) (in kvs (+ i 1))) (+= i 2)) t)
+    (apply core-assoc t kvs)))
+
+(defn core-dissoc! [t & ks]
+  (if (core-transient? t)
+    (do (each k ks (put (t :tbl) (canon-key k) nil)) t)
+    (apply core-dissoc t ks)))
+
+(defn core-disj! [t & xs]
+  (if (core-transient? t)
+    (do (each x xs (put (t :tbl) (canon-key x) nil)) t)
+    (apply core-disj t xs)))
+
+(defn core-pop! [t]
+  (if (core-transient? t)
+    (do (array/pop (t :arr)) t)
+    (core-pop t)))
+
+(defn core-persistent! [t]
+  (if (core-transient? t)
+    (case (t :kind)
+      :vector (make-vec (t :arr))
+      :set (do (var s (make-phs)) (each [_ e] (pairs (t :tbl)) (set s (phs-conj s e))) s)
+      :map (do (var m (make-phm)) (each [_ pair] (pairs (t :tbl)) (set m (phm-assoc m (in pair 0) (in pair 1)))) m))
+    t))
 
 # Unchecked arithmetic — Jolt numbers don't overflow, so these are plain ops.
 (defn core-unchecked-add [a b] (+ a b))
@@ -3219,6 +3295,7 @@
     "halt-when" core-halt-when
     "re-groups" core-re-groups
     "transient" core-transient
+    "transient?" core-transient?
     "persistent!" core-persistent!
     "conj!" core-conj!
     "assoc!" core-assoc!

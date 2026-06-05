@@ -101,6 +101,9 @@
         (write-value k buf))
       (push-str buf "}"))
 
+    (and (table? v) (= :jolt/transient (v :jolt/type)))
+    (push-str buf (string "#<transient " (v :kind) ">"))
+
     (phm? v)
     (do
       (push-str buf "{")

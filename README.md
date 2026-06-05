@@ -80,7 +80,8 @@ Jolt targets Clojure semantics but runs on Janet, not the JVM. The notable diver
 - **Concurrency / STM.** Single-threaded. No refs, `dosync`, agents, or `send`; `locking` evaluates its body without real locking. Atoms, volatiles, and delays are supported.
 - **Regex.** Compiled to Janet's PEG engine (Janet has no regex). Supported: capturing groups (`[whole g1 …]`), greedy and lazy quantifiers with backtracking, `(?:…)`, lookahead `(?=…)`/`(?!…)`, alternation, anchors `^ $ \b \B`, character classes, and the `(?i)` flag. Not supported: lookbehind, backreferences (`\1`), and named groups (`(?<name>…)`).
 - **Arrays.** Java-style arrays map onto Janet's native types: `byte-array` is a Janet buffer (contiguous, C-backed); `object-array`/`int-array`/`double-array`/etc. are Janet arrays. `aget`/`aset`/`alength`/`aclone` work over both.
-- **Not implemented.** JVM reflection, `proxy`, and the `clojure.repl`/`clojure.template` namespaces. Transients (`transient`/`conj!`/`persistent!`) work but are correctness-only aliases over the persistent collections (no in-place speedup).
+- **Transients.** `transient`/`conj!`/`assoc!`/`dissoc!`/`disj!`/`pop!`/`persistent!` are real mutable scratch collections backed by Janet's native arrays and tables (vectors → arrays, maps/sets → tables), so building a collection with them avoids the per-step copying of the persistent path (notably for maps/sets). `persistent!` freezes back to a persistent value.
+- **Not implemented.** JVM reflection, `proxy`, and the `clojure.repl`/`clojure.template` namespaces.
 
 Supported and Clojure-compatible: chars as a distinct type, lazy/infinite sequences, transducers, destructuring, multimethods with hierarchies, protocols/records (`deftype`/`defrecord`/`reify`/`extend-protocol`), metadata, namespaces, and the reader (`#()`, `#_`, `#?`, tagged literals, `#"…"`).
 
