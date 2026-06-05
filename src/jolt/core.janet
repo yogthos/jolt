@@ -557,6 +557,8 @@
     coll))
 
 (defn core-vec [coll]
+  (when (not (or (nil? coll) (core-coll? coll) (string? coll)))
+    (error (string "Don't know how to create a vector from " (type coll))))
   (let [coll (realize-for-iteration coll)]
     (cond
       (array? coll) (make-vec coll)
@@ -1241,25 +1243,25 @@
     (indexed? m) (do (var i 0) (each x m (set acc (f acc i x)) (++ i))))
   acc)
 
+# peek/pop are defined only on stacks (vectors -> last end, lists -> front);
+# Clojure throws on sets/maps/seqs/strings/scalars.
 (defn core-peek [coll]
   (cond
     (nil? coll) nil
-    (lazy-seq? coll) (ls-first coll)
     (plist? coll) (if (pl-empty? coll) nil (pl-first coll))   # list: first
     (pvec? coll) (if (= 0 (pv-count coll)) nil (pv-nth coll (- (pv-count coll) 1)))  # vector: last
-    (= 0 (length coll)) nil
-    (tuple? coll) (in coll (- (length coll) 1))   # vector: last
-    (array? coll) (in coll 0)                      # list: first
-    (in coll 0)))
+    (tuple? coll) (if (= 0 (length coll)) nil (in coll (- (length coll) 1)))   # vector: last
+    (array? coll) (if (= 0 (length coll)) nil (in coll 0))   # list: first
+    (error (string "peek not supported on " (type coll)))))
 
 (defn core-pop [coll]
   (cond
     (nil? coll) nil
-    (plist? coll) (pl-rest coll)                              # list: drop first
-    (pvec? coll) (pv-pop coll)                                # vector: drop last
-    (tuple? coll) (tuple/slice coll 0 (- (length coll) 1))  # vector: drop last
-    (array? coll) (array/slice coll 1)                       # list: rest
-    coll))
+    (plist? coll) (if (pl-empty? coll) (error "Can't pop empty list") (pl-rest coll))
+    (pvec? coll) (if (= 0 (pv-count coll)) (error "Can't pop empty vector") (pv-pop coll))
+    (tuple? coll) (if (= 0 (length coll)) (error "Can't pop empty vector") (tuple/slice coll 0 (- (length coll) 1)))
+    (array? coll) (if (= 0 (length coll)) (error "Can't pop empty list") (array/slice coll 1))
+    (error (string "pop not supported on " (type coll)))))
 
 (defn core-subvec [v start &opt end]
   (let [a (vview v)]
@@ -3155,8 +3157,11 @@
   (tuple ;out))
 
 # Map entries (represented as 2-element vectors)
-(defn core-key [e] (core-nth e 0))
-(defn core-val [e] (core-nth e 1))
+# key/val require a map entry (a 2-element vector/tuple in Jolt); Clojure throws
+# otherwise. (Jolt can't distinguish a 2-vector from a real MapEntry.)
+(defn- entry-like? [x] (and (or (pvec? x) (tuple? x) (array? x)) (= 2 (core-count x))))
+(defn core-key [e] (if (entry-like? e) (core-nth e 0) (error "key requires a map entry")))
+(defn core-val [e] (if (entry-like? e) (core-nth e 1) (error "val requires a map entry")))
 (defn core-map-entry? [x] (and (or (pvec? x) (tuple? x)) (= 2 (core-count x))))
 
 (defn core-rand-nth [coll]

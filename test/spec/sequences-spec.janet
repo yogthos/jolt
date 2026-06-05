@@ -145,3 +145,23 @@
   ["symbol from keyword"  "\"x\"" "(name (symbol :x))"]
   ["keyword bad 2-arg"    :throws "(keyword \"abc\" nil)"]
   ["keyword from symbol"  "\"x\"" "(name (keyword 'x))"])
+
+# Stack/accessor strictness: peek/pop are stack-only; vec needs a seqable;
+# key/val need a map entry.
+(defspec "seq / accessor strictness"
+  ["peek vector"        "3"      "(peek [1 2 3])"]
+  ["peek list"          "1"      "(peek '(1 2 3))"]
+  ["peek empty vec"     "nil"    "(peek [])"]
+  ["peek on set"        :throws  "(peek #{1 2})"]
+  ["peek on number"     :throws  "(peek 42)"]
+  ["pop empty vec"      :throws  "(pop [])"]
+  ["pop on number"      :throws  "(pop 0)"]
+  ["pop vector"         "[1 2]"  "(pop [1 2 3])"]
+  ["vec on number"      :throws  "(vec 42)"]
+  ["vec on keyword"     :throws  "(vec :a)"]
+  ["vec ok"             "[1 2]"  "(vec '(1 2))"]
+  ["key on nil"         :throws  "(key nil)"]
+  ["key on map"         :throws  "(key {})"]
+  ["val on number"      :throws  "(val 0)"]
+  ["key of entry"       ":a"     "(key (first {:a 1}))"]
+  ["val of entry"       "1"      "(val (first {:a 1}))"])
