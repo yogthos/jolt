@@ -494,7 +494,7 @@
 
 (defn core-select-keys [m ks]
   (var result @{})
-  (each k ks
+  (each k (realize-for-iteration ks)
     (let [v (core-get m k)]
       (if (not (nil? v)) (put result k v))))
   (if (struct? m) (table/to-struct result) result))
@@ -2237,15 +2237,21 @@
     (put prefs dispatch-val-a dispatch-val-b) mm-var))
 
 (defn core-with-meta [obj meta]
-  (var new-obj @{})
-  (each k (keys obj)
-    (put new-obj k (get obj k)))
-  # table/setproto requires a table, convert struct meta to table
-  (var meta-tab @{})
-  (each k (keys meta) (put meta-tab k (get meta k)))
-  (table/setproto new-obj meta-tab)
-  (put new-obj :jolt/meta meta)
-  new-obj)
+  # Functions and scalars can't carry metadata in Jolt's model — return as-is
+  # rather than crashing (Clojure attaches meta only to IObj values).
+  (if (or (function? obj) (cfunction? obj) (number? obj) (boolean? obj)
+          (nil? obj) (string? obj) (keyword? obj) (buffer? obj))
+    obj
+    (do
+      (var new-obj @{})
+      (each k (keys obj)
+        (put new-obj k (get obj k)))
+      # table/setproto requires a table, convert struct meta to table
+      (var meta-tab @{})
+      (each k (keys meta) (put meta-tab k (get meta k)))
+      (table/setproto new-obj meta-tab)
+      (put new-obj :jolt/meta meta)
+      new-obj)))
 
 (defn core-var-dynamic? [v]
   (var-dynamic? v))

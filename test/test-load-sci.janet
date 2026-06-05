@@ -42,8 +42,9 @@
         (flush)
         (if (try
                (do (eval-form ctx @{} form) true)
-               ([err]
+               ([err fib]
                  (printf " FAIL: %q\n" err)
+                 (when (os/getenv "SCI_TRACE") (debug/stacktrace fib ""))
                  (array/push failures {:form-number count :error (string err) :form (string form)})
                  false))
           (do
@@ -104,3 +105,8 @@
   (each f all-failures
     (printf "[%s:%d] %s\n" (f :file) (f :form-number) (f :error))
     (printf "  form: %s\n" (f :form))))
+
+# Regression guard: every form in the loaded SCI modules must evaluate cleanly.
+(assert (= 0 total-fail)
+        (string total-fail " SCI form(s) failed to load (see FAILURES above)"))
+(print "\nAll SCI bootstrap forms loaded successfully.")
