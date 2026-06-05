@@ -535,6 +535,9 @@
   (cond
     (lazy-seq? coll) @[x (fn [] coll)]
     (or (nil? coll) (plist? coll) (array? coll) (tuple? coll)) (pl-cons x coll)
+    # second arg must be seqable (a collection or string); reject scalars
+    (not (or (core-coll? coll) (string? coll)))
+      (error (string "Don't know how to create ISeq from: " (type coll)))
     (pl-cons x (realize-for-iteration coll))))
 
 (defn core-seq [coll]
@@ -1772,7 +1775,7 @@
 (def core-long (fn [x] (if (core-char? x) (x :ch) (math/trunc x))))
 (def core-double (fn [x] (* 1.0 (if (core-char? x) (x :ch) x))))
 (def core-float core-double)
-(def core-num (fn [x] (if (core-char? x) (x :ch) x)))
+(def core-num (fn [x] (if (number? x) x (error (string "num requires a number, got " (type x))))))
 (defn core-char [x]
   "(char code-or-char) -> a character value."
   (cond
@@ -2470,7 +2473,8 @@
     (core-delay? x) (x :realized)
     (lazy-seq? x) (truthy? (x :realized))
     (and (table? x) (= :jolt/atom (x :jolt/type))) true
-    false))
+    # Clojure's realized? is only defined on IPending; reject anything else.
+    (error (string "realized? not supported on " (type x)))))
 
 # delay macro: (delay body...) -> (make-delay (fn* [] body...))
 (defn core-delay [& body]
@@ -2794,21 +2798,36 @@
     nil))
 
 (defn core-keyword
-  "(keyword name) or (keyword ns name). Namespaced keywords are `:ns/name`."
-  [& args]
-  (case (length args)
-    1 (let [a (in args 0)] (if (keyword? a) a (keyword (core-name a))))
-    2 (keyword (string (in args 0) "/" (in args 1)))
-    (keyword ;args)))
-
-(defn core-symbol
-  "(symbol name) or (symbol ns name) -> a jolt symbol struct."
+  "(keyword name) or (keyword ns name). Namespaced keywords are `:ns/name`.
+  (keyword nil) is nil; the 2-arg form requires string args (nil ns allowed)."
   [& args]
   (case (length args)
     1 (let [a (in args 0)]
-        (if (and (struct? a) (= :symbol (a :jolt/type))) a
-          {:jolt/type :symbol :ns nil :name (if (keyword? a) (string a) (string a))}))
-    2 {:jolt/type :symbol :ns (in args 0) :name (in args 1)}
+        (cond
+          (nil? a) nil
+          (keyword? a) a
+          (or (string? a) (core-symbol? a)) (keyword (core-name a))
+          (error (string "keyword requires a string, symbol or keyword, got " (type a)))))
+    2 (let [ns (in args 0) nm (in args 1)]
+        (when (not (and (or (nil? ns) (string? ns)) (string? nm)))
+          (error "keyword ns and name must be strings"))
+        (keyword (if ns (string ns "/" nm) nm)))
+    (keyword ;args)))
+
+(defn core-symbol
+  "(symbol name) or (symbol ns name) -> a jolt symbol struct. name/ns must be
+  strings (a single symbol arg is returned as-is)."
+  [& args]
+  (case (length args)
+    1 (let [a (in args 0)]
+        (cond
+          (core-symbol? a) a
+          (or (string? a) (keyword? a)) {:jolt/type :symbol :ns nil :name (core-name a)}
+          (error (string "symbol requires a string or symbol, got " (type a)))))
+    2 (let [ns (in args 0) nm (in args 1)]
+        (when (not (and (or (nil? ns) (string? ns)) (string? nm)))
+          (error "symbol ns and name must be strings"))
+        {:jolt/type :symbol :ns ns :name nm})
     (error "symbol expects 1 or 2 args")))
 
 (defn core-split-at [n coll]

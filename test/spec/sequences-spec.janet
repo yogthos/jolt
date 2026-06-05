@@ -129,3 +129,19 @@
   ["conj map + map"     "{:a 0, :b 1}" "(conj {:a 0} {:b 1})"]
   ["conj map + pair"    "{:a 0, :b 1}" "(conj {:a 0} [:b 1])"]
   ["conj map merge wins" "{:a 2}"   "(conj {:a 0} {:a 1} {:a 2})"])
+
+# Strictness: these reject malformed arguments like Clojure.
+(defspec "seq / strictness (throws like Clojure)"
+  ["cons non-seqable num" :throws "(cons 1 42)"]
+  ["cons non-seqable kw"  :throws "(cons 1 :k)"]
+  ["cons onto nil ok"     "[1]"   "(cons 1 nil)"]
+  ["cons onto seq ok"     "[0 1 2]" "(cons 0 [1 2])"]
+  ["num non-number"       :throws "(num \"x\")"]
+  ["num ok"               "5"     "(num 5)"]
+  ["realized? on number"  :throws "(realized? 1)"]
+  ["realized? on nil"     :throws "(realized? nil)"]
+  ["symbol from nil"      :throws "(symbol nil)"]
+  ["symbol bad 2-arg"     :throws "(symbol :a \"b\")"]
+  ["symbol from keyword"  "\"x\"" "(name (symbol :x))"]
+  ["keyword bad 2-arg"    :throws "(keyword \"abc\" nil)"]
+  ["keyword from symbol"  "\"x\"" "(name (keyword 'x))"])
