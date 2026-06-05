@@ -62,7 +62,7 @@
 # ============================================================
 (print "6: let...")
 (assert (= "(let [x 1] (core-inc x))" (compile-str "(let* [x 1] (inc x))")) "let single binding")
-(assert (= "(let [x 1 y 2] (core-+ x y))" (compile-str "(let* [x 1 y 2] (+ x y))")) "let two bindings")
+(assert (= "(let [x 1 y 2] (+ x y))" (compile-str "(let* [x 1 y 2] (+ x y))")) "let two bindings")
 (assert (= "(let [x (core-inc 1)] (core-inc x))" (compile-str "(let* [x (inc 1)] (inc x))")) "let with fn in binding")
 (print "  passed")
 
@@ -71,8 +71,8 @@
 # ============================================================
 (print "7: invoke...")
 (assert (= "(core-inc 1)" (compile-str "(inc 1)")) "inc call")
-(assert (= "(core-+ 1 2)" (compile-str "(+ 1 2)")) "+ call")
-(assert (= "(core-+ (core-inc 1) 2)" (compile-str "(+ (inc 1) 2)")) "nested calls")
+(assert (= "(+ 1 2)" (compile-str "(+ 1 2)")) "+ call")
+(assert (= "(+ (core-inc 1) 2)" (compile-str "(+ (inc 1) 2)")) "nested calls")
 (assert (= "(core-map core-inc (core-vec 1 2 3))"
            (compile-str "(map inc (vec 1 2 3))")) "multi-arg call")
 (print "  passed")

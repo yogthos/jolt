@@ -51,6 +51,18 @@ hello 42
 
 `(init)` returns a context with `clojure.core` loaded. Each context is isolated; use separate contexts for separate environments.
 
+### Compilation
+
+By default Jolt tree-walks the interpreter. Passing `:compile?` compiles each form to Janet — `def`/`defn` persist in a per-context Janet environment and resolve across forms, hot numeric primitives (`+ - * < > <= >=`) emit native Janet ops, and function calls compile to direct calls (keyword/map/set still dispatch as IFn). For compute-heavy code this is dramatically faster — recursive `fib(30)` runs in ~0.08 s compiled vs ~50 s interpreted (≈600×), at native Janet speed:
+
+```janet
+(def ctx (init {:compile? true}))
+(eval-string ctx "(defn fib [n] (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))")
+(eval-string ctx "(fib 30)")   ; → 832040, fast
+```
+
+Compile mode is opt-in and still maturing: context-modifying forms (`ns`/`defmacro`/`deftype`/multimethods/…) always interpret, and the numeric-op inlining relaxes the strict non-number checks (e.g. `(< nil 1)`). Constructs the compiler doesn't yet handle fall back to errors rather than the interpreter (a hybrid fallback is planned).
+
 ## Host interop
 
 Jolt exposes CLJS-style host interop through `.` on any Janet table or struct — a field holding a function is called with the receiver as the first argument:

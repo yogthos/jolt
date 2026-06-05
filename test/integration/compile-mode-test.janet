@@ -88,7 +88,17 @@
   (eval-string ctx "(defn sum-sq [a b] (+ (sq a) (sq b)))")
   (assert (= 25 (ct-eval ctx "(sum-sq 3 4)")) "defn calling earlier defn")
   (eval-string ctx "(def base 100)")
-  (assert (= 142 (ct-eval ctx "(+ base 42)")) "compiled def referenced later"))
+  (assert (= 142 (ct-eval ctx "(+ base 42)")) "compiled def referenced later")
+
+  # Phase 2: native ops are emitted directly (fast), but IFn values in call
+  # position (keyword/map/set) still dispatch via the runtime.
+  (print "  native ops + IFn dispatch...")
+  (assert (= 10 (ct-eval ctx "(+ 1 2 3 4)")) "n-ary +")
+  (assert (= true (ct-eval ctx "(< 1 2 3)")) "n-ary <")
+  (assert (= 1 (ct-eval ctx "(:a {:a 1})")) "keyword as fn")
+  (assert (= 1 (ct-eval ctx "({:a 1} :a)")) "map as fn")
+  (assert (= 2 (ct-eval ctx "(#{1 2 3} 2)")) "set as fn")
+  (assert (= true (ct-eval ctx "(= [1 2] [1 2])")) "= is value equality, not core-= bypass"))
 
 # Context isolation: a def in one compiled context is invisible in another.
 (let [a (init {:compile? true}) b (init {:compile? true})]

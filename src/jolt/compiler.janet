@@ -27,18 +27,24 @@
     (make-env jolt-runtime-env)))
 
 (def- core-renames
-  @{"+" "core-+"
-    "-" "core-sub"
-    "*" "core-*"
+  # Compile mode emits NATIVE Janet ops for the hot numeric primitives (+,-,*
+  # and the comparisons), which match Jolt's semantics for numbers and are
+  # ~10-20x faster than the variadic core fns. Trade-off: the strict non-number
+  # checks (e.g. (< nil 1) throwing) are relaxed under compilation — a
+  # documented perf-mode divergence. = / not= / quot / rem / mod / division stay
+  # as core fns (their semantics differ from Janet's).
+  @{"+" "+"
+    "-" "-"
+    "*" "*"
     "/" "core-/"
     "inc" "core-inc"
     "dec" "core-dec"
     "=" "core-="
     "not=" "core-not="
-    "<" "core-<"
-    ">" "core->"
-    "<=" "core-<="
-    ">=" "core->="
+    "<" "<"
+    ">" ">"
+    "<=" "<="
+    ">=" ">="
     "nil?" "core-nil?"
     "not" "core-not"
     "some?" "core-some?"
@@ -732,9 +738,16 @@
 (defn- emit-symbol-expr [name] (symbol name))
 (defn- emit-local-expr [name] (symbol name))
 
+# Native Janet numeric ops: emit them as SYMBOLS (not inlined fn values) so
+# Janet's compiler recognizes the primitive and uses its fast arithmetic/compare
+# opcode rather than a function call.
+(def- native-ops @{"+" true "-" true "*" true "<" true ">" true "<=" true ">=" true})
+
 (defn- emit-core-symbol-expr [janet-name]
-  (or (get core-fn-values janet-name)
-      (error (string "Core fn not found: " janet-name))))
+  (if (get native-ops janet-name)
+    (symbol janet-name)
+    (or (get core-fn-values janet-name)
+        (error (string "Core fn not found: " janet-name)))))
 
 (defn- emit-qualified-symbol-expr [ns name]
   (error (string "Cannot eval qualified symbol at compile time: " ns "/" name)))
@@ -809,9 +822,17 @@
   (tuple/slice (tuple ;exprs)))
 
 (defn- emit-invoke-expr [f-ast args]
-  # Embed the jolt-call function value directly (like core symbols) so compiled
-  # invocations dispatch real fns AND IFn collections at runtime.
-  (def exprs @[jolt-call (emit-expr f-ast)])
+  # Emit a DIRECT Janet call (f arg…) when the callee is a function reference —
+  # a core op/fn, a local/global symbol, or an fn literal — so native ops keep
+  # their fast opcodes and recursion is a direct call. Fall back to jolt-call
+  # only when the head is a keyword/collection literal in call position (an IFn
+  # that needs runtime lookup), e.g. (:k m) or ({:a 1} :a).
+  (def direct (case (f-ast :op)
+                :core-symbol true :symbol true :local true
+                :qualified-symbol true :fn true
+                false))
+  (def f (emit-expr f-ast))
+  (def exprs (if direct @[f] @[jolt-call f]))
   (each arg args (array/push exprs (emit-expr arg)))
   (tuple/slice (tuple ;exprs)))
 
