@@ -538,9 +538,31 @@
     to))
 
 (defn core-merge [& maps]
-  (if (phm? (first maps))
-    (do (var result (first maps)) (var mi 1) (while (< mi (length maps)) (let [m (maps mi)] (each k (if (phm? m) (keys (phm-to-struct m)) (keys m)) (set result (phm-assoc result k (if (phm? m) (phm-get m k) (m k))))) (++ mi))) result)
-    (do (var result (struct)) (each m maps (set result (merge result m))) result)))
+  # Clojure: (when (some identity maps) (reduce conj (or (first maps) {}) (rest maps)))
+  # - (merge) and (merge nil nil) -> nil; nil args elsewhere are no-ops.
+  # - later args follow conj semantics (a map merges its entries; a [k v]
+  #   vector/map-entry adds that entry).
+  (var any false)
+  (each m maps (when (not (nil? m)) (set any true)))
+  (if (not any)
+    nil
+    (do
+      (var result (let [f (in maps 0)] (if (nil? f) (struct) f)))
+      (var i 1)
+      (while (< i (length maps))
+        (let [m (in maps i)]
+          (cond
+            (nil? m) nil
+            (or (phm? m) (struct? m))
+              (each k (if (phm? m) (keys (phm-to-struct m)) (keys m))
+                (set result (core-assoc result k (if (phm? m) (phm-get m k) (in m k)))))
+            # a [k v] pair (map-entry / 2-vector), per conj
+            (and (or (pvec? m) (tuple? m) (array? m))
+                 (= 2 (if (pvec? m) (pv-count m) (length m))))
+              (set result (core-assoc result (vnth m 0) (vnth m 1)))
+            (set result (core-conj result m))))
+        (++ i))
+      result)))
 
 (defn core-merge-with [f & maps]
   (if (phm? (first maps))
