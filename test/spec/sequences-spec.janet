@@ -165,3 +165,17 @@
   ["val on number"      :throws  "(val 0)"]
   ["key of entry"       ":a"     "(key (first {:a 1}))"]
   ["val of entry"       "1"      "(val (first {:a 1}))"])
+
+# More strictness: first/rseq on the right shapes, assoc even-arg requirement.
+(defspec "seq / more strictness"
+  ["first on number"    :throws "(first 42)"]
+  ["first on keyword"   :throws "(first :a)"]
+  ["first ok vec"       "1"     "(first [1 2])"]
+  ["first ok nil"       "nil"   "(first nil)"]
+  ["rseq vector"        "[3 2 1]" "(rseq [1 2 3])"]
+  ["rseq on string"     :throws "(rseq \"ab\")"]
+  ["rseq on map"        :throws "(rseq {:a 1})"]
+  ["rseq on number"     :throws "(rseq 0)"]
+  ["assoc odd args"     :throws "(assoc {:a 1} :b)"]
+  ["assoc on number"    :throws "(assoc 5 :a 1)"]
+  ["assoc on set"       :throws "(assoc #{} :a 1)"])

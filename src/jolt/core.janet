@@ -342,6 +342,13 @@
             result)))))))))))
 
 (defn core-assoc [m & kvs]
+  (when (odd? (length kvs))
+    (error "assoc expects an even number of key/value arguments"))
+  # assoc is defined on maps, vectors and nil; reject other shapes
+  (when (or (number? m) (string? m) (buffer? m) (keyword? m) (boolean? m)
+            (plist? m) (set? m) (core-transient? m)
+            (and (struct? m) (get m :jolt/type)))
+    (error (string "assoc requires a map or vector, got " (type m))))
   (cond
     (phm? m)
       (do (var result m) (var i 0) (while (< i (length kvs)) (set result (phm-assoc result (kvs i) (kvs (+ i 1)))) (+= i 2)) result)
@@ -527,9 +534,14 @@
     # maps and sets: first of their seq (an entry / element)
     (phm? coll) (let [e (phm-entries coll)] (if (= 0 (length e)) nil (in e 0)))
     (set? coll) (let [s (phs-seq coll)] (if (= 0 (length s)) nil (in s 0)))
-    (struct? coll) (let [ks (keys coll)] (if (= 0 (length ks)) nil (tuple (in ks 0) (get coll (in ks 0)))))
-    (or (nil? coll) (= 0 (length coll))) nil
-    (string? coll) (make-char (in coll 0))
+    (and (struct? coll) (nil? (get coll :jolt/type)))
+      (let [ks (keys coll)] (if (= 0 (length ks)) nil (tuple (in ks 0) (get coll (in ks 0)))))
+    (nil? coll) nil
+    (string? coll) (if (= 0 (length coll)) nil (make-char (in coll 0)))
+    # scalars aren't seqable
+    (or (number? coll) (boolean? coll) (keyword? coll) (and (struct? coll) (get coll :jolt/type)))
+      (error (string "first not supported on " (type coll)))
+    (= 0 (length coll)) nil
     (in coll 0)))
 
 (defn core-rest [coll]
@@ -2972,8 +2984,13 @@
 (defn core-not-empty [coll]
   (if (or (nil? coll) (= 0 (core-count coll))) nil coll))
 
+# rseq is defined only on vectors and sorted collections (Reversible).
 (defn core-rseq [coll]
-  (let [c (realize-for-iteration coll)] (tuple/slice (tuple ;(reverse c)))))
+  (cond
+    (pvec? coll) (tuple/slice (tuple ;(reverse (pv->array coll))))
+    (core-sorted-map? coll) (tuple/slice (tuple ;(reverse (sorted-map-entries coll))))
+    (core-sorted-set? coll) (tuple/slice (tuple ;(reverse (coll :items))))
+    (error (string "rseq requires a vector or sorted collection, got " (type coll)))))
 
 (defn core-shuffle [coll]
   (let [c (array/slice (realize-for-iteration coll))]
