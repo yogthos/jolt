@@ -9,7 +9,9 @@
   ["var sugar #'"       "true"     "(var? #'+)"]
   ["var-get"            "5"        "(do (def w 5) (var-get #'w))"]
   ["defn defines fn"    "3"        "(do (defn f [x] (inc x)) (f 2))"]
-  ["def with docstring" "7"        "(do (def d \"a doc\" 7) d)"])
+  ["def with docstring" "7"        "(do (def d \"a doc\" 7) d)"]
+  ["dynamic var binding" "2"       "(do (def ^:dynamic *x* 1) (binding [*x* 2] *x*))"]
+  ["binding restores"    "1"       "(do (def ^:dynamic *y* 1) (binding [*y* 9] nil) *y*)"])
 
 (defspec "namespaces / ns operations"
   ["in-ns switches"     "true"     "(do (in-ns 'my.ns) (symbol? 'x))"]

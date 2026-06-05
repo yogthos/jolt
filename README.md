@@ -98,8 +98,8 @@ Tests are organized in three layers:
   per public API area) that collectively pin down Jolt's defined behavior. This
   is the authoritative description of what Jolt promises.
 - **`test/integration/`** — cross-cutting and regression batteries: the Clojure
-  conformance suite, SCI bootstrap/runtime loading, jank conformance, and ported
-  Clojure/CLJS test batches (`test/integration/ports/`).
+  conformance suite, SCI bootstrap/runtime loading, jank conformance, compile-mode
+  tests, and ported Clojure test batteries.
 - **`test/unit/`** — white-box tests for individual components (reader,
   evaluator, types, persistent collections, regex, compiler).
 

@@ -47,7 +47,11 @@
   ["name of keyword"    "\"a\""  "(name :a)"]
   ["name of qualified"  "\"b\""  "(name :a/b)"]
   ["namespace"          "\"a\""  "(namespace :a/b)"]
-  ["namespace simple"   "nil"    "(namespace :a)"])
+  ["namespace simple"   "nil"    "(namespace :a)"]
+  ["keyword constructor" ":foo"  "(keyword \"foo\")"]
+  ["keyword ns + name"  ":a/b"   "(keyword \"a\" \"b\")"]
+  ["symbol constructor" "(quote x)" "(symbol \"x\")"]
+  ["name of string"     "\"s\""  "(name \"s\")"])
 
 (defspec "predicates / equality & identity"
   ["= same"             "true"   "(= 1 1)"]

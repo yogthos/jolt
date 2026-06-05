@@ -13,7 +13,9 @@
   ["reset-vals!"        "[0 9]"  "(let [a (atom 0)] (reset-vals! a 9))"]
   ["compare-and-set! ok" "true"  "(let [a (atom 0)] (compare-and-set! a 0 1))"]
   ["compare-and-set! no" "false" "(let [a (atom 0)] (compare-and-set! a 9 1))"]
-  ["atom?"              "true"   "(do (require (quote [clojure.core])) (instance? clojure.lang.Atom (atom 0)))"])
+  ["atom?"              "true"   "(do (require (quote [clojure.core])) (instance? clojure.lang.Atom (atom 0)))"]
+  ["atom? predicate"    "true"   "(atom? (atom 0))"]
+  ["atom? on non-atom"  "false"  "(atom? 5)"])
 
 (defspec "state / watches & validators"
   ["add-watch fires"    "1"      "(let [a (atom 0) seen (atom 0)] (add-watch a :k (fn [k r o n] (reset! seen 1))) (reset! a 5) @seen)"]

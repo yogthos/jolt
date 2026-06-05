@@ -59,4 +59,5 @@
   ["some-> nil stops"   "nil"    "(some-> nil inc)"]
   ["some->>"            "[2 3]"  "(some->> [1 2] (map inc))"]
   ["cond->"             "2"      "(cond-> 1 true inc false inc)"]
-  ["cond->>"            "[1 2]"  "(cond->> [2] true (cons 1))"])
+  ["cond->>"            "[1 2]"  "(cond->> [2] true (cons 1))"]
+  ["doto returns subject" "5"    "(let [a (doto (atom 0) (reset! 5))] @a)"])

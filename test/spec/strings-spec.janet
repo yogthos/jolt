@@ -11,6 +11,8 @@
   ["subs from"          "\"bc\""     "(subs \"abc\" 1)"]
   ["subs range"         "\"b\""      "(subs \"abc\" 1 2)"]
   ["string? true"       "true"       "(string? \"x\")"]
+  ["pr-str vector"      "\"[1 2 3]\"" "(pr-str [1 2 3])"]
+  ["pr-str quotes str"  "\"\\\"hi\\\"\"" "(pr-str \"hi\")"]
   ["seq of string"      "[\\a \\b]"  "(seq \"ab\")"])
 
 (defspec "clojure.string"
