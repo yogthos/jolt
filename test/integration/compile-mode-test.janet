@@ -77,6 +77,23 @@
 
   (print "  complex...")
   (assert (= 6 (ct-eval ctx "(let [f (fn [n] (loop [i 0 acc 0] (if (< i n) (recur (inc i) (+ acc i)) acc)))] (f 4))")) "nested")
-  (assert (= 15 (ct-eval ctx "(reduce + (map inc [0 1 2 3 4]))")) "reduce+map"))
+  (assert (= 15 (ct-eval ctx "(reduce + (map inc [0 1 2 3 4]))")) "reduce+map")
+
+  # Phase 1 wiring: compiled defns persist across forms (the per-context Janet
+  # env) and recurse correctly (named-fn self-reference).
+  (print "  cross-form defns + recursion...")
+  (eval-string ctx "(defn fib [n] (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))")
+  (assert (= 832040 (ct-eval ctx "(fib 30)")) "recursive fib across forms")
+  (eval-string ctx "(defn sq [x] (* x x))")
+  (eval-string ctx "(defn sum-sq [a b] (+ (sq a) (sq b)))")
+  (assert (= 25 (ct-eval ctx "(sum-sq 3 4)")) "defn calling earlier defn")
+  (eval-string ctx "(def base 100)")
+  (assert (= 142 (ct-eval ctx "(+ base 42)")) "compiled def referenced later"))
+
+# Context isolation: a def in one compiled context is invisible in another.
+(let [a (init {:compile? true}) b (init {:compile? true})]
+  (eval-string a "(def secret 7)")
+  (assert (= 7 (ct-eval a "secret")) "def visible in its own ctx")
+  (assert (not ((protect (ct-eval b "secret")) 0)) "def isolated to its ctx"))
 
 (print "\nAll Phase 6 tests passed!")

@@ -43,6 +43,33 @@
     (install-async! ctx)
     ctx))
 
+# Stateful / context-modifying forms always use the interpreter (they mutate
+# the context: namespaces, macros, types, multimethods, dynamic vars, …).
+(defn- stateful-head? [head-name]
+  (or (= head-name "defmacro") (= head-name "ns")
+      (= head-name "deftype") (= head-name "defmulti") (= head-name "defmethod")
+      (= head-name "require") (= head-name "in-ns")
+      (= head-name "syntax-quote") (= head-name "set!")
+      (= head-name "var") (= head-name ".") (= head-name "new")
+      (= head-name "eval")))
+
+(defn eval-one
+  "Evaluate a single already-parsed form, routing to the compiler when the
+  context has :compile? enabled (stateful forms always interpret)."
+  [ctx form]
+  (if (get (ctx :env) :compile?)
+    (if (array? form)
+      (let [first-form (first form)
+            head-name (if (and (struct? first-form) (= :symbol (first-form :jolt/type)))
+                        (first-form :name) nil)]
+        (if (stateful-head? head-name)
+          (eval-form ctx @{} form)
+          (compile-and-eval form ctx)))
+      (if (or (and (struct? form) (= :symbol (form :jolt/type))) (tuple? form))
+        (compile-and-eval form ctx)
+        (eval-form ctx @{} form)))
+    (eval-form ctx @{} form)))
+
 (defn eval-string
   "Evaluate a Clojure source string in a Jolt context.
   When :compile? is enabled, compiles to Janet and evaluates.
@@ -50,31 +77,7 @@
   Context-modifying forms (ns, defmacro, deftype, require, in-ns, defmulti, defmethod)
   always use the interpreter."
   [ctx s]
-  (let [compile? (get (ctx :env) :compile?)
-        form (parse-string s)]
-    (if compile?
-      (if (array? form)
-        # Lists: check for stateful forms
-        (let [first-form (first form)
-              head-name (if (and (struct? first-form) (= :symbol (first-form :jolt/type)))
-                         (first-form :name)
-                         nil)
-              stateful? (or (= head-name "defmacro") (= head-name "ns")
-                            (= head-name "deftype") (= head-name "defmulti") (= head-name "defmethod")
-                            (= head-name "require") (= head-name "in-ns")
-                            (= head-name "syntax-quote") (= head-name "set!")
-                            (= head-name "var") (= head-name ".") (= head-name "new")
-                            (= head-name "eval"))]
-          (if stateful?
-            (eval-form ctx @{} form)
-            (compile-and-eval form ctx)))
-        # Bare symbols and other non-literal forms: also compile
-        (if (or (and (struct? form) (= :symbol (form :jolt/type)))
-                (tuple? form))
-          (compile-and-eval form ctx)
-          (eval-form ctx @{} form)))
-      # No compile flag: always interpret
-      (eval-form ctx @{} form))))
+  (eval-one ctx (parse-string s)))
 
 (defn eval-string*
   "Evaluate a Clojure source string with explicit bindings."
@@ -93,7 +96,7 @@
     (def [form rest] (parse-next cur))
     (set cur rest)
     (when (not (nil? form))
-      (set result (eval-form ctx @{} form))))
+      (set result (eval-one ctx form))))
   result)
 
 (defn compile-string

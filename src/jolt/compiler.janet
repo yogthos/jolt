@@ -8,6 +8,24 @@
 (use ./core)
 (use ./phm)
 
+# The compiler emits Janet that references the core fns (core-+, core-<, …),
+# which are bare-bound in this module's environment via (use ./core). Capture it
+# so each Jolt context can get a child env where those resolve and where compiled
+# `def`/`defn` bindings persist across forms (isolated per context).
+(def jolt-runtime-env (curenv))
+
+(defn ctx-janet-env
+  "Lazily create/cache a per-context Janet environment for compiled code: a child
+  of the runtime env (so core fns resolve) that holds this context's user defs.
+  For a nil context (one-off compile/eval) returns a fresh child env."
+  [ctx]
+  (if (and ctx (table? (get ctx :env)))
+    (or (get (ctx :env) :janet-rt)
+        (let [e (make-env jolt-runtime-env)]
+          (put (ctx :env) :janet-rt e)
+          e))
+    (make-env jolt-runtime-env)))
+
 (def- core-renames
   @{"+" "core-+"
     "-" "core-sub"
@@ -854,18 +872,30 @@
   (emit-expr (analyze-form form @{} ctx)))
 
 (defn compile-and-eval
-  "Compile a Clojure form and evaluate it as Janet.
-  For def/defn forms, interns the result in the Jolt namespace
-  so the interpreter can resolve it later."
+  "Compile a Clojure form and evaluate it as Janet, in the context's persistent
+  Janet env (so compiled def/defn bindings resolve across forms). For def/defn
+  forms, also interns the result in the Jolt namespace so the interpreter can
+  resolve it later."
   [form ctx]
-  (def result (eval (compile-ast form ctx)))
-  # Intern def/defn results in Jolt namespace for interpreter resolution
-  (when (and ctx (array? form) (> (length form) 0)
-             (struct? (first form)) (= :symbol ((first form) :jolt/type)))
-    (def head-name ((first form) :name))
-    (when (or (= head-name "def") (= head-name "defn") (= head-name "defn-"))
-      (def name-sym (in form 1))
-      (def name (if (struct? name-sym) (name-sym :name) name-sym))
-      (def ns (ctx-find-ns ctx (ctx-current-ns ctx)))
-      (ns-intern ns name result)))
+  (def env (ctx-janet-env ctx))
+  (def def-form? (and ctx (array? form) (> (length form) 0)
+                      (struct? (first form)) (= :symbol ((first form) :jolt/type))
+                      (let [h ((first form) :name)] (or (= h "def") (= h "defn") (= h "defn-")))))
+  (def def-name (when def-form?
+                  (let [name-sym (in form 1)] (if (struct? name-sym) (name-sym :name) name-sym))))
+  (var compiled (compile-ast form ctx))
+  # Name the fn after the def so a recursive body self-references lexically
+  # ((def f (fn [..] (f ..))) -> (def f (fn f [..] (f ..)))); the anonymous form
+  # can't resolve f at compile time.
+  (when (and def-name (indexed? compiled) (= 3 (length compiled))
+             (= 'def (in compiled 0))
+             (indexed? (in compiled 2)) (= 'fn (in (in compiled 2) 0))
+             (indexed? (in (in compiled 2) 1)))   # 3rd elem is (fn [params] ...)
+    (let [f (in compiled 2)]
+      (set compiled [(in compiled 0) (in compiled 1)
+                     [(in f 0) (symbol def-name) ;(tuple/slice f 1)]])))
+  (def result (eval compiled env))
+  # Also intern def/defn results in the Jolt namespace for interpreter resolution.
+  (when def-name
+    (ns-intern (ctx-find-ns ctx (ctx-current-ns ctx)) def-name result))
   result)
