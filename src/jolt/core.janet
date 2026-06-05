@@ -1557,6 +1557,7 @@
       (set? v) (pr-render-seq buf (phs-seq v) "#{" "}")
       (phm? v) (pr-render-pairs buf (phm-entries v))
       (core-transient? v) (buffer/push-string buf (string "#<transient " (v :kind) ">"))
+      (and (table? v) (= :jolt/chan (get v :jolt/type))) (buffer/push-string buf "#<channel>")
       (pvec? v) (pr-render-seq buf (pv->array v) "[" "]")
       (plist? v) (pr-render-seq buf (pl->array v) "(" ")")
       (and (table? v) (get v :jolt/deftype)) (buffer/push-string buf (string v))

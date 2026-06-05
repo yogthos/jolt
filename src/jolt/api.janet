@@ -9,6 +9,7 @@
 (use ./core)
 (use ./compiler)
 (use ./loader)
+(use ./async)
 
 (defn normalize-pvecs
   "Deep-convert any sequential (pvec/tuple/array) to a Janet tuple. Test helper
@@ -37,6 +38,9 @@
     # via JOLT_MUTABLE (see config.janet); init-core! registers vec/vector/conj/
     # etc. that produce the mode-appropriate values, so nothing extra to load.
     (init-core! ctx)
+    # clojure.core.async (channels + go blocks on Janet fibers); pre-populated
+    # so (require '[clojure.core.async ...]) finds it and applies :as/:refer.
+    (install-async! ctx)
     ctx))
 
 (defn eval-string

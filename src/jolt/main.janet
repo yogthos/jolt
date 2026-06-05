@@ -104,6 +104,9 @@
     (and (table? v) (= :jolt/transient (v :jolt/type)))
     (push-str buf (string "#<transient " (v :kind) ">"))
 
+    (and (table? v) (= :jolt/chan (v :jolt/type)))
+    (push-str buf "#<channel>")
+
     (phm? v)
     (do
       (push-str buf "{")
