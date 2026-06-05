@@ -25,4 +25,8 @@
   ["ancestors"          "true"   "(do (derive ::c ::p) (derive ::p ::g) (contains? (ancestors ::c) ::g))"]
   ["descendants"        "true"   "(do (derive ::c ::p) (contains? (descendants ::p) ::c))"]
   ["dispatch via hierarchy" "\"animal\""
-   "(do (derive ::dog ::animal) (defmulti speak identity) (defmethod speak ::animal [_] \"animal\") (speak ::dog))"])
+   "(do (derive ::dog ::animal) (defmulti speak identity) (defmethod speak ::animal [_] \"animal\") (speak ::dog))"]
+  ["custom :default key"  ":unknown"
+   "(do (defmulti classify :type :default :other) (defmethod classify :a [_] :alpha) (defmethod classify :other [_] :unknown) (classify {:type :zzz}))"]
+  ["explicit :hierarchy"  "\"a\""
+   "(do (def h (derive (make-hierarchy) ::dog ::animal)) (defmulti snd identity :hierarchy h) (defmethod snd ::animal [_] \"a\") (snd ::dog))"])

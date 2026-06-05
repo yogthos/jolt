@@ -24,4 +24,6 @@
   ["require :refer"     "true"     "(do (require '[clojure.string :refer [blank?]]) (blank? \"\"))"]
   ["require :as + :refer" "true"   "(do (require '[clojure.string :as s :refer [blank?]]) (and (blank? \"\") (= \"X\" (s/upper-case \"x\"))))"]
   ["require clojure.set" "#{1 2 3}" "(do (require '[clojure.set :as set]) (set/union #{1 2} #{3}))"]
-  ["require clojure.walk" "{:a 2}" "(do (require '[clojure.walk :as w]) (w/postwalk (fn [x] (if (number? x) (inc x) x)) {:a 1}))"])
+  ["require clojure.walk" "{:a 2}" "(do (require '[clojure.walk :as w]) (w/postwalk (fn [x] (if (number? x) (inc x) x)) {:a 1}))"]
+  ["walk keywordize-keys" "{:a 1}" "(do (require '[clojure.walk :as w]) (w/keywordize-keys {\"a\" 1}))"]
+  ["walk stringify-keys" "true"    "(do (require '[clojure.walk :as w]) (= {\"a\" 1} (w/stringify-keys {:a 1})))"])

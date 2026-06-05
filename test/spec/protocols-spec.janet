@@ -43,4 +43,8 @@
   ["satisfies? false"     "false"
    "(do (defprotocol P (m [_])) (defrecord R []) (satisfies? P (->R)))"]
   ["instance? record"     "true"
-   "(do (defrecord R [a]) (instance? R (->R 1)))"])
+   "(do (defrecord R [a]) (instance? R (->R 1)))"]
+  ["dot constructor"      "5"
+   "(do (deftype P [n]) (.-n (P. 5)))"]
+  ["dot ctor + method"    "5"
+   "(do (defprotocol G (val-of [_])) (deftype P [n] G (val-of [_] n)) (val-of (P. 5)))"])

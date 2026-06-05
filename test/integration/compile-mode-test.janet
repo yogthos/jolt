@@ -1,4 +1,4 @@
-(use ../../../src/jolt/api)
+(use ../../src/jolt/api)
 
 (defn ct-eval [ctx s] (normalize-pvecs (eval-string ctx s)))
 

@@ -27,4 +27,5 @@
 
 (defspec "lazy / realized?"
   ["unrealized"         "false"    "(realized? (lazy-seq (cons 1 nil)))"]
-  ["realized after"     "true"     "(let [s (lazy-seq (cons 1 nil))] (first s) (realized? s))"])
+  ["realized after"     "true"     "(let [s (lazy-seq (cons 1 nil))] (first s) (realized? s))"]
+  ["body runs once"     "1"        "(let [c (atom 0) s (lazy-seq (do (swap! c inc) [1 2 3]))] (seq s) (seq s) @c)"])
