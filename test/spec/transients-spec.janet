@@ -90,3 +90,9 @@
   ["conj! no args"         "[]"    "(persistent! (conj!))"]
   ["conj! identity"        "[1 2]" "(conj! [1 2])"]
   ["conj! map merges map"  "{:a 1, :b 2}" "(persistent! (conj! (transient {:a 1}) {:b 2}))"])
+
+(defspec "transient / assoc! bounds"
+  ["assoc! existing idx"  "[1 9 3]" "(persistent! (assoc! (transient [1 2 3]) 1 9))"]
+  ["assoc! at count grows" "[1 2 3]" "(persistent! (assoc! (transient [1 2]) 2 3))"]
+  ["assoc! out of bounds" :throws   "(assoc! (transient [0 1 2]) 4 4)"]
+  ["assoc! negative"      :throws   "(assoc! (transient []) -1 0)"])

@@ -33,3 +33,13 @@
   ["replace"            "\"hexxo\""  "(do (require (quote [clojure.string :as s])) (s/replace \"hello\" \"l\" \"x\"))"]
   ["reverse"            "\"cba\""    "(do (require (quote [clojure.string :as s])) (s/reverse \"abc\"))"]
   ["index-of"           "2"          "(do (require (quote [clojure.string :as s])) (s/index-of \"hello\" \"l\"))"])
+
+# subs validates bounds like Clojure (no Janet from-end/clamping).
+(defspec "string / subs strictness"
+  ["subs basic"         "\"bcd\""  "(subs \"abcde\" 1 4)"]
+  ["subs to end"        "\"cde\""  "(subs \"abcde\" 2)"]
+  ["subs start>end"     :throws    "(subs \"abcde\" 2 1)"]
+  ["subs negative"      :throws    "(subs \"abcde\" -1)"]
+  ["subs end past len"  :throws    "(subs \"abcde\" 1 6)"]
+  ["subs nil start"     :throws    "(subs \"abcde\" nil 2)"]
+  ["subs on nil"        :throws    "(subs nil 1 2)"])

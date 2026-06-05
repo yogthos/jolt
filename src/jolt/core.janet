@@ -1614,10 +1614,20 @@
 
 (def core-subs
   (fn [& args]
-    (case (length args)
-      2 (string/slice (args 0) (args 1))
-      3 (string/slice (args 0) (args 1) (args 2))
-      (error "Wrong number of args passed to: subs"))))
+    (when (not (or (= 2 (length args)) (= 3 (length args))))
+      (error "Wrong number of args passed to: subs"))
+    (let [s (args 0)
+          start (get args 1)]
+      (when (not (string? s)) (error (string "subs requires a string, got " (type s))))
+      (let [len (length s)
+            end (if (= 3 (length args)) (args 2) len)]
+        # Clojure validates bounds (no negative/from-end/clamping like Janet):
+        # 0 <= start <= end <= (count s).
+        (when (not (and (number? start) (number? end)
+                        (= start (math/floor start)) (= end (math/floor end))
+                        (>= start 0) (<= start end) (<= end len)))
+          (error "String index out of range"))
+        (string/slice s start end)))))
 
 # ============================================================
 # I/O — minimal wrappers
@@ -3346,7 +3356,10 @@
 (defn- tr-assoc! [t k v]
   (tr-check-active! t)
   (case (t :kind)
-    :vector (let [a (t :arr)] (if (= k (length a)) (array/push a v) (put a k v)))
+    :vector (let [a (t :arr)]
+              (when (not (and (number? k) (= k (math/floor k)) (>= k 0) (<= k (length a))))
+                (error (string "Index " k " out of bounds for assoc! on a transient vector of length " (length a))))
+              (if (= k (length a)) (array/push a v) (put a k v)))
     :map    (put (t :tbl) (canon-key k) @[k v])
     (error "assoc! expects a transient vector or map"))
   t)
