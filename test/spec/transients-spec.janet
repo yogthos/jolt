@@ -86,7 +86,7 @@
   ["persistent! on nil"    :throws "(persistent! nil)"]
   ["pop! on transient map" :throws "(pop! (transient {:a 1}))"]
   ["dissoc! on tset"       :throws "(dissoc! (transient #{1}) 1)"]
-  ["conj! map bad item"    :throws "(conj! (transient {}) (list :a 1))"]
+  ["conj! map bad item"    :throws "(conj! (transient {}) #{:a 1})"]
   ["conj! no args"         "[]"    "(persistent! (conj!))"]
   ["conj! identity"        "[1 2]" "(conj! [1 2])"]
   ["conj! map merges map"  "{:a 1, :b 2}" "(persistent! (conj! (transient {:a 1}) {:b 2}))"])
