@@ -1137,6 +1137,38 @@
                       arrow-name (string "->" ctor-name)]
                   (ns-intern ns ctor-name ctor)
                   (ns-intern ns arrow-name ctor)
+                  # Process inline protocol/interface methods (like defrecord):
+                  #   (deftype T [fs] Proto (m [this] body) Proto2 (m2 [this] body))
+                  # Emit one extend-type per protocol, wrapping each method body in a
+                  # let that binds the type's fields from the instance (first param),
+                  # matching Clojure's field-in-scope semantics.
+                  (let [body (tuple/slice form 3)
+                        field-syms (map unwrap-meta-name fields-vec)]
+                    (var bi 0)
+                    (while (< bi (length body))
+                      (def elem (in body bi))
+                      (if (and (struct? elem) (= :symbol (elem :jolt/type)))
+                        (let [proto-sym elem
+                              et @[{:jolt/type :symbol :ns nil :name "extend-type"} type-name proto-sym]]
+                          (++ bi)
+                          (while (and (< bi (length body))
+                                      (not (and (struct? (in body bi)) (= :symbol ((in body bi) :jolt/type)))))
+                            (let [spec (in body bi)
+                                  mname (in spec 0)
+                                  argv (in spec 1)
+                                  mbody (tuple/slice spec 2)
+                                  instance (in argv 0)
+                                  field-binds @[]
+                                  _ (each f field-syms
+                                      (array/push field-binds f)
+                                      (array/push field-binds @[{:jolt/type :symbol :ns nil :name "get"}
+                                                                instance (keyword (f :name))]))
+                                  wrapped @[{:jolt/type :symbol :ns nil :name "let"}
+                                            (tuple/slice (tuple ;field-binds)) ;mbody]]
+                              (array/push et @[mname argv wrapped]))
+                            (++ bi))
+                          (eval-form ctx bindings et))
+                        (++ bi))))
                   (var-get (ns-intern ns ctor-name))))
     "new" (let [type-sym (in form 1)
                 args (map |(eval-form ctx bindings $) (tuple/slice form 2))
