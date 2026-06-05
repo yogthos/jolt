@@ -788,19 +788,20 @@
     "loop*" (let [bind-vec (in form 1)
                   body (tuple/slice form 2)
                   init-vals @[]
-                  sym-names @[]]
+                  patterns @[]]
               (var i 0)
               (while (< i (length bind-vec))
                 (array/push init-vals (eval-form ctx bindings (bind-vec (+ i 1))))
-                (array/push sym-names ((bind-vec i) :name))
+                # keep the binding form (symbol OR destructuring pattern)
+                (array/push patterns (bind-vec i))
                 (+= i 2))
               (var loop-fn nil)
               (set loop-fn (fn [& args]
                 (var loop-bindings @{})
                 (table/setproto loop-bindings bindings)
                 (var j 0)
-                (each sn sym-names
-                  (bind-put loop-bindings sn (args j))
+                (each pat patterns
+                  (destructure-bind ctx loop-bindings pat (in args j))
                   (++ j))
                 (put loop-bindings :jolt/loop-fn loop-fn)
                 (var result nil)
