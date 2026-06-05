@@ -632,6 +632,13 @@
             (and (or (pvec? m) (tuple? m) (array? m))
                  (= 2 (if (pvec? m) (pv-count m) (length m))))
               (set result (core-assoc result (vnth m 0) (vnth m 1)))
+            # scalars, sets, and wrong-length sequentials can't merge into a map
+            # (a length-2 vector was handled above; anything else here is bad)
+            (or (number? m) (string? m) (buffer? m) (keyword? m) (boolean? m)
+                (set? m) (plist? m) (pvec? m) (tuple? m) (array? m)
+                (and (struct? m) (get m :jolt/type)))
+              (error (string "Can't merge " (type m) " into a map"))
+            # other map-like tables (records, sorted-maps, host tables): lenient conj
             (set result (core-conj result m))))
         (++ i))
       result)))

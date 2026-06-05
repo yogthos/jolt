@@ -90,4 +90,9 @@
   ["subvec out of range"     :throws "(subvec [0 1 2 3] 1 5)"]
   ["subvec start>end"        :throws "(subvec [0 1 2 3] 3 2)"]
   ["subvec ok"               "[1 2]" "(subvec [0 1 2 3] 1 3)"]
-  ["min-key empty"           :throws "(apply min-key identity [])"])
+  ["min-key empty"           :throws "(apply min-key identity [])"]
+  ["merge empty vector"      :throws "(merge {} [])"]
+  ["merge 1-elem vector"     :throws "(merge {} [:foo])"]
+  ["merge atomic arg"        :throws "(merge {} :foo)"]
+  ["merge [k v] ok"          "{:foo 1}" "(merge {} [:foo 1])"]
+  ["merge maps ok"           "{:a 1, :b 2}" "(merge {:a 1} {:b 2})"])
