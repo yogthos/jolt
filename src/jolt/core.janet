@@ -3266,7 +3266,16 @@
   (case (t :kind)
     :vector (array/push (t :arr) x)
     :set    (put (t :tbl) (canon-key x) x)
-    :map    (let [k (vnth x 0)] (put (t :tbl) (canon-key k) @[k (vnth x 1)])))
+    :map    (cond
+              # a [k v] pair (map-entry / 2-vector)
+              (and (or (pvec? x) (tuple? x) (array? x))
+                   (= 2 (if (pvec? x) (pv-count x) (length x))))
+                (put (t :tbl) (canon-key (vnth x 0)) @[(vnth x 0) (vnth x 1)])
+              # a map: merge all its entries
+              (or (phm? x) (and (struct? x) (nil? (get x :jolt/type))))
+                (each k (if (phm? x) (keys (phm-to-struct x)) (keys x))
+                  (put (t :tbl) (canon-key k) @[k (if (phm? x) (phm-get x k) (in x k))]))
+              (error "conj! on a transient map requires a [key value] pair or a map")))
   t)
 
 (defn- tr-assoc! [t k v]
@@ -3277,10 +3286,16 @@
     (error "assoc! expects a transient vector or map"))
   t)
 
-(defn core-conj! [t & xs]
-  (if (core-transient? t)
-    (do (each x xs (tr-conj! t x)) t)
-    (apply core-conj t xs)))           # lenient fallback for a persistent coll
+# The bang ops require a transient (Clojure throws otherwise); no lenient
+# fallback to the persistent op.
+(defn core-conj! [& args]
+  (cond
+    (= 0 (length args)) (core-transient (make-vec @[]))   # (conj!) -> (transient [])
+    (= 1 (length args)) (first args)                      # (conj! coll) -> coll, as-is
+    (let [t (first args) xs (tuple/slice args 1)]
+      (if (core-transient? t)
+        (do (each x xs (tr-conj! t x)) t)
+        (error "conj! requires a transient")))))
 
 (defn core-assoc! [t & kvs]
   # Unlike assoc, assoc! accepts an ODD number of args — a missing final value
@@ -3288,24 +3303,24 @@
   # error on the dangling key).
   (if (core-transient? t)
     (do (var i 0) (while (< i (length kvs)) (tr-assoc! t (in kvs i) (get kvs (+ i 1))) (+= i 2)) t)
-    (apply core-assoc t kvs)))
+    (error "assoc! requires a transient")))
 
 (defn core-dissoc! [t & ks]
-  (if (core-transient? t)
+  (if (and (core-transient? t) (= :map (t :kind)))
     (do (tr-check-active! t) (each k ks (put (t :tbl) (canon-key k) nil)) t)
-    (apply core-dissoc t ks)))
+    (error "dissoc! requires a transient map")))
 
 (defn core-disj! [t & xs]
-  (if (core-transient? t)
+  (if (and (core-transient? t) (= :set (t :kind)))
     (do (tr-check-active! t) (each x xs (put (t :tbl) (canon-key x) nil)) t)
-    (apply core-disj t xs)))
+    (error "disj! requires a transient set")))
 
 (defn core-pop! [t]
-  (if (core-transient? t)
+  (if (and (core-transient? t) (= :vector (t :kind)))
     (do (tr-check-active! t)
         (when (= 0 (length (t :arr))) (error "Can't pop empty vector"))
         (array/pop (t :arr)) t)
-    (core-pop t)))
+    (error "pop! requires a transient vector")))
 
 (defn core-persistent! [t]
   (if (core-transient? t)
@@ -3319,7 +3334,7 @@
       # Invalidate: any further bang op (or a second persistent!) now throws.
       (put t :jolt/persistent true)
       result)
-    t))
+    (error "persistent! requires a transient")))
 
 # Unchecked arithmetic — Jolt numbers don't overflow, so these are plain ops.
 (defn core-unchecked-add [a b] (+ a b))

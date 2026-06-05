@@ -76,3 +76,17 @@
   ["persistent! twice"       :throws
    "(let [t (transient [])] (persistent! t) (persistent! t))"]
   ["pop! empty"              :throws "(pop! (transient []))"])
+
+# The bang ops require an appropriate transient (Clojure throws otherwise);
+# conj! has the special 0-/1-arg identity arities.
+(defspec "transient / strictness"
+  ["conj! on persistent"   :throws "(conj! [1 2] 3)"]
+  ["assoc! on persistent"  :throws "(assoc! {:a 1} :b 2)"]
+  ["persistent! on vector" :throws "(persistent! [1 2])"]
+  ["persistent! on nil"    :throws "(persistent! nil)"]
+  ["pop! on transient map" :throws "(pop! (transient {:a 1}))"]
+  ["dissoc! on tset"       :throws "(dissoc! (transient #{1}) 1)"]
+  ["conj! map bad item"    :throws "(conj! (transient {}) (list :a 1))"]
+  ["conj! no args"         "[]"    "(persistent! (conj!))"]
+  ["conj! identity"        "[1 2]" "(conj! [1 2])"]
+  ["conj! map merges map"  "{:a 1, :b 2}" "(persistent! (conj! (transient {:a 1}) {:b 2}))"])
