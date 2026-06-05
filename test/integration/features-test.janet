@@ -1,6 +1,7 @@
-# Regression tests mirroring clojure-features.clj, plus expanded coverage of
-# related features. Each case asserts (= expected actual) evaluated inside Jolt
-# (so comparisons use Jolt's own Clojure-semantics =). Run via `jpm test`.
+# Feature regression tests: a broad sweep of Clojure features (destructuring,
+# multimethods, protocols, laziness, …). Each case asserts (= expected actual)
+# evaluated inside Jolt (so comparisons use Jolt's own Clojure-semantics =).
+# Run via `jpm test`.
 (use ../../src/jolt/api)
 
 (var pass 0)
@@ -143,11 +144,3 @@
 (when (pos? (length fails))
   (error (string (length fails) " feature regression(s)")))
 (print "All feature tests passed!")
-
-# Smoke test: the demo file itself loads and runs end-to-end without error.
-(when (os/stat "clojure-features.clj")
-  (print "\n--- running clojure-features.clj (smoke test) ---")
-  (def res (protect (load-string (init) (slurp "clojure-features.clj"))))
-  (unless (= (res 0) true)
-    (error (string "clojure-features.clj failed to run: " (res 1))))
-  (print "--- clojure-features.clj ran cleanly ---"))

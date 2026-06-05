@@ -9,3 +9,6 @@ test/_*.janet
 .dolt/
 *.db
 .beads-credential-key
+
+# Beads issue tracker (local dev tooling)
+.beads/
