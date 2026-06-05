@@ -59,7 +59,8 @@
 (let [ctx (init)]
   (assert (= true (ct-eval ctx "(zero? 0)")) "zero? 0")
   (assert (= false (ct-eval ctx "(zero? 1)")) "zero? 1")
-  (assert (= false (ct-eval ctx "(zero? nil)")) "zero? nil")
+  # zero?/pos?/neg? now reject non-numbers (Clojure-strict), like the JVM.
+  (assert (not ((protect (ct-eval ctx "(zero? nil)")) 0)) "zero? nil throws")
   (assert (= true (ct-eval ctx "(pos? 1)")) "pos?")
   (assert (= false (ct-eval ctx "(pos? 0)")) "pos? 0")
   (assert (= false (ct-eval ctx "(pos? -1)")) "pos? -1")

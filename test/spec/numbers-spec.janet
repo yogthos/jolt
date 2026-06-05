@@ -90,6 +90,25 @@
   ["exponent"           "1000.0" "1e3"]
   ["exponent neg"       "0.015"  "1.5e-2"])
 
+# Strictness: numeric ops reject non-numbers like Clojure; the integer
+# predicates reject non-integers; quot/rem/mod reject zero/non-finite.
+(defspec "numbers / strictness (throws like Clojure)"
+  ["odd? nil"           :throws  "(odd? nil)"]
+  ["odd? fractional"    :throws  "(odd? 1.5)"]
+  ["even? inf"          :throws  "(even? ##Inf)"]
+  ["zero? nil"          :throws  "(zero? nil)"]
+  ["pos? false"         :throws  "(pos? false)"]
+  ["neg? keyword"       :throws  "(neg? :a)"]
+  ["< nil"              :throws  "(< nil 1)"]
+  ["> with nil"         :throws  "(> 1 nil)"]
+  ["max non-number"     :throws  "(max 1 nil)"]
+  ["quot by zero"       :throws  "(quot 10 0)"]
+  ["quot inf"           :throws  "(quot ##Inf 1)"]
+  ["< arity-1 any"      "true"   "(< :anything)"]
+  ["odd? ok"            "true"   "(odd? 3)"]
+  ["< ok"               "true"   "(< 1 2 3)"]
+  ["quot ok"            "3"      "(quot 10 3)"])
+
 (defspec "numbers / printing of inf & nan"
   ["str Infinity"       "\"Infinity\""  "(str ##Inf)"]
   ["str -Infinity"      "\"-Infinity\"" "(str ##-Inf)"]

@@ -122,11 +122,20 @@
 (defn core-false? [x] (= false x))
 (defn core-identical? [a b] (= a b))
 
-(defn core-zero? [x] (and (number? x) (= x 0)))
-(defn core-pos? [x] (and (number? x) (> x 0)))
-(defn core-neg? [x] (and (number? x) (< x 0)))
-(defn core-even? [n] (= 0 (% n 2)))
-(defn core-odd? [n] (not= 0 (% n 2)))
+# Strictness helpers: like Clojure, numeric ops reject non-numbers, and the
+# integer ops (odd?/even?) reject non-integers (incl. infinities, NaN, fractions).
+(defn- finite-num? [x] (and (number? x) (= x x) (< (if (< x 0) (- x) x) math/inf)))
+(defn- need-num [x op]
+  (if (number? x) x (error (string op " requires a number, got " (type x)))))
+(defn- need-int [x op]
+  (if (and (number? x) (= x x) (< (if (< x 0) (- x) x) math/inf) (= x (math/floor x))) x
+    (error (string op " requires an integer"))))
+
+(defn core-zero? [x] (= (need-num x "zero?") 0))
+(defn core-pos? [x] (> (need-num x "pos?") 0))
+(defn core-neg? [x] (< (need-num x "neg?") 0))
+(defn core-even? [n] (= 0 (% (need-int n "even?") 2)))
+(defn core-odd? [n] (not= 0 (% (need-int n "odd?") 2)))
 
 (defn core-integer? [x] (and (number? x) (= x (math/floor x))))
 (defn core-boolean? [x] (or (= x true) (= x false)))
@@ -173,14 +182,17 @@
 (def core-dec dec)
 # Clojure integer division: quot truncates toward zero; rem matches the sign of
 # the dividend; mod matches the sign of the divisor (floored).
-(def core-quot (fn [n d] (let [q (/ n d)] (if (< q 0) (math/ceil q) (math/floor q)))))
+(def core-quot (fn [n d]
+  (when (or (not (finite-num? n)) (not (finite-num? d))) (error "quot requires finite numbers"))
+  (when (= d 0) (error "Divide by zero"))
+  (let [q (/ n d)] (if (< q 0) (math/ceil q) (math/floor q)))))
 (def core-rem (fn [n d] (- n (* (core-quot n d) d))))
 (def core-mod (fn [n d]
   (let [m (core-rem n d)]
     (if (or (= m 0) (= (> n 0) (> d 0))) m (+ m d)))))
 
-(defn core-max [& args] (apply max args))
-(defn core-min [& args] (apply min args))
+(defn core-max [& args] (each x args (need-num x "max")) (apply max args))
+(defn core-min [& args] (each x args (need-num x "min")) (apply min args))
 
 (defn core-abs [x] (if (neg? x) (- 0 x) x))
 (defn core-rand [] (math/random))
@@ -268,16 +280,18 @@
 (defn core-not= [& args] (not (apply core-= args)))
 
 # Comparisons are variadic: (< a b c) means a < b < c.
-(defn- chain-cmp [op xs]
+(defn- chain-cmp [op opname xs]
+  # 1-arity (e.g. (< x)) is true regardless of x and does no type check.
+  (when (>= (length xs) 2) (each x xs (need-num x opname)))
   (var ok true) (var i 0)
   (while (and ok (< i (dec (length xs))))
     (unless (op (in xs i) (in xs (+ i 1))) (set ok false))
     (++ i))
   ok)
-(defn core-< [& xs] (chain-cmp < xs))
-(defn core-> [& xs] (chain-cmp > xs))
-(defn core-<= [& xs] (chain-cmp <= xs))
-(defn core->= [& xs] (chain-cmp >= xs))
+(defn core-< [& xs] (chain-cmp < "<" xs))
+(defn core-> [& xs] (chain-cmp > ">" xs))
+(defn core-<= [& xs] (chain-cmp <= "<=" xs))
+(defn core->= [& xs] (chain-cmp >= ">=" xs))
 
 # ============================================================
 # Collections
