@@ -3009,7 +3009,10 @@
 # Additional clojure.core functions
 # ============================================================
 
-(defn- intval? [x] (and (number? x) (= x (math/floor x))))
+# Integer-valued: a finite number equal to its floor. Infinity floors to itself
+# but is NOT integer-valued (so float?/double? are true for ##Inf, and int?/
+# pos-int?/… are false), and NaN is excluded by the equality check.
+(defn- intval? [x] (and (number? x) (< (math/abs x) math/inf) (= x (math/floor x))))
 
 # Forcing lazy seqs
 (defn core-doall [a & rest]
@@ -3061,6 +3064,8 @@
 (defn core-ratio? [x] false)
 (defn core-decimal? [x] false)
 (defn core-rational? [x] (intval? x))
+(defn core-infinite? [x] (and (number? x) (= (math/abs x) math/inf)))
+(defn core-NaN? [x] (and (number? x) (not= x x)))
 (defn core-numerator [x] x)
 (defn core-denominator [x] 1)
 
@@ -3339,6 +3344,8 @@
     "ratio?" core-ratio?
     "decimal?" core-decimal?
     "rational?" core-rational?
+    "infinite?" core-infinite?
+    "NaN?" core-NaN?
     "numerator" core-numerator
     "denominator" core-denominator
     "list*" core-list*

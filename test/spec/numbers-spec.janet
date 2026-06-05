@@ -51,6 +51,27 @@
   ["nat-int? neg"       "false"  "(nat-int? -1)"]
   ["ratio? false"       "false"  "(ratio? 5)"])
 
+# Symbolic float values and float/double predicates. NOTE: Janet represents
+# integers and integer-valued doubles identically, so (float? 1.0) is false
+# (1.0 is indistinguishable from 1) — a documented divergence. Fractional and
+# non-finite values ARE recognized as floats.
+(defspec "numbers / floats & symbolic values"
+  ["read ##Inf"         "true"   "(= ##Inf (/ 1.0 0.0))"]
+  ["read ##-Inf"        "true"   "(< ##-Inf 0)"]
+  ["##NaN not= itself"  "true"   "(not (== ##NaN ##NaN))"]
+  ["float? fractional"  "true"   "(float? 1.5)"]
+  ["double? fractional" "true"   "(double? 0.25)"]
+  ["float? integer"     "false"  "(float? 3)"]
+  ["float? ##Inf"       "true"   "(float? ##Inf)"]
+  ["double? ##NaN"      "true"   "(double? ##NaN)"]
+  ["infinite? ##Inf"    "true"   "(infinite? ##Inf)"]
+  ["infinite? ##-Inf"   "true"   "(infinite? ##-Inf)"]
+  ["infinite? finite"   "false"  "(infinite? 1.5)"]
+  ["NaN? ##NaN"         "true"   "(NaN? ##NaN)"]
+  ["NaN? number"        "false"  "(NaN? 1.0)"]
+  ["int? ##Inf false"   "false"  "(int? ##Inf)"]
+  ["pos-int? ##Inf"     "false"  "(pos-int? ##Inf)"])
+
 (defspec "numbers / bit-ops & math"
   ["bit-and"            "4"      "(bit-and 12 6)"]
   ["bit-or"             "14"     "(bit-or 12 6)"]

@@ -385,6 +385,14 @@
                   [{:jolt/type :jolt/skip} new-pos])
       (= c 39) (read-var-quote s pos)      # #'
       (= c 34) (read-regex s pos)          # #"regex
+      (= c 35)                             # ## symbolic value: ##Inf ##-Inf ##NaN
+        (let [end (read-symbol-name s (+ pos 2) (+ pos 2))
+              name (string/slice s (+ pos 2) end)]
+          (cond
+            (= name "Inf") [math/inf end]
+            (= name "-Inf") [(- math/inf) end]
+            (= name "NaN") [math/nan end]
+            (error (string "Invalid symbolic value: ##" name))))
       # unknown dispatch — tagged literal
       (let [end (read-symbol-name s pos pos)
             tag (string/slice s pos end)
