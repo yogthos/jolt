@@ -51,9 +51,36 @@ hello 42
 
 `(init)` returns a context with `clojure.core` loaded. Each context is isolated; use separate contexts for separate environments.
 
-### Compilation
+### Evaluation pipeline: interpreted and compiled
 
-By default Jolt tree-walks the interpreter. Passing `:compile?` compiles each form to Janet — `def`/`defn` persist in a per-context Janet environment and resolve across forms, hot numeric primitives (`+ - * < > <= >=`) emit native Janet ops, and function calls compile to direct calls (keyword/map/set still dispatch as IFn). For compute-heavy code this is dramatically faster — recursive `fib(30)` runs in ~0.08 s compiled vs ~50 s interpreted (≈600×), at native Janet speed:
+Every form Jolt evaluates passes through one router (`eval-one`), which decides
+*per form* whether to tree-walk it or compile it to Janet. There are two modes:
+
+**Interpreted (default).** Without `:compile?`, every form is evaluated by the
+tree-walking interpreter (`eval-form`). This is the live, fully-featured path:
+all of Clojure's semantics — macros, multimethods, protocols, dynamic vars,
+lazy seqs, destructuring — go through here.
+
+**Compiled (`:compile? true`).** With compilation enabled, the router splits each
+top-level form two ways:
+
+- **Context-modifying forms always interpret.** `ns`, `defmacro`, `deftype`,
+  `defmulti`/`defmethod`, `require`, `in-ns`, `set!`, `var`, `.`, `new`, `eval`,
+  and syntax-quote mutate the evaluation context (namespaces, the macro table,
+  type/method registries, dynamic vars), so they are routed to the interpreter
+  unchanged.
+- **Everything else compiles to Janet.** The form is macro-expanded, lowered to
+  a Janet AST, and `eval`'d in a **per-context Janet environment**. `def`/`defn`
+  bindings live in that environment so they persist and resolve across forms
+  (and self-recurse via a named-fn rewrite); hot numeric primitives
+  (`+ - * < > <= >=`) emit native Janet ops so the JIT-free Janet VM runs them at
+  full speed; and function calls compile to direct Janet calls (keyword/map/set
+  in call position still dispatch through the IFn runtime).
+
+The two paths **share one context.** Compiled `def`/`defn` results are both
+evaluated into the Janet environment *and* interned into the Jolt namespace, so
+an interpreted form can call a compiled function and vice-versa within the same
+context — which is what makes the always-interpret carve-out above safe.
 
 ```janet
 (def ctx (init {:compile? true}))
@@ -61,7 +88,16 @@ By default Jolt tree-walks the interpreter. Passing `:compile?` compiles each fo
 (eval-string ctx "(fib 30)")   ; → 832040, fast
 ```
 
-Compile mode is opt-in and still maturing: context-modifying forms (`ns`/`defmacro`/`deftype`/multimethods/…) always interpret, and the numeric-op inlining relaxes the strict non-number checks (e.g. `(< nil 1)`). Constructs the compiler doesn't yet handle fall back to errors rather than the interpreter (a hybrid fallback is planned).
+For compute-heavy code the compiled path is dramatically faster — recursive
+`fib(30)` runs in ~0.08 s compiled vs ~50 s interpreted (≈600×), at native Janet
+speed.
+
+Compile mode is opt-in and still maturing. The numeric-op inlining relaxes the
+strict non-number checks (e.g. `(< nil 1)` doesn't throw), and constructs the
+compiler doesn't yet handle currently **error** rather than transparently
+falling back to the interpreter — a per-form hybrid fallback (compile what we
+can, interpret the rest) is the next step toward making compilation safe to
+turn on by default.
 
 ## Host interop
 

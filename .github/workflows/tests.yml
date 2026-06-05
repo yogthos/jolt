@@ -1,0 +1,47 @@
+name: tests
+
+# Run the full test suite (jpm test) on every push and pull request.
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      JANET_VERSION: v1.41.2   # bump to match the version Jolt is developed against
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # vendor/sci is needed by the SCI bootstrap/runtime integration tests.
+          submodules: recursive
+
+      - name: Cache Janet build
+        id: cache-janet
+        uses: actions/cache@v4
+        with:
+          path: /tmp/janet
+          key: janet-${{ env.JANET_VERSION }}-${{ runner.os }}
+
+      - name: Build Janet
+        if: steps.cache-janet.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$JANET_VERSION" https://github.com/janet-lang/janet.git /tmp/janet
+          make -C /tmp/janet
+
+      - name: Install Janet
+        run: sudo make -C /tmp/janet install
+
+      - name: Install jpm
+        run: |
+          git clone --depth 1 https://github.com/janet-lang/jpm.git /tmp/jpm
+          sudo janet /tmp/jpm/bootstrap.janet
+
+      - name: Janet version
+        run: janet -v
+
+      - name: Build executable
+        run: jpm build
+
+      - name: Run tests
+        run: jpm test
