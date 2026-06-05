@@ -179,3 +179,21 @@
   ["assoc odd args"     :throws "(assoc {:a 1} :b)"]
   ["assoc on number"    :throws "(assoc 5 :a 1)"]
   ["assoc on set"       :throws "(assoc #{} :a 1)"])
+
+# Strictness on more core fns: seq/shuffle need seqables, NaN? needs a number,
+# nthrest/nthnext need a numeric count (and clamp negatives / accept nil coll).
+(defspec "seq / strictness round 3"
+  ["seq on number"      :throws "(seq 1)"]
+  ["seq on fn"          :throws "(seq (fn [] 1))"]
+  ["seq vector ok"      "[1 2]" "(seq [1 2])"]
+  ["NaN? on nil"        :throws "(NaN? nil)"]
+  ["NaN? on number ok"  "false" "(NaN? 1.0)"]
+  ["shuffle on number"  :throws "(shuffle 1)"]
+  ["shuffle on string"  :throws "(shuffle \"abc\")"]
+  ["shuffle vec ok"     "3"     "(count (shuffle [1 2 3]))"]
+  ["nthrest nil count"  :throws "(nthrest [0 1 2] nil)"]
+  ["nthrest negative"   "[0 1 2]" "(nthrest [0 1 2] -1)"]
+  ["nthrest nil coll"   "nil"   "(nthrest nil 0)"]
+  ["nthnext nil count"  :throws "(nthnext [0 1 2] nil)"]
+  ["update vec oob"     :throws "(update [] 1 identity)"]
+  ["update vec kw key"  :throws "(update [1 2 3] :k identity)"])

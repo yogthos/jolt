@@ -583,7 +583,10 @@
     (tuple? coll) (tuple/slice coll)
     (string? coll) (if (= 0 (length coll)) nil (tuple ;(map make-char (string/bytes coll))))
     (struct? coll) (tuple ;(map (fn [k] (tuple k (get coll k))) (keys coll)))
-    coll))
+    (array? coll) (tuple ;coll)
+    (and (table? coll) (get coll :jolt/deftype)) coll
+    # scalars/functions aren't seqable
+    (error (string "seq not supported on " (type coll)))))
 
 (defn core-vec [coll]
   (when (not (or (nil? coll) (core-coll? coll) (string? coll)))
@@ -2898,11 +2901,15 @@
       (tuple/slice (tuple ;r)))))
 
 (defn core-nthrest [coll n]
-  (let [c (realize-for-iteration coll)]
-    (tuple/slice (tuple ;(array/slice c (min n (length c)))))))
+  (when (not (number? n)) (error "nthrest requires a numeric count"))
+  (if (nil? coll) nil
+    (let [c (realize-for-iteration coll)
+          start (max 0 (min n (length c)))]   # negative n -> whole coll
+      (tuple/slice (tuple ;(array/slice c start))))))
 
 (defn core-nthnext [coll n]
-  (let [r (core-nthrest coll n)] (if (= 0 (length r)) nil r)))
+  (when (not (number? n)) (error "nthnext requires a numeric count"))
+  (let [r (core-nthrest coll n)] (if (or (nil? r) (= 0 (length r))) nil r)))
 
 (defn core-butlast [coll]
   (let [c (realize-for-iteration coll)]
@@ -3000,6 +3007,7 @@
     (error (string "rseq requires a vector or sorted collection, got " (type coll)))))
 
 (defn core-shuffle [coll]
+  (when (not (core-coll? coll)) (error (string "shuffle requires a collection, got " (type coll))))
   (let [c (array/slice (realize-for-iteration coll))]
     (var i (- (length c) 1))
     (while (> i 0)
@@ -3242,7 +3250,7 @@
 (defn core-decimal? [x] false)
 (defn core-rational? [x] (intval? x))
 (defn core-infinite? [x] (and (number? x) (= (math/abs x) math/inf)))
-(defn core-NaN? [x] (and (number? x) (not= x x)))
+(defn core-NaN? [x] (if (number? x) (not= x x) (error "NaN? requires a number")))
 # Jolt has no ratio type, so numerator/denominator have no valid input (Clojure
 # requires a Ratio and throws otherwise).
 (defn core-numerator [x] (error "numerator requires a ratio (Jolt has no ratios)"))
