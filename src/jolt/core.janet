@@ -1302,16 +1302,22 @@
     (array? coll) (if (= 0 (length coll)) (error "Can't pop empty list") (array/slice coll 1))
     (error (string "pop not supported on " (type coll)))))
 
+# Clojure coerces subvec indices with (int ...): floats truncate and NaN -> 0;
+# only non-numbers and out-of-range values throw.
+(defn- subvec-idx [x]
+  (cond
+    (not (number? x)) (error "subvec index must be a number")
+    (not= x x) 0           # NaN -> 0
+    (math/trunc x)))
 (defn core-subvec [v start &opt end]
   (when (not (or (pvec? v) (tuple? v) (array? v)))
     (error (string "subvec requires a vector, got " (type v))))
   (let [a (vview v)
-        e (if (nil? end) (length a) end)]
-    (when (not (and (number? start) (number? e)
-                    (= start (math/floor start)) (= e (math/floor e))
-                    (>= start 0) (<= start e) (<= e (length a))))
-      (error (string "subvec indices out of range: " start " " e " (length " (length a) ")")))
-    (make-vec (tuple/slice a start e))))
+        s (subvec-idx start)
+        e (if (nil? end) (length a) (subvec-idx end))]
+    (when (not (and (>= s 0) (<= s e) (<= e (length a))))
+      (error (string "subvec indices out of range: " s " " e " (length " (length a) ")")))
+    (make-vec (tuple/slice a s e))))
 
 (defn core-trampoline [f & args]
   (var result (apply f args))
@@ -3056,21 +3062,34 @@
 
 # With a single item, Clojure returns it WITHOUT calling f. On ties, the last
 # extremal item wins (>=/<= update), matching Clojure.
+# Clojure's min-key/max-key: the 2-arg base compares with strict < / > (so the
+# second wins on ties/NaN), and each further item switches on <= / >=. This
+# asymmetry reproduces the JVM's NaN-ordering behavior. Janet's < / > are used
+# directly (NaN comparisons are false, never throwing).
+# keys must be numbers (NaN allowed) — like Clojure, which compares them with </>.
 (defn core-min-key [f & xs]
   (def f (as-fn f))
   (when (= 0 (length xs)) (error "min-key requires at least one value"))
   (if (= 1 (length xs)) (first xs)
-    (do (var best (first xs)) (var bestv (f best))
-        (each x (array/slice xs 1) (let [v (f x)] (when (<= v bestv) (set best x) (set bestv v))))
-        best)))
+    (do (var v (in xs 0)) (var kv (need-num (f v) "min-key"))
+        (let [y (in xs 1) ky (need-num (f y) "min-key")] (when (not (< kv ky)) (set v y) (set kv ky)))
+        (var i 2)
+        (while (< i (length xs))
+          (let [w (in xs i) kw (need-num (f w) "min-key")] (when (<= kw kv) (set v w) (set kv kw)))
+          (++ i))
+        v)))
 
 (defn core-max-key [f & xs]
   (def f (as-fn f))
   (when (= 0 (length xs)) (error "max-key requires at least one value"))
   (if (= 1 (length xs)) (first xs)
-    (do (var best (first xs)) (var bestv (f best))
-        (each x (array/slice xs 1) (let [v (f x)] (when (>= v bestv) (set best x) (set bestv v))))
-        best)))
+    (do (var v (in xs 0)) (var kv (need-num (f v) "max-key"))
+        (let [y (in xs 1) ky (need-num (f y) "max-key")] (when (not (> kv ky)) (set v y) (set kv ky)))
+        (var i 2)
+        (while (< i (length xs))
+          (let [w (in xs i) kw (need-num (f w) "max-key")] (when (>= kw kv) (set v w) (set kv kw)))
+          (++ i))
+        v)))
 
 (defn core-not-every? [pred coll]
   (def pred (as-fn pred))
@@ -3227,10 +3246,14 @@
 # Map entries (represented as 2-element vectors)
 # key/val require a map entry (a 2-element vector/tuple in Jolt); Clojure throws
 # otherwise. (Jolt can't distinguish a 2-vector from a real MapEntry.)
-(defn- entry-like? [x] (and (or (pvec? x) (tuple? x) (array? x)) (= 2 (core-count x))))
-(defn core-key [e] (if (entry-like? e) (core-nth e 0) (error "key requires a map entry")))
-(defn core-val [e] (if (entry-like? e) (core-nth e 1) (error "val requires a map entry")))
-(defn core-map-entry? [x] (and (or (pvec? x) (tuple? x)) (= 2 (core-count x))))
+# A map entry is a 2-element tuple — Jolt produces tuples only from map
+# iteration (first/seq/map over a map), while vector literals are pvecs and
+# lists are arrays. So key/val/map-entry? accept a 2-tuple and reject a plain
+# vector, matching Clojure (where a MapEntry is distinct from a vector).
+(defn- entry-like? [x] (and (tuple? x) (= 2 (length x))))
+(defn core-key [e] (if (entry-like? e) (in e 0) (error "key requires a map entry")))
+(defn core-val [e] (if (entry-like? e) (in e 1) (error "val requires a map entry")))
+(defn core-map-entry? [x] (entry-like? x))
 
 (defn core-rand-nth [coll]
   (let [c (realize-for-iteration coll)]

@@ -117,7 +117,7 @@
    ["filter over map"   "true"  "(= [[:b 2]] (filterv (fn [[k v]] (> v 1)) {:a 1 :b 2}))"]
    ["doall realizes"    "(quote (2 3 4))" "(doall (map inc [1 2 3]))"]
    ["tree-seq"          "(quote (1 2 3))" "(map (fn [x] x) (filter (complement coll?) (tree-seq coll? seq [1 [2 [3]]])))"]
-   ["key/val"           "true"  "(let [e [:k 9]] (and (= :k (key e)) (= 9 (val e))))"]
+   ["key/val"           "true"  "(let [e (first {:k 9})] (and (= :k (key e)) (= 9 (val e))))"]
    ["nat-int?"          "true"  "(and (nat-int? 0) (nat-int? 5) (not (nat-int? -1)))"]
    ["list* prepend"     "(quote (1 2 3 4))" "(list* 1 2 [3 4])"]
    ["cycle"           "(quote (1 2 3 1 2 3 1))" "(take 7 (cycle [1 2 3]))"]

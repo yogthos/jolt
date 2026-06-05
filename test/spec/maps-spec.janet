@@ -96,3 +96,22 @@
   ["merge atomic arg"        :throws "(merge {} :foo)"]
   ["merge [k v] ok"          "{:foo 1}" "(merge {} [:foo 1])"]
   ["merge maps ok"           "{:a 1, :b 2}" "(merge {:a 1} {:b 2})"])
+
+# Map entries are distinct from plain vectors (key/val/map-entry? reject a
+# vector); min-key/max-key follow Clojure's NaN-aware ordering; subvec coerces
+# float/NaN indices like (int ...).
+(defspec "map / map-entry & key ordering"
+  ["key of entry"        ":a"     "(key (first {:a 1}))"]
+  ["val of entry"        "1"      "(val (first {:a 1}))"]
+  ["key rejects vector"  :throws  "(key [:a 1])"]
+  ["val rejects vector"  :throws  "(val [:a 1])"]
+  ["map-entry? entry"    "true"   "(map-entry? (first {:a 1}))"]
+  ["map-entry? vector"   "false"  "(map-entry? [:a 1])"]
+  ["min-key NaN first"   "1"      "(min-key identity ##NaN 1)"]
+  ["min-key NaN last"    "true"   "(NaN? (min-key identity 1 ##NaN))"]
+  ["min-key NaN three"   "true"   "(infinite? (min-key identity ##NaN ##-Inf 1))"]
+  ["min-key keys nonnum" :throws  "(min-key identity \"x\" \"y\")"]
+  ["max-key picks max"   "[1 2 3]" "(max-key count [1] [1 2 3] [1 2])"]
+  ["subvec float trunc"  "[0]"    "(subvec [0 1 2] 0.5 1.33)"]
+  ["subvec NaN start"    "[0 1 2]" "(subvec [0 1 2] ##NaN 3)"]
+  ["subvec NaN end"      "[]"     "(subvec [0 1 2] 0 ##NaN)"])
