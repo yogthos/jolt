@@ -28,14 +28,61 @@
 (defn- vchan [x]
   (if (jolt-chan? x) (x :ch) (error (string "expected a channel, got " (type x)))))
 
-# (chan) unbuffered, (chan n) fixed buffer of n. A transducer 3rd arg is
-# accepted but ignored until Phase 3.
-(defn async-chan [&opt n xform]
-  (wrap (if (and (number? n) (> n 0)) (ev/chan n) (ev/chan)) (ev/chan)))
+(defn- reduced? [x] (and (table? x) (= :jolt/reduced (get x :jolt/type))))
+
+# Buffer specs: (buffer n) fixed, (dropping-buffer n) drops new values when full,
+# (sliding-buffer n) drops the oldest when full.
+(defn async-buffer [n]          @{:jolt/type :jolt/buffer :kind :fixed :n n})
+(defn async-dropping-buffer [n] @{:jolt/type :jolt/buffer :kind :dropping :n n})
+(defn async-sliding-buffer [n]  @{:jolt/type :jolt/buffer :kind :sliding :n n})
+(defn- buffer-spec? [x] (and (table? x) (= :jolt/buffer (get x :jolt/type))))
+
+# An always-ready channel, used as the non-blocking fallback in ev/select so a
+# give can detect "buffer full" without parking.
+(def- full-signal (let [c (ev/chan)] (ev/chan-close c) c))
+
+# Put one value into the channel's value chan honoring its buffer kind. Returns
+# true (the put "succeeds" even when dropped, like Clojure's dropping/sliding).
+(defn- buf-give [ch v]
+  (case (ch :bufkind)
+    :dropping (do (ev/select [(ch :ch) v] full-signal) true)   # give if room, else drop
+    :sliding  (let [r (ev/select [(ch :ch) v] full-signal)]
+                (when (= :close (in r 0))                       # full: drop oldest, then add
+                  (protect (ev/take (ch :ch))) (protect (ev/give (ch :ch) v)))
+                true)
+    (if (in (protect (ev/give (ch :ch) v)) 0) true false)))    # fixed/unbuffered: may park
+
+# A channel transducer is applied on the put side. We build a reducing fn whose
+# step gives each output value into the channel (honoring its buffer kind); the
+# accumulator is the chan, threaded through but unused (output is the
+# side-effecting give). A jolt transducer/rf is a jolt closure, directly
+# callable as a Janet function.
+(defn- make-add-rf [w]
+  (fn [& args]
+    (case (length args)
+      0 (w :ch)                   # init
+      1 (in args 0)               # completion: nothing extra to do
+      (do (buf-give w (in args 1)) (in args 0)))))   # step: give output
+
+# (chan) unbuffered; (chan n) / (chan (buffer n)) fixed; (chan (dropping-buffer
+# n)) / (chan (sliding-buffer n)); a 2nd arg transducer composes over the buffer.
+(defn async-chan [&opt buf xform]
+  (def spec (cond
+              (buffer-spec? buf) buf
+              (and (number? buf) (> buf 0)) {:kind :fixed :n buf}
+              nil))
+  (def vc (if spec (ev/chan (spec :n)) (ev/chan)))
+  (def w (wrap vc (ev/chan)))
+  (when spec (put w :bufkind (spec :kind)))
+  (when (and xform (not (nil? xform)))
+    (put w :xrf (xform (make-add-rf w))))
+  w)
 
 (defn async-close! [ch]
   (when (not (in (ch :closed) 0))
     (put (ch :closed) 0 true)
+    # flush any buffered state of a stateful transducer (completion arity)
+    (when (ch :xrf) (protect ((ch :xrf) (ch :ch))))
     (protect (ev/chan-close (ch :done))))
   nil)
 
@@ -47,10 +94,17 @@
 
 # >! / >!! — put, parking the fiber. Returns true if delivered, false if the
 # channel is closed. nil may not be put on a channel (it is the closed value).
+# With a transducer, the value is run through it (so one put may yield zero or
+# more values on the channel); a `reduced` result (e.g. from `take`) closes it.
 (defn async-give [ch v]
   (when (nil? v) (error "Can't put nil on a channel"))
-  (if (in (ch :closed) 0) false
-    (if (in (protect (ev/give (ch :ch) v)) 0) true false)))
+  (cond
+    (in (ch :closed) 0) false
+    (ch :xrf)
+      (let [r ((ch :xrf) (ch :ch) v)]
+        (when (reduced? r) (async-close! ch))
+        true)
+    (buf-give ch v)))
 
 # Run thunk (a jolt 0-arg closure, directly callable) in a fiber; return a
 # buffered(1) channel that conveys its value once, then closes. A nil result
@@ -132,6 +186,9 @@
     ">!" async-give   ">!!" async-give
     "alts!" async-alts "alts!!" async-alts
     "timeout" async-timeout
+    "buffer" async-buffer
+    "dropping-buffer" async-dropping-buffer
+    "sliding-buffer" async-sliding-buffer
     "put!" async-put!
     "take!" async-take!
     "go-spawn" async-go-spawn

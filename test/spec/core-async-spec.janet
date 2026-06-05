@@ -4,7 +4,7 @@
 (use ../support/harness)
 
 (def REQ
-  "(require '[clojure.core.async :refer [go go-loop chan <! >! close! alts! timeout put! take! chan?]]) ")
+  "(require '[clojure.core.async :refer [go go-loop chan <! >! close! alts! timeout put! take! chan? buffer dropping-buffer sliding-buffer]]) ")
 (defn- a [body] (string "(do " REQ body ")"))
 
 (defspec "core.async / go & channels"
@@ -69,3 +69,30 @@
   ["go's own binding shadows conveyed"
    ":inner"
    (d "(<! (binding [*x* :outer] (go (binding [*x* :inner] (<! (timeout 5)) *x*))))")])
+
+# Channel transducers (Phase 3): a transducer is applied on the put side, so one
+# put may yield zero or more values; `take` closes the channel early.
+(defn- drain [setup]
+  (string "(do " REQ setup
+          " (<! (go-loop [o []] (let [v (<! c)] (if (nil? v) o (recur (conj o v)))))))"))
+(defspec "core.async / channel transducers"
+  ["map transducer"
+   "[2 3 4]" (drain "(def c (chan 10 (map inc))) (go (>! c 1) (>! c 2) (>! c 3) (close! c))")]
+  ["filter transducer"
+   "[0 2 4]" (drain "(def c (chan 10 (filter even?))) (go (doseq [x (range 6)] (>! c x)) (close! c))")]
+  ["mapcat expands"
+   "[1 1 2 2]" (drain "(def c (chan 10 (mapcat (fn [x] [x x])))) (go (>! c 1) (>! c 2) (close! c))")]
+  ["take closes early"
+   "[:a :b]" (drain "(def c (chan 10 (take 2))) (go (>! c :a) (>! c :b) (>! c :c) (>! c :d) (close! c))")]
+  ["comp of transducers"
+   "[10 30 50]" (drain "(def c (chan 10 (comp (filter odd?) (map (fn [x] (* x 10)))))) (go (doseq [x (range 6)] (>! c x)) (close! c))")])
+
+# Buffers: fixed (default), dropping (drops new when full), sliding (drops oldest
+# when full). Filled synchronously on this fiber (dropping/sliding never park).
+(defn- fill [bufexpr]
+  (string "(do " REQ "(def c (chan " bufexpr ")) (doseq [x [1 2 3 4 5]] (>! c x)) (close! c)"
+          " (<! (go-loop [o []] (let [v (<! c)] (if (nil? v) o (recur (conj o v)))))))"))
+(defspec "core.async / buffers"
+  ["dropping-buffer keeps first" "[1 2]"     (fill "(dropping-buffer 2)")]
+  ["sliding-buffer keeps last"   "[4 5]"     (fill "(sliding-buffer 2)")]
+  ["fixed (buffer n) holds all"  "[1 2 3 4 5]" (fill "(buffer 5)")])

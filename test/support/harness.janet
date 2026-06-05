@@ -54,6 +54,7 @@
           (= (r 1) true) (++ pass)
           (array/push fails [label (string "want " expected ", got " (show actual))])))))
   (printf "  %s: %d/%d" suite pass (length cases))
+  (flush)
   (each [l m] fails (printf "    FAIL [%s] %s" l m))
   (when (> (length fails) 0)
     (error (string suite ": " (length fails) " failing behavior(s)")))
