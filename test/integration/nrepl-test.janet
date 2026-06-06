@@ -10,6 +10,9 @@
 
 (def port "17888")
 
+# Watchdog: never let a hang stall CI — bail out after 30s.
+(ev/spawn (ev/sleep 30) (eprint "nrepl-test: watchdog fired (possible hang)") (os/exit 1))
+
 (print "Starting jolt.nrepl server subprocess on port " port " ...")
 (def proc (os/spawn ["janet" "src/jolt/main.janet" "nrepl" port] :p {:out :pipe :err :pipe}))
 
@@ -81,5 +84,5 @@
 (when (os/stat ".nrepl-port") (os/rm ".nrepl-port"))
 
 (if (> fails 0)
-  (error (string "nrepl-test: " fails " failing check(s)"))
-  (print "\nAll nREPL tests passed!"))
+  (do (eprint "nrepl-test: " fails " failing check(s)") (os/exit 1))
+  (do (print "\nAll nREPL tests passed!") (os/exit 0)))
