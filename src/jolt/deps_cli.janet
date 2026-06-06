@@ -10,6 +10,8 @@
 #   jolt-deps run FILE [args] resolve, then run `jolt FILE args` with JOLT_PATH set
 #   jolt-deps repl            resolve, then start a jolt REPL with JOLT_PATH set
 #   jolt-deps -e EXPR [args]  resolve, then `jolt -e EXPR ...` with JOLT_PATH set
+#   jolt-deps uberscript OUT -m NS
+#                             resolve, then bundle NS + its deps into one .clj
 #
 # The jolt binary is found via $JOLT_BIN, else `jolt` on PATH.
 
@@ -38,4 +40,5 @@
     (= cmd "run")  (os/exit (exec-jolt (tuple/slice argv 1)))
     (= cmd "repl") (os/exit (exec-jolt []))
     (= cmd "-e")   (os/exit (exec-jolt argv))
+    (= cmd "uberscript") (os/exit (exec-jolt argv))
     (do (eprint "jolt-deps: unknown command " cmd) (usage) (os/exit 1))))

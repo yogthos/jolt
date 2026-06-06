@@ -93,5 +93,17 @@ so an unchanged `deps.edn` doesn't re-fetch.
   or fail at a call. Coverage is per-function: a namespace can load with most
   functions working and a few not.
 
-See [`tools-deps.md`](tools-deps.md) for the design rationale and the road to
-compiling used dependency namespaces into the build.
+### Bundling into one file
+
+`jolt uberscript OUT.clj -m NS` (or `jolt-deps uberscript …`, which resolves deps
+first) bundles `NS` and every namespace it requires — your code plus its
+dependencies — into a single `.clj` in dependency order, ending with a call to
+`NS/-main`. The result runs on a plain `jolt` with no `JOLT_PATH`, no deps
+fetched, and no jpm:
+
+```bash
+jolt-deps uberscript app.clj -m myapp.main
+jolt app.clj arg1 arg2
+```
+
+See [`tools-deps.md`](tools-deps.md) for the design rationale.

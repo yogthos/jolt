@@ -228,6 +228,9 @@
             # (their defs intern there); a library's own `ns` form overrides this.
             (ctx-set-current-ns ctx ns-name)
             (load-ns-file ctx path)
+            # Record load order for tooling (uberscript): a dependency finishes
+            # loading before the file that required it, so this is topological.
+            (when-let [lf (get (ctx :env) :loaded-files)] (array/push lf path))
             (ctx-set-current-ns ctx saved)))))))
 
 (defn- eval-require
