@@ -3,8 +3,8 @@
 # Supports in-memory bytecode caching when :compile? is enabled.
 
 (use ./reader)
-(use ./compiler)
 (use ./evaluator)
+(import ./backend :as backend)
 
 # Stateful / context-modifying forms always interpret: they mutate the context
 # (namespaces, macros, types, multimethods, dynamic vars, …) in ways the compiler
@@ -25,15 +25,12 @@
 
 (defn eval-toplevel
   "Evaluate one top-level form for ctx, honoring :compile?. Stateful forms always
-  interpret; otherwise the form is compiled and run, falling back to the
-  interpreter when the compiler can't handle it. Only the compile step is guarded
-  — runtime errors in compiled code propagate (no double-eval, no hidden errors)."
+  interpret; otherwise the form runs through the self-hosted compile pipeline
+  (portable Clojure analyzer -> IR -> Janet back end), which falls back to the
+  interpreter for forms it can't compile. Only the compile step is guarded —
+  runtime errors in compiled code propagate (no double-eval, no hidden errors)."
   [ctx form]
-  (defn try-compile []
-    (let [compiled (protect (compile-ast form ctx))]
-      (if (compiled 0)
-        (eval-compiled (compiled 1) ctx)
-        (eval-form ctx @{} form))))
+  (defn try-compile [] (backend/compile-and-eval ctx form))
   (if (get (ctx :env) :compile?)
     (if (array? form)
       # A call/list: compile it unless its head is a stateful special form.

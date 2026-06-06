@@ -5,6 +5,7 @@
 (import ../../src/jolt/backend :as backend)
 (use ../../src/jolt/api)
 (use ../../src/jolt/reader)
+(use ../../src/jolt/types)
 
 (defn ce [ctx s] (normalize-pvecs (backend/compile-and-eval ctx (parse-string s))))
 
@@ -52,5 +53,25 @@
 
   # higher-order + nesting
   (assert (= 15 (ce ctx "(reduce + (map inc [0 1 2 3 4]))")) "reduce+map"))
+
+# eval-toplevel routing: :compile? IS the self-hosted pipeline now — the only
+# compile path. Forms the analyzer can't handle (stateful / destructuring) fall
+# back to the interpreter, with the same observable results.
+(print "self-host via eval-toplevel routing...")
+(let [ctx (init {:compile? true})]
+  (defn ev [s] (normalize-pvecs (eval-one ctx (parse-string s))))
+  (assert (= 3 (ev "(+ 1 2)")) "tl +")
+  (ev "(defn sq [x] (* x x))")                 # def via self-host
+  (assert (= 81 (ev "(sq 9)")) "tl defn")
+  (ev "(defmacro twice [x] (list (quote do) x x))")  # stateful -> interp fallback
+  (assert (= 5 (ev "(do (twice 1) 5)")) "tl macro fallback")
+  (assert (= [1 2 3] (ev "(let [{:keys [a b c]} {:a 1 :b 2 :c 3}] [a b c])")) "tl destructuring fallback")
+  (assert (= 15 (ev "(reduce + (range 6))")) "tl reduce/range")
+  # Proof the self-hosted pipeline actually ran: only backend/ensure-analyzer
+  # populates jolt.analyzer. An interpret-only ctx never loads it.
+  (assert (pos? (length ((ctx-find-ns ctx "jolt.analyzer") :mappings))) "analyzer loaded under :compile?"))
+(let [ctx (init {})]
+  (eval-one ctx (parse-string "(+ 1 2)"))
+  (assert (zero? (length ((ctx-find-ns ctx "jolt.analyzer") :mappings))) "analyzer NOT loaded when interpreting"))
 
 (print "self-host pipeline passed!")

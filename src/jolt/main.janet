@@ -11,9 +11,10 @@
 
 (def jolt-version "0.1.0")
 
-# Compile by default: the shipped runtime compiles each form to Janet bytecode
-# (hybrid — forms the compiler can't handle fall back to the interpreter, so the
-# result always matches the interpreter; see compiler.janet / loader/eval-toplevel).
+# Compile by default: the shipped runtime runs each form through the self-hosted
+# pipeline (portable Clojure analyzer -> IR -> Janet back end) to native bytecode
+# (hybrid — forms the analyzer can't compile fall back to the interpreter, so the
+# result always matches the interpreter; see backend.janet / loader/eval-toplevel).
 # Set JOLT_INTERPRET=1 to force the tree-walking interpreter (debugging / A-B).
 (def compile-default? (not (= "1" (os/getenv "JOLT_INTERPRET"))))
 (def ctx (init {:compile? compile-default?}))

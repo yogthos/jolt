@@ -77,7 +77,10 @@
   (let [pp (parse-params (vec (form-vec-items pvec)))
         fixed (:fixed pp)
         rst (:rest pp)
-        rname (when-not rst (gen-name "arity"))
+        ;; Always a recur target, variadic included: the back end gives the rest
+        ;; param an ordinary positional slot (holding the collected seq), so recur
+        ;; is a self-call carrying the rest seq directly — Clojure semantics.
+        rname (gen-name "arity")
         names (cond-> (vec fixed) rst (conj rst) fn-name (conj fn-name))
         env* (-> (add-locals env names) (with-recur rname))]
     {:params fixed :rest rst :recur-name rname

@@ -49,15 +49,25 @@
     (array/push binds (emit ctx (in p 1))))
   ['let (tuple/slice binds) (emit ctx (node :body))])
 
-# A named Janet fn whose name is the arity's recur target, so recur is a
-# self-call (Janet tail-calls it).
+# An arity compiles to a named Janet fn whose name is its recur target, so recur
+# is a self-call (Janet tail-calls it). The rest param is an ORDINARY positional
+# param holding a seq (not Janet `&`), so `(recur fixed... rest-seq)` re-enters
+# the way Clojure recur into a variadic arity does (rebinds the rest seq directly,
+# no re-collection). The dispatch wrapper (emit-fn-body) collects the call's args.
 (defn- emit-arity-fn [ctx ar]
   (def ps @[])
   (each pn (vview (ar :params)) (array/push ps (symbol pn)))
-  (when (ar :rest) (array/push ps '&) (array/push ps (symbol (ar :rest))))
-  (if (ar :recur-name)
-    ['fn (symbol (ar :recur-name)) (tuple/slice ps) (emit ctx (ar :body))]
-    ['fn (tuple/slice ps) (emit ctx (ar :body))]))
+  (when (ar :rest) (array/push ps (symbol (ar :rest))))
+  ['fn (symbol (ar :recur-name)) (tuple/slice ps) (emit ctx (ar :body))])
+
+# Invoke an arity's fn with args pulled from the dispatch tuple: fixed params by
+# index, rest as a slice from n-fixed on.
+(defn- emit-arity-invoke [ctx ar jargs]
+  (def nfixed (length (vview (ar :params))))
+  (def call @[(emit-arity-fn ctx ar)])
+  (for i 0 nfixed (array/push call ['in jargs i]))
+  (when (ar :rest) (array/push call ['tuple/slice jargs nfixed]))
+  (tuple/slice call))
 
 (defn- emit-loop [ctx node]
   (def L (symbol (node :recur-name)))
@@ -86,23 +96,42 @@
     ['defer (emit ctx (node :finally)) core]
     core))
 
-(defn- emit-fn [ctx node]
+(defn- emit-fn-body [ctx node]
   (def arities (vview (node :arities)))
-  (if (= 1 (length arities))
+  (def multi (> (length arities) 1))
+  (cond
+    # Single fixed arity (the hot case): emit the arity fn directly — its name is
+    # the recur target, no dispatch overhead.
+    (and (not multi) (not ((first arities) :rest)))
     (emit-arity-fn ctx (first arities))
-    # Multi-arity: dispatch on arg count; fixed arities match exactly, the
-    # variadic one matches >= its fixed count. apply spreads the captured args
-    # into the chosen arity fn (whose own & collects any rest).
+    # Single variadic arity: a thin wrapper collects the call's args so the rest
+    # seq can be built, then hands off to the arity fn.
+    (not multi)
+    (let [jargs (gsym)]
+      ['fn ['& jargs] (emit-arity-invoke ctx (first arities) jargs)])
+    # Multi-arity: dispatch on arg count. Fixed arities match exactly; the (one)
+    # variadic arity matches >= its fixed count.
     (let [jargs (gsym)
           nsym (gsym)
           cf @['cond]]
       (each ar arities
         (def nfixed (length (vview (ar :params))))
         (array/push cf (if (ar :rest) [>= nsym nfixed] [= nsym nfixed]))
-        (array/push cf [apply (emit-arity-fn ctx ar) jargs]))
+        (array/push cf (emit-arity-invoke ctx ar jargs)))
       (array/push cf ['error "wrong number of args passed to fn"])
       ['fn ['& jargs]
        ['do ['def nsym ['length jargs]] (tuple/slice cf)]])))
+
+# A named fn (fn self [..] .. (self ..)) references itself by name. The analyzer
+# binds that name as a local; bind it here to the fn value via a var (set before
+# any call, so the captured closure sees it — same scheme as emit-loop). recur
+# stays a separate self-call to the arity fn; this only covers by-name self-refs.
+(defn- emit-fn [ctx node]
+  (def body (emit-fn-body ctx node))
+  (if (node :name)
+    (let [s (symbol (node :name))]
+      ['do ['var s nil] ['set s body] s])
+    body))
 
 (defn- direct-call? [fnode]
   (case (fnode :op) :var true :local true :fn true :host true false))

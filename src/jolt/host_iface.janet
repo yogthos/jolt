@@ -65,6 +65,9 @@
              "alter-meta!" "reset-meta!" "disj" "set?" "satisfies?"
              "protocol-dispatch" "register-method" "make-reified" "prefer-method"
              "remove-method" "remove-all-methods" "get-method" "methods"
+             # ns-management forms dispatched by the interpreter (not core vars)
+             "create-ns" "remove-ns" "find-ns" "all-ns" "the-ns" "resolve"
+             "ns-resolve" "ns-aliases" "ns-imports" "ns-interns"
              "read-string" "macroexpand-1" "defonce" "ns" "in-ns" "require"
              "import" "use" "refer" "defrecord" "defprotocol" "definterface"
              "reify" "proxy" "extend-type" "extend-protocol" "extend" "gen-class"
@@ -72,7 +75,18 @@
       (put t n true))
     t))
 
-(defn h-special? [name] (if (get special-names name) true false))
+# Interop-shaped heads the interpreter lowers but the back end doesn't model:
+#   (.method obj …) / (.-field obj)  — member access (name starts with ".")
+#   (Foo. …)                          — constructor (name ends with "." )
+# Treated as special so the analyzer marks them uncompilable and falls back.
+(defn- interop-head? [name]
+  (def n (length name))
+  (and (> n 1)
+       (or (= (string/slice name 0 1) ".")
+           (= (string/slice name (- n 1)) "."))))
+
+(defn h-special? [name]
+  (if (or (get special-names name) (interop-head? name)) true false))
 
 # The namespace being compiled. NOT ctx-current-ns directly: the interpreter
 # rebinds current-ns to a fn's defining ns while that fn runs, so an interpreted

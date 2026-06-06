@@ -32,7 +32,8 @@
   opts may contain:
     :namespaces — map of {ns-name → {sym → value, ...}, ...}
     :mutable?   — use Janet mutable data structures instead of persistent
-    :compile?   — enable compilation of Clojure forms to Janet
+    :compile?   — compile Clojure forms via the self-hosted pipeline (analyzer ->
+                  IR -> Janet back end), falling back to the interpreter as needed
     :paths      — extra source roots to search for namespaces (after the stdlib)"
   [&opt opts]
   (default opts {})
