@@ -11,7 +11,12 @@
 
 (def jolt-version "0.1.0")
 
-(def ctx (init))
+# Compile by default: the shipped runtime compiles each form to Janet bytecode
+# (hybrid — forms the compiler can't handle fall back to the interpreter, so the
+# result always matches the interpreter; see compiler.janet / loader/eval-toplevel).
+# Set JOLT_INTERPRET=1 to force the tree-walking interpreter (debugging / A-B).
+(def compile-default? (not (= "1" (os/getenv "JOLT_INTERPRET"))))
+(def ctx (init {:compile? compile-default?}))
 (ctx-set-current-ns ctx "user")
 
 (defn read-line [prompt]
