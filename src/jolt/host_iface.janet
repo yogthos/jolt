@@ -74,7 +74,11 @@
 
 (defn h-special? [name] (if (get special-names name) true false))
 
-(defn h-current-ns [ctx] (ctx-current-ns ctx))
+# The namespace being compiled. NOT ctx-current-ns directly: the interpreter
+# rebinds current-ns to a fn's defining ns while that fn runs, so an interpreted
+# analyzer (defined in jolt.analyzer) would otherwise see jolt.analyzer. The back
+# end stashes the real compile ns in :compile-ns before invoking the analyzer.
+(defn h-current-ns [ctx] (or (get (ctx :env) :compile-ns) (ctx-current-ns ctx)))
 
 (defn h-macro? [ctx sym]
   (let [v (resolve-var ctx @{} sym)]

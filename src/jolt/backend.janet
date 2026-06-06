@@ -157,10 +157,10 @@
 
 (defn- ensure-analyzer [ctx]
   # Load jolt.analyzer (and transitively jolt.ir) once; jolt.host is pre-installed
-  # by host/install! so its require is a no-op. The analyzer currently runs
-  # INTERPRETED — compiling it via the bootstrap is blocked by bootstrap
-  # miscompilation bugs on the constructs it uses (tracked); correctness is fine,
-  # speed is the open item.
+  # by host/install! so its require is a no-op. The analyzer runs INTERPRETED:
+  # compiling it via the bootstrap needs qualified-ref compilation, which
+  # regresses compile mode (the clojure.test shim breaks) — tracked in jolt-4xc.
+  # Correctness is unaffected (218/218 conformance); speed is the open item.
   (when (= 0 (length ((ctx-find-ns ctx "jolt.analyzer") :mappings)))
     (eval-form ctx @{} (r/parse-string "(require '[jolt.analyzer])"))))
 
@@ -169,8 +169,14 @@
   returning host-neutral IR."
   [ctx form]
   (ensure-analyzer ctx)
+  # Capture the real compile ns: the analyzer runs interpreted (defined in
+  # jolt.analyzer), and the interpreter rebinds current-ns to a fn's defining ns
+  # while it runs — so h/current-ns must read this instead of ctx-current-ns.
+  (put (ctx :env) :compile-ns (ctx-current-ns ctx))
   (def av (ns-find (ctx-find-ns ctx "jolt.analyzer") "analyze"))
-  ((var-get av) ctx form))
+  (def r ((var-get av) ctx form))
+  (put (ctx :env) :compile-ns nil)
+  r)
 
 (defn compile-and-eval
   "Self-hosted compile path: analyze (portable Clojure) -> IR -> Janet -> eval.

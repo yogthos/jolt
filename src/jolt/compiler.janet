@@ -184,7 +184,12 @@
     (let [name (sym-s :name)
           ns-sym (sym-s :ns)]
       (if ns-sym
-        (let [target-ns (ctx-find-ns ctx ns-sym)
+        # Resolve :as aliases (e.g. (t/is …) where t aliases clojure.test) so
+        # aliased macros are recognized as macros — matching the interpreter's
+        # resolve-var — rather than miscompiled as a value ref to the macro var.
+        (let [cur (ctx-find-ns ctx (ctx-current-ns ctx))
+              aliased (ns-import-lookup cur ns-sym)
+              target-ns (ctx-find-ns ctx (or aliased ns-sym))
               v (ns-find target-ns name)]
           (if (and v (var-macro? v)) v))
         (let [current-ns-name (ctx-current-ns ctx)
