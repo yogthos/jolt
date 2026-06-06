@@ -2549,9 +2549,10 @@
       (var new-obj @{})
       (each k (keys obj)
         (put new-obj k (get obj k)))
-      # table/setproto requires a table, convert struct meta to table
+      # table/setproto requires a table, convert struct meta to table. meta may
+      # be nil (Clojure allows (with-meta obj nil) to clear metadata).
       (var meta-tab @{})
-      (each k (keys meta) (put meta-tab k (get meta k)))
+      (when meta (each k (keys meta) (put meta-tab k (get meta k))))
       (table/setproto new-obj meta-tab)
       (put new-obj :jolt/meta meta)
       new-obj)))
