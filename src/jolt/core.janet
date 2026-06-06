@@ -1883,7 +1883,65 @@
 (defn core-atom? [x]
   (and (table? x) (= :jolt/atom (x :jolt/type))))
 
-(defn core-deref [ref]
+# Futures — run the body on a real OS thread (ev/thread) for true parallelism.
+# Janet threads have separate heaps, so the thunk and the state it closes over are
+# MARSHALLED (copied) to the worker thread and the result is marshalled back. A
+# future therefore sees a *snapshot* of captured state and communicates only via
+# its return value — mutating a captured atom does not propagate to the parent.
+# Coordination uses two channels: a thread-chan carries the single [:ok v] /
+# [:error e] result back, and a parent-local chan acts as a broadcast latch that
+# is closed when the result lands so any number of deref-ers can unpark.
+(defn core-future? [x] (and (table? x) (= :jolt/future (x :jolt/type))))
+
+(defn core-future-call [thunk]
+  (def tc (ev/thread-chan 1))          # worker thread -> collector (shared, thread-safe)
+  (def latch (ev/chan))                # parent-local: closed when the result is in
+  (def fut @{:jolt/type :jolt/future :latch latch :cached false :res nil :cancelled false})
+  # Worker: compute on a fresh OS thread, send back a marshalled result. The give
+  # is guarded so a non-marshallable value can't strand deref-ers forever.
+  (ev/spawn-thread
+    (def res (try [:ok (thunk)] ([e] [:error e])))
+    (try (ev/give tc res)
+      ([_] (ev/give tc [:error "future result is not marshallable across threads"]))))
+  # Collector: a parent-side fiber bridges the single result into the box and
+  # closes the latch to wake every waiter. If the future was already cancelled,
+  # the box is finalized — drop the late result and don't re-close the latch.
+  (ev/spawn
+    (def res (ev/take tc))
+    (when (not (fut :cancelled))
+      (put fut :res res)
+      (put fut :cached true)
+      (try (ev/chan-close latch) ([_] nil))))
+  fut)
+
+(defn- future-result [fut]
+  (def res (fut :res))
+  (if (= :error (in res 0)) (error (in res 1)) (in res 1)))
+
+(defn core-future-done? [x]
+  (if (core-future? x) (truthy? (x :cached))
+    (error "future-done? requires a future")))
+(defn core-future-cancelled? [x] (and (core-future? x) (truthy? (x :cancelled))))
+# Janet OS threads can't be interrupted, so the worker still runs to completion
+# in the background; we can only mark the *future* cancelled (done) so deref
+# raises and realized?/future-done?/future-cancelled? reflect it. Returns false
+# if the future has already completed (matching Clojure).
+(defn core-future-cancel [x]
+  (if (and (core-future? x) (not (x :cached)) (not (x :cancelled)))
+    (do
+      (put x :cancelled true)
+      (put x :res [:error "future cancelled"])
+      (put x :cached true)
+      (try (ev/chan-close (x :latch)) ([_] nil))
+      true)
+    false))
+
+# future macro: (future body...) -> (future-call (fn* [] body...))
+(defn core-future [& body]
+  @[{:jolt/type :symbol :ns nil :name "future-call"}
+    @[{:jolt/type :symbol :ns nil :name "fn*"} [] ;body]])
+
+(defn core-deref [ref & opts]
   (cond
     (and (table? ref) (= :jolt/atom (ref :jolt/type)))
     (ref :value)
@@ -1892,6 +1950,16 @@
     (and (table? ref) (= :jolt/delay (ref :jolt/type)))
     (if (ref :realized) (ref :val)
       (let [v ((ref :fn))] (put ref :val v) (put ref :realized true) v))
+    (and (table? ref) (= :jolt/future (ref :jolt/type)))
+    (if (empty? opts)
+      (do (when (not (ref :cached)) (ev/take (ref :latch))) (future-result ref))
+      # (deref future timeout-ms timeout-val): wait at most timeout-ms. The
+      # deadline cancels the parked take; if the result still hasn't landed we
+      # return the supplied timeout value (the future keeps running).
+      (let [timeout-val (in opts 1)]
+        (when (not (ref :cached))
+          (try (ev/with-deadline (/ (in opts 0) 1000) (ev/take (ref :latch))) ([_] nil)))
+        (if (ref :cached) (future-result ref) timeout-val)))
     (and (table? ref) (= :jolt/var (ref :jolt/type)))
     (ref :root)
     ref))
@@ -2536,6 +2604,7 @@
 (defn core-realized? [x]
   (cond
     (core-delay? x) (x :realized)
+    (core-future? x) (truthy? (x :cached))
     (lazy-seq? x) (truthy? (x :realized))
     (and (table? x) (= :jolt/atom (x :jolt/type))) true
     # Clojure's realized? is only defined on IPending; reject anything else.
@@ -3592,6 +3661,12 @@
     "record?" core-record?
     "promise" core-promise
     "deliver" core-deliver
+    "future" core-future
+    "future-call" core-future-call
+    "future?" core-future?
+    "future-done?" core-future-done?
+    "future-cancel" core-future-cancel
+    "future-cancelled?" core-future-cancelled?
     "comparator" core-comparator
     "completing" core-completing
     "keyword-identical?" core-keyword-identical?
@@ -3998,7 +4073,7 @@
 (defn core-macro-names
   "Set of core binding names that are macros."
   []
-  @{"and" true "or" true "cond" true "case" true "for" true "when" true "when-not" true "if-let" true "when-let" true "if-some" true "when-some" true "doto" true "defn" true "defn-" true "declare" true "fn" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "comment" true "binding" true "lazy-seq" true "lazy-cat" true "if-not" true "when-first" true "condp" true "dotimes" true "while" true "some->" true "some->>" true "cond->" true "cond->>" true "as->" true "->" true "->>" true "letfn" true "doseq" true "delay" true "assert" true})
+  @{"and" true "or" true "cond" true "case" true "for" true "when" true "when-not" true "if-let" true "when-let" true "if-some" true "when-some" true "doto" true "defn" true "defn-" true "declare" true "fn" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "comment" true "binding" true "lazy-seq" true "lazy-cat" true "if-not" true "when-first" true "condp" true "dotimes" true "while" true "some->" true "some->>" true "cond->" true "cond->>" true "as->" true "->" true "->>" true "letfn" true "doseq" true "delay" true "assert" true "future" true})
 
 (def init-core!
   (fn [& args]
