@@ -289,12 +289,25 @@
       (let [v (get math-statics name)]
         (if (nil? v) (error (string "Unsupported Math member: Math/" name)) v))
     (if (not (nil? ns))
-      (let [current-ns (ctx-find-ns ctx (ctx-current-ns ctx)) aliased-ns (ns-import-lookup current-ns ns)]
-        (if aliased-ns
-          (let [target-ns (ctx-find-ns ctx aliased-ns) v (ns-find target-ns name)]
-            (if v (var-get v) (error (string "Unable to resolve symbol: " ns "/" name))))
-          (let [target-ns (ctx-find-ns ctx ns) v (ns-find target-ns name)]
-            (if v (var-get v) (error (string "Unable to resolve symbol: " ns "/" name))))))
+      (let [current-ns (ctx-find-ns ctx (ctx-current-ns ctx))
+            aliased-ns (ns-import-lookup current-ns ns)
+            target-ns (ctx-find-ns ctx (or aliased-ns ns))
+            v (and target-ns (ns-find target-ns name))]
+        (if v (var-get v)
+          # Explicit Janet interop. The `janet` namespace segment marks every
+          # crossing into host code, where Clojure semantics no longer hold:
+          #   janet/<name>          -> Janet root binding   (janet/slurp, janet/type)
+          #   janet.<module>/<name> -> Janet module binding (janet.net/server,
+          #                                                   janet.os/clock)
+          # This makes the whole Janet stdlib reachable from Clojure while keeping
+          # the interop boundary visible at the call site.
+          (if (or (= ns "janet") (string/has-prefix? "janet." ns))
+            (let [jname (if (= ns "janet") name (string (string/slice ns 6) "/" name))
+                  entry (in (fiber/getenv (fiber/current)) (symbol jname))]
+              (if (not (nil? entry))
+                (if (table? entry) (entry :value) entry)
+                (error (string "Unable to resolve Janet symbol: " jname))))
+            (error (string "Unable to resolve symbol: " ns "/" name)))))
       # Use :jolt/not-found sentinel to distinguish nil binding from absent binding
       (let [local (get bindings name :jolt/not-found-1)
             local (if (= local :jolt/not-found-1) (binding-get bindings name) local)]

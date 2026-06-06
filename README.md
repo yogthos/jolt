@@ -1,13 +1,13 @@
 # Jolt
 
-[![tests](https://github.com/yogthos/jolt/actions/workflows/tests.yml/badge.svg)](https://github.com/yogthos/jolt/actions/workflows/tests.yml)
+[![tests](https://github.com/jolt-lang/jolt/actions/workflows/tests.yml/badge.svg)](https://github.com/jolt-lang/jolt/actions/workflows/tests.yml)
 
 A Clojure interpreter running on [Janet](https://janet-lang.org). Jolt reads Clojure source, evaluates it with an interpreter written in pure Janet, and ships a Clojure-compatible standard library. The goal is a Janet-hosted [SCI](https://github.com/borkdude/sci) runtime — a minimal bootstrap that loads SCI's Clojure source as its standard library.
 
 ## Build
 
 ```bash
-git clone https://github.com/yogthos/jolt.git
+git clone https://github.com/jolt-lang/jolt.git
 cd jolt
 git submodule update --init   # pulls vendor/sci
 jpm build                     # compiles build/jolt
@@ -117,12 +117,68 @@ Jolt exposes CLJS-style host interop through `.` on any Janet table or struct �
 (.-greet obj)           ; field access (reader sugar for (. obj :greet))
 ```
 
-Janet's standard library is reachable through `jolt.interop` (and the `jolt.shell` / `jolt.http` helpers built on it):
+### The `janet` interop bridge
+
+The whole Janet standard library is reachable from Clojure through an explicit
+`janet` namespace segment, which marks every crossing into host code (where
+Clojure semantics no longer hold):
+
+```clojure
+(janet.os/clock)                  ; → a Janet module fn:  os/clock
+(janet.string/join ["a" "b"] ",") ; → janet `string/join`  (NB: takes a Janet
+                                  ;    tuple, not a Jolt vector — convert first)
+(janet/slurp "deps.edn")          ; → a Janet root builtin: slurp
+(janet/type [1 2])                ; → :table
+```
+
+The rule is `janet/<name>` for a Janet root binding and `janet.<module>/<name>`
+for a module binding. Because the boundary is explicit, you can tell at the call
+site that a form drops into the host — and that values cross the boundary as
+their Janet representations (a Jolt vector is a Janet table, etc.), so a Janet
+function expecting a tuple needs an explicit conversion. The `jolt.interop`,
+`jolt.shell`, and `jolt.http` namespaces are thin Clojure wrappers built on this.
+
+This bridge is what makes networking (and everything else in Janet's stdlib)
+available to ordinary Clojure — for example, `jolt.nrepl` (below) is plain
+Clojure over `janet.net/*`.
 
 ```clojure
 (require '[jolt.interop :as j])
 (j/janet-type [1 2])              ; → :tuple
 (j/janet-table-keys {:a 1 :b 2})  ; → [:b :a]
+```
+
+## nREPL
+
+Jolt ships an [nREPL](https://nrepl.org) server and client (`jolt.nrepl`),
+written in Clojure on top of the `janet.net/*` bridge. Start a server from the
+CLI — it writes `.nrepl-port` so editors (CIDER, Calva, …) auto-connect:
+
+```bash
+jolt nrepl          # listen on 127.0.0.1:7888, write .nrepl-port
+jolt nrepl 12345    # choose a port
+```
+
+Supported ops: `clone`, `describe`, `eval`, `load-file`, `close`, `ls-sessions`,
+`interrupt` (acknowledged; an in-flight eval can't actually be interrupted), and
+`eldoc`. `eval` streams `out`, reports the current `ns`, evaluates each form in
+the message, and returns an `eval-error` status (the session stays usable) on
+failure. One Jolt runtime backs the server and sessions share it, so `def`s
+persist across a connection like a normal dev REPL.
+
+It's also usable as a library — embed a server, or drive another nREPL as a
+client:
+
+```clojure
+(require '[jolt.nrepl :as nrepl])
+(def server (nrepl/start-server! {:port 7888}))
+;; ... later ...
+(nrepl/stop-server! server)
+
+(def c (nrepl/connect {:port 7888}))
+(def session (nrepl/client-clone c))
+(nrepl/client-eval c "(+ 1 2)" session)  ; → responses incl. {"value" "3"}
+(nrepl/client-close c)
 ```
 
 ## Differences from Clojure

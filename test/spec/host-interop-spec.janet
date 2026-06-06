@@ -9,6 +9,22 @@
   ["field access .-"    "41"        "(.-value {:value 41})"]
   ["dot field keyword"  "41"        "(. {:value 41} :value)"])
 
+# The `janet` namespace segment is the explicit Janet-stdlib bridge added for
+# the networking layer (and used by jolt.nrepl). `janet/<name>` resolves a Janet
+# root binding; `janet.<module>/<name>` resolves a module binding. The boundary
+# is explicit so it's visible where host semantics take over.
+(defspec "interop / janet bridge"
+  ["root builtin janet/<name>"   "\"123\"" "(janet/string 1 2 3)"]
+  ["root builtin janet/type"     ":string" "(janet/type \"x\")"]
+  ["module fn janet.<mod>/<name>" "4"      "(janet.math/sqrt 16)"]
+  ["janet.string module fn"      "\"HI\""  "(janet.string/ascii-upper \"hi\")"]
+  ["janet.os/clock is a number"  "true"    "(number? (janet.os/clock))"]
+  # crossing the boundary uses Janet representations: a Jolt vector is a table
+  ["jolt vector crosses as a janet table" ":table" "(janet/type [1 2])"]
+  # interop is explicit-only: an unprefixed Janet module is not auto-exposed
+  ["unprefixed janet module not exposed" :throws "net/server"]
+  ["unknown janet symbol throws"         :throws "(janet.os/definitely-not-a-real-fn)"])
+
 (defspec "interop / jolt.interop"
   ["janet-type quoted list" ":array" "(do (require (quote [jolt.interop :as j])) (j/janet-type (quote (1 2))))"]
   ["janet-type list"    ":array"    "(do (require (quote [jolt.interop :as j])) (j/janet-type (list 1 2)))"]

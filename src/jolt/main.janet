@@ -9,6 +9,11 @@
 (use ./config)
 (use ./reader)
 
+# Embed the Clojure nREPL source at build time (cwd is the repo during `jpm
+# build`), so `jolt nrepl` is self-contained and works from any directory — the
+# stdlib .clj files otherwise load cwd-relative.
+(def nrepl-clj-source (try (slurp "src/jolt/jolt/nrepl.clj") ([_] nil)))
+
 (def ctx (init))
 (ctx-set-current-ns ctx "user")
 
@@ -268,12 +273,36 @@
       (when (not (nil? v)) (print-value v)))
     ([err fib] (report-error err fib) (os/exit 1))))
 
+(defn- ensure-nrepl-loaded []
+  # Prefer a normal require (running from the repo); otherwise load the source
+  # embedded at build time into the jolt.nrepl namespace.
+  (eval-string ctx "(require '[jolt.nrepl])")
+  (let [ns (ctx-find-ns ctx "jolt.nrepl")]
+    (when (and (or (nil? ns) (= 0 (length (ns :mappings)))) nrepl-clj-source)
+      (let [saved (ctx-current-ns ctx)]
+        (ctx-set-current-ns ctx "jolt.nrepl")
+        (load-string ctx nrepl-clj-source)
+        (ctx-set-current-ns ctx saved)))))
+
+(defn- run-nrepl [argv]
+  (def port (if (> (length argv) 0) (scan-number (argv 0)) 7888))
+  (ensure-nrepl-loaded)
+  (eval-string ctx (string "(jolt.nrepl/start-server! {:port " port "})"))
+  # Editors auto-discover the port from this file (nREPL convention).
+  (spit ".nrepl-port" (string port))
+  (print "Jolt nREPL server started on port " port)
+  (print "Wrote .nrepl-port — connect your editor; Ctrl-C to stop.")
+  (flush)
+  # Keep the main fiber alive so the event loop serves connections.
+  (forever (ev/sleep 60)))
+
 (defn- print-help []
   (print "Jolt — a Clojure interpreter on Janet\n")
   (print "Usage:")
   (print "  jolt                 Start a REPL")
   (print "  jolt FILE.clj [args] Run a Clojure file (binds *command-line-args*)")
   (print "  jolt -e EXPR [args]  Evaluate EXPR and print the result")
+  (print "  jolt nrepl [port]    Start an nREPL server (default port 7888)")
   (print "  jolt -h | --help     Show this help"))
 
 (defn main [&]
@@ -283,6 +312,7 @@
   (cond
     (empty? argv) (run-repl)
     (or (= (argv 0) "-h") (= (argv 0) "--help")) (print-help)
+    (= (argv 0) "nrepl") (run-nrepl (array/slice argv 1))
     (= (argv 0) "-e") (run-eval (get argv 1 "") (array/slice argv 2))
     (= (argv 0) "-") (run-file "/dev/stdin" (array/slice argv 1))
     (run-file (argv 0) (array/slice argv 1))))
