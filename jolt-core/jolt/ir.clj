@@ -19,6 +19,10 @@
 ;; A runtime primitive (cons, +, get, apply, …) the back end maps to the host RT.
 (defn rt [name] {:op :rt :name name})
 
+;; A name that resolves only via the host's own environment (e.g. + or int? on
+;; Janet) — the back end emits a host-appropriate reference.
+(defn host-ref [name] {:op :host :name name})
+
 (defn if-node [test then else] {:op :if :test test :then then :else else})
 
 (defn do-node [statements ret] {:op :do :statements statements :ret ret})

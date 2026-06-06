@@ -11,6 +11,7 @@
 (use ./loader)
 (use ./async)
 (import ./stdlib_embed :as stdlib-embed)
+(import ./host_iface :as host)
 
 (defn normalize-pvecs
   "Deep-convert any sequential (pvec/tuple/array) to a Janet tuple. Test helper
@@ -53,6 +54,8 @@
     # clojure.core.async (channels + go blocks on Janet fibers); pre-populated
     # so (require '[clojure.core.async ...]) finds it and applies :as/:refer.
     (install-async! ctx)
+    # Host contract (ns jolt.host): the seam the portable jolt-core compiler calls.
+    (host/install! ctx)
     ctx))
 
 (defn eval-one
