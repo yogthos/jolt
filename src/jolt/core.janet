@@ -1376,11 +1376,7 @@
     (table? x) (or (get x :jolt/meta) (get x :meta))
     nil))
 
-(defn core-every-pred [& preds]
-  (fn [& xs]
-    (var ok true)
-    (each p preds (each x xs (when (not (truthy? (p x))) (set ok false))))
-    ok))
+# every-pred now lives in the Clojure collection tier (core/20-coll.clj).
 
 (def core-comp
   (fn [& fs]
@@ -1401,9 +1397,7 @@
 (defn core-partial [f & args]
   (fn [& more] (apply f (array/concat (array/slice args) more))))
 
-(defn core-juxt [& fs]
-  (fn [& args]
-    (tuple ;(map |(apply $ args) fs))))
+# juxt now lives in the Clojure collection tier (core/20-coll.clj).
 
 (defn core-memoize [f]
   (var cache @{})
@@ -3153,11 +3147,7 @@
     (each x c (array/push r (let [v (core-get smap x :jolt/nf)] (if (= v :jolt/nf) x v))))
     (tuple/slice (tuple ;r))))
 
-(defn core-some-fn [& preds]
-  (fn [& xs]
-    (var hit nil)
-    (each p preds (each x xs (when (and (nil? hit) (truthy? (p x))) (set hit (p x)))))
-    hit))
+# some-fn now lives in the Clojure collection tier (core/20-coll.clj).
 
 (defn core-sequential? [x] (or (tuple? x) (array? x) (pvec? x) (plist? x) (lazy-seq? x)))
 # Associative = maps and (real) vectors only. pvec is a literal/built vector;
@@ -3733,7 +3723,6 @@
     "keep" core-keep
     "interleave" core-interleave
     "flatten" core-flatten
-    "every-pred" core-every-pred
     "find" core-find
     "transduce" core-transduce
     "sequence" core-sequence
@@ -3756,7 +3745,6 @@
     "rseq" core-rseq
     "shuffle" core-shuffle
     "replace" core-replace
-    "some-fn" core-some-fn
     "sequential?" core-sequential?
     "associative?" core-associative?
     "ifn?" core-ifn?
@@ -3797,7 +3785,6 @@
     "complement" core-complement
     "comp" core-comp
     "partial" core-partial
-    "juxt" core-juxt
     "memoize" core-memoize
     "vector" core-vector
     "hash-map" core-hash-map

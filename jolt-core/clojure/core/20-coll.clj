@@ -51,3 +51,13 @@
          (let [w (first more) kw (k w)]
            (if (<= kw kv) (recur w kw (next more)) (recur v kv (next more))))
          v)))))
+
+;; Function combinators (pure HOFs).
+(defn juxt [& fs]
+  (fn [& args] (mapv (fn [f] (apply f args)) fs)))
+
+(defn every-pred [& preds]
+  (fn [& xs] (every? (fn [p] (every? p xs)) preds)))
+
+(defn some-fn [& preds]
+  (fn [& xs] (some (fn [p] (some p xs)) preds)))
