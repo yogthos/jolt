@@ -49,8 +49,11 @@
 # eval returns a value
 (check "eval (+ 1 2)" "(some #(get % \"value\") (jolt.nrepl/client-eval c \"(+ 1 2)\" s))" "3")
 
+# a def's value renders as #'ns/name (pr-str loops on a var's cyclic ns refs)
+(check "def renders as #'ns/name"
+  "(some #(get % \"value\") (jolt.nrepl/client-eval c \"(def yy 21)\" s))" "#'user/yy")
+
 # defs persist across evals in the session
-(ev "(jolt.nrepl/client-eval c \"(def yy 21)\" s)")
 (check "def then use" "(some #(get % \"value\") (jolt.nrepl/client-eval c \"(* yy 2)\" s))" "42")
 
 # stdout is captured and streamed as an out message
