@@ -1,13 +1,13 @@
 # Jolt
 
-[![tests](https://github.com/yogthos/jolt/actions/workflows/tests.yml/badge.svg)](https://github.com/yogthos/jolt/actions/workflows/tests.yml)
+[![tests](https://github.com/jolt-lang/jolt/actions/workflows/tests.yml/badge.svg)](https://github.com/jolt-lang/jolt/actions/workflows/tests.yml)
 
 A Clojure interpreter running on [Janet](https://janet-lang.org). Jolt reads Clojure source, evaluates it with an interpreter written in pure Janet, and ships a Clojure-compatible standard library. The goal is a Janet-hosted [SCI](https://github.com/borkdude/sci) runtime — a minimal bootstrap that loads SCI's Clojure source as its standard library.
 
 ## Build
 
 ```bash
-git clone https://github.com/yogthos/jolt.git
+git clone https://github.com/jolt-lang/jolt.git
 cd jolt
 git submodule update --init   # pulls vendor/sci
 jpm build                     # compiles build/jolt
