@@ -5,6 +5,7 @@
 (use ../../src/jolt/api)
 (use ../../src/jolt/reader)
 (use ../../src/jolt/evaluator)
+(import ../../src/jolt/backend :as selfhost)
 
 (defn- parse-forms [src]
   (var s src) (def fs @[]) (var go true)
@@ -23,8 +24,16 @@
   # compile, unsupported forms fall back to the interpreter) so the whole battery
   # validates compile-mode correctness against the same baseline.
   (def compile? (= "1" (os/getenv "JOLT_COMPILE")))
+  # JOLT_SELFHOST=1 routes each form through the self-hosted pipeline (the
+  # portable Clojure analyzer + Janet back end, hybrid with interpreter fallback)
+  # so the whole battery validates the self-hosted compiler against the baseline.
+  (def selfhost? (= "1" (os/getenv "JOLT_SELFHOST")))
   (def ctx (init (if compile? {:compile? true} {})))
-  (defn run-form [f] (if compile? (eval-one ctx f) (eval-form ctx @{} f)))
+  (defn run-form [f]
+    (cond
+      selfhost? (selfhost/compile-and-eval ctx f)
+      compile? (eval-one ctx f)
+      (eval-form ctx @{} f)))
   (each f (parse-forms (slurp "test/support/clojure_test.clj")) (run-form f))
 
   # Pre-load the suite's own clojure.core-test.number-range helper ns if present

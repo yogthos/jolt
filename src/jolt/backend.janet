@@ -157,7 +157,10 @@
 
 (defn- ensure-analyzer [ctx]
   # Load jolt.analyzer (and transitively jolt.ir) once; jolt.host is pre-installed
-  # by host/install! so its require is a no-op.
+  # by host/install! so its require is a no-op. The analyzer currently runs
+  # INTERPRETED — compiling it via the bootstrap is blocked by bootstrap
+  # miscompilation bugs on the constructs it uses (tracked); correctness is fine,
+  # speed is the open item.
   (when (= 0 (length ((ctx-find-ns ctx "jolt.analyzer") :mappings)))
     (eval-form ctx @{} (r/parse-string "(require '[jolt.analyzer])"))))
 
