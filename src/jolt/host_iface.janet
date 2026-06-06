@@ -114,13 +114,18 @@
 # can call them. Idempotent per context.
 # ---------------------------------------------------------------------------
 
+# Form predicates use `form-*` names (not list?/vector?/map?/set?/char?) so the
+# analyzer can refer them unqualified without the bootstrap's core-renames
+# intercepting them as the value-level predicates.
 (def- exports
-  {"sym?" h-sym? "sym-name" h-sym-name "sym-ns" h-sym-ns
-   "list?" h-list? "vector?" h-vector? "map?" h-map? "set?" h-set? "char?" h-char?
-   "literal?" h-literal? "elements" h-elements "vector-items" h-vector-items
-   "map-pairs" h-map-pairs "set-items" h-set-items
-   "special?" h-special? "current-ns" h-current-ns "macro?" h-macro?
-   "expand-1" h-expand-1 "resolve-global" h-resolve-global "intern!" h-intern!})
+  {"form-sym?" h-sym? "form-sym-name" h-sym-name "form-sym-ns" h-sym-ns
+   "form-list?" h-list? "form-vec?" h-vector? "form-map?" h-map?
+   "form-set?" h-set? "form-char?" h-char? "form-literal?" h-literal?
+   "form-elements" h-elements "form-vec-items" h-vector-items
+   "form-map-pairs" h-map-pairs "form-set-items" h-set-items
+   "form-special?" h-special? "compile-ns" h-current-ns "form-macro?" h-macro?
+   "form-expand-1" h-expand-1 "resolve-global" h-resolve-global
+   "host-intern!" h-intern!})
 
 (defn install! [ctx]
   (def ns (ctx-find-ns ctx "jolt.host"))

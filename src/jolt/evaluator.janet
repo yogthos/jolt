@@ -810,15 +810,20 @@
                    arities @{}
                    defining-ns (ctx-current-ns ctx)]
                (var self nil)
+               # The (single) variadic clause is dispatched separately: it handles
+               # any arg count >= its fixed count. Storing it in `arities` by
+               # fixed-count would collide with a same-fixed-count fixed clause and
+               # only match that exact count.
+               (var variadic-fn nil)
+               (var variadic-min 0)
                (each pair pairs
                  (let [args-form (in pair 0)
                        body (tuple/slice pair 1)
                        param-info (parse-params args-form)
                        fixed-pats (param-info :fixed)
                        rest-pat (param-info :rest)
-                       n-fixed (length fixed-pats)]
-                   (put arities n-fixed
-                        (fn [& fn-args]
+                       n-fixed (length fixed-pats)
+                       f (fn [& fn-args]
                           (var fn-bindings @{})
                           (table/setproto fn-bindings bindings)
                           (var i 0)
@@ -836,12 +841,16 @@
                           (each body-form body
                             (set result (eval-form ctx fn-bindings body-form)))
                           (ctx-set-current-ns ctx saved-ns)
-                          result))))
+                          result)]
+                   (if rest-pat
+                     (do (set variadic-fn f) (set variadic-min n-fixed))
+                     (put arities n-fixed f))))
                (set self (fn [& fn-args]
                  (let [n (length fn-args)
                        f (get arities n)]
-                   (if f
-                     (apply f fn-args)
+                   (cond
+                     f (apply f fn-args)
+                     (and variadic-fn (>= n variadic-min)) (apply variadic-fn fn-args)
                      (error (string "Wrong number of args (" n ") passed to fn"))))))
                self)
              # Single-arity: (fn* [args] body...)

@@ -155,14 +155,29 @@
 
 # --- pipeline wiring (the self-hosted compile path) ---
 
+# Compile-load a jolt-core namespace via the bootstrap so it runs as native
+# bytecode. The analyzer uses unqualified referred names (jolt.host form-* + the
+# IR ctors), so the bootstrap's plain :var path compiles it. Stateful forms (the
+# ns/require) fall back to the interpreter. Source from the embedded stdlib map.
+(defn- compile-load [ctx ns-name]
+  (def src (get (get (ctx :env) :embedded-sources @{}) ns-name))
+  (when src
+    (def saved (ctx-current-ns ctx))
+    (ctx-set-current-ns ctx ns-name)
+    (var s src)
+    (while (> (length (string/trim s)) 0)
+      (def parsed (r/parse-next s))
+      (set s (in parsed 1))
+      (def f (in parsed 0))
+      (when (not (nil? f))
+        (def c (protect (comp/compile-ast f ctx)))
+        (if (c 0) (comp/eval-compiled (c 1) ctx) (eval-form ctx @{} f))))
+    (ctx-set-current-ns ctx saved)))
+
 (defn- ensure-analyzer [ctx]
-  # Load jolt.analyzer (and transitively jolt.ir) once; jolt.host is pre-installed
-  # by host/install! so its require is a no-op. The analyzer runs INTERPRETED:
-  # compiling it via the bootstrap needs qualified-ref compilation, which
-  # regresses compile mode (the clojure.test shim breaks) — tracked in jolt-4xc.
-  # Correctness is unaffected (218/218 conformance); speed is the open item.
   (when (= 0 (length ((ctx-find-ns ctx "jolt.analyzer") :mappings)))
-    (eval-form ctx @{} (r/parse-string "(require '[jolt.analyzer])"))))
+    (compile-load ctx "jolt.ir")
+    (compile-load ctx "jolt.analyzer")))
 
 (defn analyze-form
   "Run the portable Clojure analyzer (jolt.analyzer/analyze) on a reader form,
