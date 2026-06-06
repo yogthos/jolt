@@ -1166,21 +1166,8 @@
           (do (put seen x true) (array/push result x))))
       (if (jvec? coll) (make-vec result) result)))))
 
-(defn core-group-by [f coll]
-  (def f (as-fn f))
-  # phm base so collection keys group by value
-  (var result (make-phm))
-  (each x (realize-for-iteration coll)
-    (let [k (f x)]
-      (set result (phm-assoc result k (array/push (phm-get result k @[]) x)))))
-  result)
-
-(defn core-frequencies [coll]
-  # phm base so collection elements are counted by value
-  (var result (make-phm))
-  (each x (realize-for-iteration coll)
-    (set result (phm-assoc result x (+ 1 (phm-get result x 0)))))
-  result)
+# group-by / frequencies now live in the Clojure collection tier
+# (core/20-coll.clj).
 
 (defn core-partition
   "(partition n coll) or (partition n step coll). Only complete partitions of
@@ -3071,10 +3058,7 @@
   (when (not (number? n)) (error "nthnext requires a numeric count"))
   (let [r (core-nthrest coll n)] (if (or (nil? r) (= 0 (length r))) nil r)))
 
-(defn core-filterv [pred coll]
-  (def pred (as-fn pred))
-  (let [r @[]] (each x (realize-for-iteration coll) (when (truthy? (pred x)) (array/push r x)))
-    (make-vec r)))
+# filterv now lives in the Clojure collection tier (core/20-coll.clj).
 
 # mapv lives in the Clojure kernel tier — core/00-kernel.clj.
 
@@ -3143,8 +3127,7 @@
     (table? coll) @{}
     nil))
 
-(defn core-not-empty [coll]
-  (if (or (nil? coll) (= 0 (core-count coll))) nil coll))
+# not-empty now lives in the Clojure collection tier (core/20-coll.clj).
 
 # rseq is defined only on vectors and sorted collections (Reversible).
 (defn core-rseq [coll]
@@ -3199,29 +3182,7 @@
 # asymmetry reproduces the JVM's NaN-ordering behavior. Janet's < / > are used
 # directly (NaN comparisons are false, never throwing).
 # keys must be numbers (NaN allowed) — like Clojure, which compares them with </>.
-(defn core-min-key [f & xs]
-  (def f (as-fn f))
-  (when (= 0 (length xs)) (error "min-key requires at least one value"))
-  (if (= 1 (length xs)) (first xs)
-    (do (var v (in xs 0)) (var kv (need-num (f v) "min-key"))
-        (let [y (in xs 1) ky (need-num (f y) "min-key")] (when (not (< kv ky)) (set v y) (set kv ky)))
-        (var i 2)
-        (while (< i (length xs))
-          (let [w (in xs i) kw (need-num (f w) "min-key")] (when (<= kw kv) (set v w) (set kv kw)))
-          (++ i))
-        v)))
-
-(defn core-max-key [f & xs]
-  (def f (as-fn f))
-  (when (= 0 (length xs)) (error "max-key requires at least one value"))
-  (if (= 1 (length xs)) (first xs)
-    (do (var v (in xs 0)) (var kv (need-num (f v) "max-key"))
-        (let [y (in xs 1) ky (need-num (f y) "max-key")] (when (not (> kv ky)) (set v y) (set kv ky)))
-        (var i 2)
-        (while (< i (length xs))
-          (let [w (in xs i) kw (need-num (f w) "max-key")] (when (>= kw kv) (set v w) (set kv kw)))
-          (++ i))
-        v)))
+# min-key / max-key now live in the Clojure collection tier (core/20-coll.clj).
 
 (defn core-not-every? [pred coll]
   (def pred (as-fn pred))
@@ -3791,9 +3752,7 @@
     "take-nth" core-take-nth
     "nthrest" core-nthrest
     "nthnext" core-nthnext
-    "filterv" core-filterv
     "empty" core-empty
-    "not-empty" core-not-empty
     "rseq" core-rseq
     "shuffle" core-shuffle
     "replace" core-replace
@@ -3803,8 +3762,6 @@
     "ifn?" core-ifn?
     "indexed?" core-indexed?
     "distinct?" core-distinct?
-    "min-key" core-min-key
-    "max-key" core-max-key
     "not-every?" core-not-every?
     "not-any?" core-not-any?
     "vary-meta" core-vary-meta
@@ -3829,8 +3786,6 @@
     "sort" core-sort
     "sort-by" core-sort-by
     "distinct" core-distinct
-    "group-by" core-group-by
-    "frequencies" core-frequencies
     "partition" core-partition
     "partition-by" core-partition-by
     "range" core-range

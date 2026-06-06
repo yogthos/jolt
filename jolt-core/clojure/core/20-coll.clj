@@ -1,0 +1,53 @@
+;; clojure.core — collection tier. Pure, eager fns expressed as compositions of
+;; already-frozen core primitives (reduce/assoc/get/conj/filter/vec/count/>=).
+;; No host internals, no laziness, no macros — so they compile cleanly and stay
+;; redefinable. Loaded after the seq tier; self-hosted in compile mode.
+;;
+;; Same migration rule as the seq tier (see 10-seq.clj): not in core-renames, no
+;; internal Janet callers, not used by the self-hosted compiler.
+
+;; Base is (hash-map), not the {} literal: a literal map is a struct that doesn't
+;; canonicalize collection keys across representations (a {:a 1} literal vs
+;; (hash-map :a 1) key), whereas a PHM does — so counting/grouping by collection
+;; value needs the PHM base (the prior Janet impl used make-phm for this reason).
+(defn frequencies [coll]
+  (reduce (fn [counts x] (assoc counts x (inc (get counts x 0)))) (hash-map) coll))
+
+(defn group-by [f coll]
+  (reduce (fn [ret x] (let [k (f x)] (assoc ret k (conj (get ret k []) x)))) (hash-map) coll))
+
+(defn not-empty [coll]
+  (if (or (nil? coll) (zero? (count coll))) nil coll))
+
+(defn filterv [pred coll]
+  (vec (filter pred coll)))
+
+;; Greatest/least x by (k x). Canonical Clojure multi-arity: the first pair uses
+;; strict < / > and the fold uses <= / >= — this exact ordering reproduces the
+;; JVM IEEE-754 NaN behavior (e.g. (min-key identity 1 ##NaN) => ##NaN). > / <
+;; throw on non-numbers, as Clojure does.
+(defn max-key
+  ([k x] x)
+  ([k x y] (if (> (k x) (k y)) x y))
+  ([k x y & more]
+   (let [kx (k x) ky (k y)
+         v (if (> kx ky) x y)
+         kv (if (> kx ky) kx ky)]
+     (loop [v v kv kv more more]
+       (if (seq more)
+         (let [w (first more) kw (k w)]
+           (if (>= kw kv) (recur w kw (next more)) (recur v kv (next more))))
+         v)))))
+
+(defn min-key
+  ([k x] x)
+  ([k x y] (if (< (k x) (k y)) x y))
+  ([k x y & more]
+   (let [kx (k x) ky (k y)
+         v (if (< kx ky) x y)
+         kv (if (< kx ky) kx ky)]
+     (loop [v v kv kv more more]
+       (if (seq more)
+         (let [w (first more) kw (k w)]
+           (if (<= kw kv) (recur w kw (next more)) (recur v kv (next more))))
+         v)))))
