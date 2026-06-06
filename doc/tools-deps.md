@@ -73,8 +73,8 @@ hit interpreter gaps, which is fine).
    so the stdlib always wins. (Two small changes: a root list in the ctx, and
    trying `.cljc`.)
 4. **Dev vs build.**
-   - *Dev:* on REPL/CLI start, if `deps.edn` is present, resolve once (cache keyed
-     on a hash of deps.edn so it's a no-op when unchanged) and register the roots.
+   - *Dev:* `jolt-deps` resolves `deps.edn` (cached on a hash of it, so it's a
+     no-op when unchanged) and runs jolt with the roots on `JOLT_PATH`;
      `(require '[medley.core])` then just works.
    - *Build:* the dep namespaces a project actually uses get compiled into the
      image the same way the embedded `jolt.nrepl` source is today — load them at
@@ -87,14 +87,29 @@ semantics, or version conflict resolution. Resolution is a tree walk over git
 deps; "the classpath" is just the list of `src` dirs of the clones. The loader
 already does path-based namespace lookup — we widen it from one root to a few.
 
-## Integration with jpm
+## A separate tool, like jpm beside janet
 
-jpm stays the build tool for the Jolt binary; this lives beside it and *calls
-into* `jpm/pm` for the git/cache work (import the module at dev/build time — jpm
-is always present then; the shipped binary doesn't need it). **Decision: reuse
-`jpm/pm`** (`resolve-bundle` + `download-bundle`, after `jpm/config/load-default`)
-rather than shelling `git` ourselves — less code, and it shares jpm's cache. The
-internal-API risk is acceptable since it's only used at dev/build time.
+The jolt *runtime* knows nothing about deps.edn — exactly as the `janet` binary
+knows nothing about jpm. Resolution lives in a separate `jolt-deps` tool (its own
+`declare-executable`), and the runtime's only interface is the source roots in
+`JOLT_PATH`:
+
+```
+jolt-deps path             # print the resolved roots, ':'-joined
+jolt-deps run FILE [args]  # resolve, then run `jolt FILE …` with JOLT_PATH set
+jolt-deps repl             # resolve, then start a jolt REPL with JOLT_PATH set
+jolt-deps -e EXPR [args]   # resolve, then `jolt -e …`
+```
+
+It **reuses `jpm/pm`** (`resolve-bundle` + `download-bundle`, after
+`jpm/config/load-default`) for the git fetch/cache rather than shelling `git` —
+less code, shares jpm's cache. jpm is loaded lazily (`require`, not `import`), so
+it's pulled in only when resolving (dev time), never embedded in a binary. The
+internal-API risk is acceptable since it's dev-time only.
+
+One gotcha worth recording: `jolt`'s context is built into its image at build
+time, so `JOLT_PATH` is read at runtime in `main` (not in `init`, whose env read
+would be frozen at build).
 
 ## Limitations
 
@@ -111,12 +126,15 @@ internal-API risk is acceptable since it's only used at dev/build time.
    `init` adds roots from the `:paths` opt and `JOLT_PATH` (colon-separated).
    Verified loading a real lib (medley) from an added root. See
    `test/integration/deps-loader-test.janet`.
-2. **Resolve git deps via jpm.** Read `deps.edn`, resolve `:git/*` (+
-   `:local/root`) through `jpm/pm` into `jpm_tree/.cache`, recurse for transitive
-   git deps, register the roots. `jolt deps` to resolve/print; auto on startup
-   when `deps.edn` exists.
+2. **Resolve git deps via jpm.** *(done)* `src/jolt/deps.janet` reads `deps.edn`,
+   resolves `:git/*` + `:local/root` through `jpm/pm` into `jpm_tree/.cache`,
+   recurses for transitive deps, and returns the roots (cached on a deps.edn
+   hash). The separate `jolt-deps` tool (`src/jolt/deps_cli.janet`,
+   `declare-executable`) exposes `path`/`run`/`repl`/`-e`. See
+   `test/integration/deps-resolve-test.janet`.
 3. **Build-time compile-in.** Fold the used dep namespaces into the image at
-   build (as with embedded `jolt.nrepl`).
+   build (as with embedded `jolt.nrepl`), so a built artifact needs neither the
+   deps nor jpm. *(not started)*
 4. **Conformance.** Pull a few popular pure-`cljc` git libs, see what loads/runs,
    and drive interpreter gaps from the failures — same loop as the
    clojure-test-suite battery.
