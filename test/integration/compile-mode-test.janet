@@ -108,10 +108,15 @@
   (assert (= 6 (ct-eval ctx "(let [{:keys [x y z]} {:x 1 :y 2 :z 3}] (+ x y z))")) "map destructuring let")
   (assert (= 3 (ct-eval ctx "((fn [[a b]] (+ a b)) [1 2])")) "destructuring fn param")
   (assert (= 5 (ct-eval ctx "(let [[a & more] [1 2 3 4 5]] (+ a (count more)))")) "rest destructuring")
-  (ct-eval ctx "(defn arity ([a] a) ([a b] (+ a b)))")
+  (ct-eval ctx "(defn arity ([a] a) ([a b] (+ a b)) ([a b & more] (apply + a b more)))")
   (assert (= 5 (ct-eval ctx "(arity 5)")) "multi-arity 1")
   (assert (= 7 (ct-eval ctx "(arity 3 4)")) "multi-arity 2")
+  (assert (= 15 (ct-eval ctx "(arity 1 2 3 4 5)")) "multi-arity variadic clause")
   (assert (= 10 (ct-eval ctx "((fn self [n] (if (zero? n) 0 (+ n (self (dec n))))) 4)")) "named fn recursion")
+  # recur directly inside a fn (not a loop) — re-enters the fn's arity. Compiles
+  # to a self-call; was previously broken under compilation.
+  (assert (= 15 (ct-eval ctx "((fn [n acc] (if (zero? n) acc (recur (dec n) (+ acc n)))) 5 0)")) "recur in fn")
+  (assert (= 3 (ct-eval ctx "((fn cnt [acc & xs] (if (seq xs) (recur (inc acc) (rest xs)) acc)) 0 :a :b :c)")) "recur into variadic arity")
   (assert (= 6 (ct-eval ctx "(loop [[x & xs] [1 2 3] acc 0] (if x (recur xs (+ acc x)) acc))")) "destructuring loop binding")
   # A runtime error in compiled code must propagate, not silently fall back to a
   # second (interpreted) evaluation.

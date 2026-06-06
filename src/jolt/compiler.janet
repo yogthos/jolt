@@ -264,6 +264,15 @@
     (++ loop-counter)
     name))
 
+(defn- make-gensym
+  "A fresh, collision-proof Janet symbol name for compiler-introduced bindings
+  (recur targets, arity-dispatch arg vectors). The leading `_jolt$` can't appear
+  in a Clojure source symbol, so these never shadow user names."
+  [prefix]
+  (let [name (string "_jolt$" prefix "_" loop-counter)]
+    (++ loop-counter)
+    name))
+
 # ============================================================
 # Syntax-quote expansion
 # ============================================================
@@ -365,6 +374,11 @@
   [reason]
   (error (string "jolt/uncompilable: " reason)))
 
+# fn* analysis is large enough (optional self-name, multi-arity, varargs, recur
+# targets) to live in its own helper. Forward-declared so the fn* case in
+# analyze-form can call it; defined after analyze-form (which it recurses into).
+(var analyze-fn nil)
+
 (defn analyze-form
   "Analyze a Clojure form and return an AST node with :op key.
   Takes bindings (table) and optional ctx (for macro expansion)."
@@ -461,31 +475,7 @@
                         cell (when ctx (ns-intern (ctx-find-ns ctx (ctx-current-ns ctx)) nm))]
                     {:op :def :name name-sym :var cell
                      :init (analyze-form (in form 2) bindings ctx)})
-            "fn*" (let [params (in form 1)
-                        _ (do
-                            # Named fns put a symbol at position 1; multi-arity
-                            # puts a list of clauses. Both, plus destructuring
-                            # params, fall back to the interpreter.
-                            (when (plain-symbol? params) (uncompilable "named fn"))
-                            (unless (tuple? params) (uncompilable "multi-arity fn"))
-                            (each p params
-                              (unless (plain-symbol? p)
-                                (uncompilable "destructuring fn params"))))
-                        body-bindings (do
-                                        (var bb @{})
-                                        (loop [[k v] :pairs bindings] (put bb k v))
-                                        (each p params
-                                          (put bb (if (struct? p) (p :name) p) :jolt/local))
-                                        bb)
-                        body-exprs (tuple/slice form 2)
-                        analyzed-body (map |(analyze-form $ body-bindings ctx) body-exprs)
-                        n-body (length analyzed-body)]
-                    {:op :fn :params params
-                     :body (if (> n-body 1)
-                             {:op :do
-                              :statements (array/slice analyzed-body 0 (- n-body 1))
-                              :ret (last analyzed-body)}
-                             (first analyzed-body))})
+            "fn*" (analyze-fn form bindings ctx)
             "let*" (let [bind-vec (in form 1)
                          body-exprs (tuple/slice form 2)
                          binding-pairs (do
@@ -574,6 +564,82 @@
 
     {:op :const :val form}))
 
+(defn- parse-fn-params
+  "Split a param vector into fixed param names and an optional rest name. Only
+  plain symbols are handled here; destructuring params signal uncompilable so the
+  whole fn falls back to the interpreter."
+  [params]
+  (unless (tuple? params) (uncompilable "fn params not a vector"))
+  (def fixed @[])
+  (var rest-name nil)
+  (var i 0)
+  (def n (length params))
+  (while (< i n)
+    (def p (in params i))
+    (unless (plain-symbol? p) (uncompilable "destructuring fn params"))
+    (if (= "&" (p :name))
+      (do
+        (++ i)
+        (when (< i n)
+          (def r (in params i))
+          (unless (plain-symbol? r) (uncompilable "destructuring fn rest param"))
+          (set rest-name (r :name)))
+        (++ i))
+      (do (array/push fixed (p :name)) (++ i))))
+  {:fixed (tuple/slice fixed) :rest rest-name})
+
+(set analyze-fn
+  (fn analyze-fn [form bindings ctx]
+    # (fn* name? params-or-clauses...) where a clause is (params body...).
+    (def named? (plain-symbol? (in form 1)))
+    (def fn-name (when named? ((in form 1) :name)))
+    (def idx (if named? 2 1))
+    (def first-clause (in form idx))
+    # Single arity: a param vector at idx. Multi arity: each remaining element is
+    # an (params body...) list.
+    (def raw-clauses
+      (cond
+        (tuple? first-clause) [[first-clause (tuple/slice form (+ idx 1))]]
+        (array? first-clause) (map |[(in $ 0) (tuple/slice $ 1)] (tuple/slice form idx))
+        (uncompilable "fn: unexpected param shape")))
+    (def multi (> (length raw-clauses) 1))
+    # Public name: the symbol the fn binds to itself. Single-arity fns recur
+    # straight into this name; multi-arity fns recur into a per-arity inner fn so
+    # recur stays in its own arity rather than re-dispatching.
+    (def outer-name (or fn-name (make-gensym "fn")))
+    (def arities
+      (map
+        (fn [clause]
+          (def pinfo (parse-fn-params (in clause 0)))
+          (def fixed (pinfo :fixed))
+          (def rest-name (pinfo :rest))
+          (def recur-name
+            (if (and (not multi) (not rest-name)) outer-name (make-gensym "arity")))
+          (def body-bindings
+            (do
+              (var bb @{})
+              (loop [[k v] :pairs bindings] (put bb k v))
+              (when fn-name (put bb fn-name :jolt/local))
+              (each pn fixed (put bb pn :jolt/local))
+              (when rest-name (put bb rest-name :jolt/local))
+              (put bb :jolt/current-loop recur-name)
+              bb))
+          (def body-exprs (in clause 1))
+          (def analyzed (map |(analyze-form $ body-bindings ctx) body-exprs))
+          (def n-body (length analyzed))
+          {:param-names fixed
+           :rest-name rest-name
+           :n-fixed (length fixed)
+           :recur-name recur-name
+           :body (cond
+                   (= 0 n-body) {:op :const :val nil}
+                   (= 1 n-body) (first analyzed)
+                   {:op :do
+                    :statements (array/slice analyzed 0 (- n-body 1))
+                    :ret (last analyzed)})})
+        raw-clauses))
+    {:op :fn :name outer-name :fn-name fn-name :multi multi :arities arities}))
+
 # ============================================================
 # Emitter — AST → Janet source string
 # ============================================================
@@ -611,16 +677,32 @@
   (buffer/push buf "(def ") (buffer/push buf (name-sym :name))
   (buffer/push buf " ") (emit-ast init buf) (buffer/push buf ")"))
 
-(defn- emit-fn-str [params body buf]
-  (buffer/push buf "(fn [")
+(defn- emit-arity-str [ar buf]
+  (buffer/push buf "[")
   (var i 0)
-  (let [n (length params)]
+  (let [n (length (ar :param-names))]
     (while (< i n)
-      (let [p (in params i)]
-        (buffer/push buf (if (struct? p) (p :name) (string p))))
-      (when (< (+ i 1) n) (buffer/push buf " "))
+      (buffer/push buf (in (ar :param-names) i))
+      (when (or (< (+ i 1) n) (ar :rest-name)) (buffer/push buf " "))
       (++ i)))
-  (buffer/push buf "] ") (emit-ast body buf) (buffer/push buf ")"))
+  (when (ar :rest-name)
+    (buffer/push buf "& ") (buffer/push buf (ar :rest-name)))
+  (buffer/push buf "] ")
+  (emit-ast (ar :body) buf))
+
+# Debug/source rendering. Single arity matches the original `(fn [params] body)`
+# shape; multi-arity renders each arity as a clause. This path is for inspection
+# (compile-string); the data emitter is the one that actually runs.
+(defn- emit-fn-str [ast buf]
+  (def arities (ast :arities))
+  (if (ast :multi)
+    (do
+      (buffer/push buf "(fn")
+      (each ar arities
+        (buffer/push buf " (") (emit-arity-str ar buf) (buffer/push buf ")"))
+      (buffer/push buf ")"))
+    (do
+      (buffer/push buf "(fn ") (emit-arity-str (first arities) buf) (buffer/push buf ")"))))
 
 (defn- emit-let-str [binding-pairs body buf]
   (buffer/push buf "(let [")
@@ -752,7 +834,7 @@
       :do (emit-do-str (ast :statements) (ast :ret) buf)
       :if (emit-if-str (ast :test) (ast :then) (ast :else) buf)
       :def (emit-def-str (ast :name) (ast :init) buf)
-      :fn (emit-fn-str (ast :params) (ast :body) buf)
+      :fn (emit-fn-str ast buf)
       :let (emit-let-str (ast :binding-pairs) (ast :body) buf)
       :throw (emit-throw-str (ast :val) buf)
       :try (emit-try-str (ast :body) (ast :catch-sym) (ast :catch-body) (ast :finally-body) buf)
@@ -818,11 +900,49 @@
 (defn- emit-var-expr [cell] (tuple (var-getter cell)))
 (defn- emit-def-var-expr [cell init] (tuple (var-setter cell) (emit-expr init)))
 
-(defn- emit-fn-expr [params body]
-  (def param-syms @[])
-  (each p params
-    (array/push param-syms (symbol (if (struct? p) (p :name) p))))
-  ['fn (tuple/slice (tuple ;param-syms)) (emit-expr body)])
+# An arity compiles to a named Janet fn whose name is its recur target — a
+# recur is just a self-call (Janet tail-calls it). The rest param is an ordinary
+# param holding a seq (not Janet `&`), so `(recur fixed... rest-seq)` works the
+# way Clojure recur into a variadic arity does.
+(defn- emit-arity-fn [ar]
+  (def ps @[])
+  (each pn (ar :param-names) (array/push ps (symbol pn)))
+  (when (ar :rest-name) (array/push ps (symbol (ar :rest-name))))
+  ['fn (symbol (ar :recur-name)) (tuple/slice ps) (emit-expr (ar :body))])
+
+# Invoke an arity's fn with the actual args pulled out of the dispatch vector:
+# fixed params by index, rest as a tuple slice.
+(defn- emit-arity-invoke [ar jargs]
+  (def call @[(emit-arity-fn ar)])
+  (for i 0 (ar :n-fixed) (array/push call ['in jargs i]))
+  (when (ar :rest-name) (array/push call ['tuple/slice jargs (ar :n-fixed)]))
+  (tuple/slice call))
+
+(defn- emit-fn-expr [ast]
+  (def arities (ast :arities))
+  (cond
+    # Single fixed arity — the common, hot case. Emit the arity fn directly
+    # (its name is the public name and the recur target); no dispatch overhead.
+    (and (not (ast :multi)) (not ((first arities) :rest-name)))
+      (emit-arity-fn (first arities))
+    # Single variadic arity: a thin wrapper collects the call's args so the rest
+    # seq can be built, then hands off to the arity fn.
+    (not (ast :multi))
+      (let [jargs (symbol (make-gensym "args"))]
+        ['fn (symbol (ast :name)) ['& jargs] (emit-arity-invoke (first arities) jargs)])
+    # Multi-arity: dispatch on arg count. Fixed arities match exactly; the (one)
+    # variadic arity matches >= its fixed count and goes last.
+    (let [jargs (symbol (make-gensym "args"))
+          n-sym (symbol (make-gensym "n"))
+          cond-form @['cond]]
+      (each ar arities
+        (if (ar :rest-name)
+          (array/push cond-form ['>= n-sym (ar :n-fixed)])
+          (array/push cond-form ['= n-sym (ar :n-fixed)]))
+        (array/push cond-form (emit-arity-invoke ar jargs)))
+      (array/push cond-form ['error "Wrong number of args passed to fn"])
+      ['fn (symbol (ast :name)) ['& jargs]
+       ['let [n-sym ['length jargs]] (tuple/slice cond-form)]])))
 
 (defn- emit-let-expr [binding-pairs body]
   (def bind-tuple @[])
@@ -912,7 +1032,7 @@
       :if (emit-if-expr (ast :test) (ast :then) (ast :else))
       :def (if (ast :var) (emit-def-var-expr (ast :var) (ast :init))
              (emit-def-expr (ast :name) (ast :init)))
-      :fn (emit-fn-expr (ast :params) (ast :body))
+      :fn (emit-fn-expr ast)
       :let (emit-let-expr (ast :binding-pairs) (ast :body))
       :throw (emit-throw-expr (ast :val))
       :try (emit-try-expr (ast :body) (ast :catch-sym) (ast :catch-body) (ast :finally-body))
