@@ -91,7 +91,6 @@
     "complement" "core-complement"
     "constantly" "core-constantly"
     "memoize" "core-memoize"
-    "some" "core-some"
     "range" "core-range"
     "take" "core-take"
     "drop" "core-drop"
@@ -139,6 +138,42 @@
       (= name "defmulti") (= name "defmethod") (= name "locking")
       (= name "prefer-method") (= name "remove-method") (= name "remove-all-methods")))
 
+# Forms the compiler can't compile correctly: definitional/stateful special
+# forms and macros that mutate the context or build runtime values the emitter
+# doesn't model (types, protocols, multimethods, dynamic binding, host interop).
+# analyze-form throws uncompilable on these so the enclosing top-level form falls
+# back to the interpreter — which handles them — instead of silently miscompiling.
+# (Top-level occurrences are usually routed straight to the interpreter by
+# loader/stateful-head?; this also covers them nested inside compiled forms.)
+(def- uncompilable-heads
+  (let [t @{}]
+    # Interpreter special forms the compiler does NOT itself implement (it
+    # handles quote/do/if/def/fn*/let*/loop*/recur/throw/try). Kept in sync with
+    # eval-form's special-form match in evaluator.janet.
+    (each n ["syntax-quote" "unquote" "unquote-splicing" "eval" "read-string"
+             "macroexpand-1" "defonce" "defmacro" "deftype" "defmulti"
+             "defmethod" "prefer-method" "remove-method" "remove-all-methods"
+             "get-method" "methods" "register-method" "protocol-dispatch"
+             "make-reified" "satisfies?" "instance?" "set!" "var" "var-get"
+             "var-set" "var?" "in-ns" "ns" "require" "create-ns" "remove-ns"
+             "find-ns" "all-ns" "the-ns" "find-var" "intern" "resolve"
+             "ns-resolve" "ns-aliases" "ns-imports" "ns-interns"
+             "alter-var-root" "alter-meta!" "reset-meta!" "locking" "new"
+             "disj" "set?"
+             # Definitional/host macros that mutate context or build runtime
+             # values the emitter doesn't model.
+             "defrecord" "defprotocol" "definterface" "reify" "proxy"
+             "extend-type" "extend-protocol" "extend" "gen-class" "import"
+             "use" "refer" "monitor-enter" "monitor-exit" "binding" "."
+             # letfn needs all its fns in scope simultaneously (mutual
+             # recursion); the sequential let* the compiler would build can't
+             # express that, so interpret it.
+             "letfn"]
+      (put t n true))
+    t))
+
+(defn- uncompilable-head? [name] (get uncompilable-heads name))
+
 # ============================================================
 # Macro resolution
 # ============================================================
@@ -160,100 +195,6 @@
             (let [core-ns (ctx-find-ns ctx "clojure.core")
                   cv (ns-find core-ns name)]
               (if (and cv (var-macro? cv)) cv))))))))
-
-# ============================================================
-# Core function value lookup
-# ============================================================
-
-(def- core-fn-values
-  (let [t @{}]
-    (put t "core-+" core-+)
-    (put t "core-sub" core-sub)
-    (put t "core-*" core-*)
-    (put t "core-/" core-/)
-    (put t "core-inc" core-inc)
-    (put t "core-dec" core-dec)
-    (put t "core-=" core-=)
-    (put t "core-not=" core-not=)
-    (put t "core-<" core-<)
-    (put t "core->" core->)
-    (put t "core-<=" core-<=)
-    (put t "core->=" core->=)
-    (put t "core-nil?" core-nil?)
-    (put t "core-not" core-not)
-    (put t "core-some?" core-some?)
-    (put t "core-string?" core-string?)
-    (put t "core-number?" core-number?)
-    (put t "core-fn?" core-fn?)
-    (put t "core-keyword?" core-keyword?)
-    (put t "core-symbol?" core-symbol?)
-    (put t "core-vector?" core-vector?)
-    (put t "core-map?" core-map?)
-    (put t "core-seq?" core-seq?)
-    (put t "core-coll?" core-coll?)
-    (put t "core-true?" core-true?)
-    (put t "core-false?" core-false?)
-    (put t "core-identical?" core-identical?)
-    (put t "core-zero?" core-zero?)
-    (put t "core-pos?" core-pos?)
-    (put t "core-neg?" core-neg?)
-    (put t "core-even?" core-even?)
-    (put t "core-odd?" core-odd?)
-    (put t "core-empty?" core-empty?)
-    (put t "core-every?" core-every?)
-    (put t "core-first" core-first)
-    (put t "core-rest" core-rest)
-    (put t "core-next" core-next)
-    (put t "core-cons" core-cons)
-    (put t "core-conj" core-conj)
-    (put t "core-assoc" core-assoc)
-    (put t "core-dissoc" core-dissoc)
-    (put t "core-get" core-get)
-    (put t "core-get-in" core-get-in)
-    (put t "core-contains?" core-contains?)
-    (put t "core-count" core-count)
-    (put t "core-seq" core-seq)
-    (put t "core-vec" core-vec)
-    (put t "core-map" core-map)
-    (put t "core-filter" core-filter)
-    (put t "core-remove" core-remove)
-    (put t "core-reduce" core-reduce)
-    (put t "core-str" core-str)
-    (put t "core-prn" core-prn)
-    (put t "core-println" core-println)
-    (put t "core-print" core-print)
-    (put t "core-identity" core-identity)
-    (put t "core-comp" core-comp)
-    (put t "core-partial" core-partial)
-    (put t "core-complement" core-complement)
-    (put t "core-constantly" core-constantly)
-    (put t "core-memoize" core-memoize)
-    (put t "core-range" core-range)
-    (put t "core-take" core-take)
-    (put t "core-drop" core-drop)
-    (put t "core-take-while" core-take-while)
-    (put t "core-drop-while" core-drop-while)
-    (put t "core-reverse" core-reverse)
-    (put t "core-into" core-into)
-    (put t "core-merge" core-merge)
-    (put t "core-merge-with" core-merge-with)
-    (put t "core-keys" core-keys)
-    (put t "core-vals" core-vals)
-    (put t "core-zipmap" core-zipmap)
-    (put t "core-select-keys" core-select-keys)
-    (put t "core-max" core-max)
-    (put t "core-min" core-min)
-    (put t "core-quot" core-quot)
-    (put t "core-rem" core-rem)
-    (put t "core-mod" core-mod)
-    (put t "core-apply" apply)
-    (put t "core-some" core-some?)
-    (put t "core-pr-str" core-pr-str)
-    (put t "core-nth" core-nth)
-    (put t "core-list" core-list)
-    (put t "core-name" core-name)
-    (put t "core-subs" core-subs)
-    t))
 
 # Loop counter for generating unique loop function names
 (var loop-counter 0)
@@ -397,12 +338,21 @@
           {:op :local :name name}
           (if (and (not (special-form? name)) (get core-renames name))
             {:op :core-symbol :name name :janet-name (get core-renames name)}
-            # A global reference: resolve (or create) the Jolt var cell now and
-            # compile a deref through it, so redefinition is visible to compiled
-            # callers (Janet early-binds plain symbols). No ctx -> plain symbol.
+            # A global reference: resolve the Jolt var cell now and compile a
+            # deref through it, so redefinition is visible to compiled callers
+            # (Janet early-binds plain symbols). Resolution mirrors the
+            # interpreter's resolve-var — current ns (which also holds refers),
+            # then clojure.core — so unqualified core fns resolve to their real
+            # var rather than a fresh empty one. Only a genuinely-undefined name
+            # interns a pending cell in the current ns (forward refs; the getter
+            # derefs at call time, so a later def fills it in). No ctx -> plain
+            # symbol.
             (if ctx
-              {:op :var :name name
-               :var (ns-intern (ctx-find-ns ctx (ctx-current-ns ctx)) name)}
+              (let [cur-ns (ctx-find-ns ctx (ctx-current-ns ctx))
+                    cell (or (ns-find cur-ns name)
+                             (ns-find (ctx-find-ns ctx "clojure.core") name)
+                             (ns-intern cur-ns name))]
+                {:op :var :name name :var cell})
               {:op :symbol :name name})))))
 
     (array? form)
@@ -410,6 +360,8 @@
           head-name (if (and (struct? first-form) (= :symbol (first-form :jolt/type)))
                      (first-form :name)
                      nil)]
+      (when (and head-name (uncompilable-head? head-name))
+        (uncompilable head-name))
       # Macro expansion
       (if (and ctx head-name
                (not (special-form? head-name))
@@ -560,7 +512,15 @@
         {:op :set :items (map |(analyze-form $ bindings ctx) (form :value))}
       (= :jolt/char (form :jolt/type))
         {:op :const :val form}
-      {:op :map :form form})
+      # Tagged literals (#"regex", data readers) need runtime construction the
+      # compiler doesn't model — interpret them.
+      (form :jolt/type)
+        (uncompilable (string "tagged literal " (form :jolt/type)))
+      # Plain map literal: keys and values are expressions to evaluate.
+      {:op :map
+       :pairs (map (fn [k] [(analyze-form k bindings ctx)
+                            (analyze-form (get form k) bindings ctx)])
+                   (keys form))})
 
     {:op :const :val form}))
 
@@ -788,7 +748,12 @@
       (++ i)))
   (buffer/push buf "]"))
 
-(defn- emit-map-str [form buf] (buffer/push buf (string form)))
+(defn- emit-map-str [pairs buf]
+  (buffer/push buf "(build-map-literal")
+  (each [k v] pairs
+    (buffer/push buf " ") (emit-ast k buf)
+    (buffer/push buf " ") (emit-ast v buf))
+  (buffer/push buf ")"))
 
 (defn- emit-set-str [items buf]
   (buffer/push buf "(make-phs")
@@ -842,7 +807,7 @@
       :recur (emit-recur-str (ast :args) (ast :loop-name) buf)
       :invoke (emit-invoke-str (ast :fn) (ast :args) buf)
       :vector (emit-vector-str (ast :items) buf)
-      :map (emit-map-str (ast :form) buf)
+      :map (emit-map-str (ast :pairs) buf)
       :set (emit-set-str (ast :items) buf)
       :quote (emit-quote-str (ast :expr) buf)
       (buffer/push buf (string "/* unhandled op: " (ast :op) " */")))))
@@ -865,8 +830,12 @@
 (defn- emit-core-symbol-expr [janet-name]
   (if (get native-ops janet-name)
     (symbol janet-name)
-    (or (get core-fn-values janet-name)
-        (error (string "Core fn not found: " janet-name)))))
+    # Resolve the core-* function value from the compiler's runtime env (where
+    # `(use ./core)` bound them all) rather than a hand-maintained table that can
+    # drift out of sync. A name with no binding falls back to the interpreter.
+    (let [b (get jolt-runtime-env (symbol janet-name))]
+      (if b (b :value)
+        (uncompilable (string "core fn not found: " janet-name))))))
 
 (defn- emit-qualified-symbol-expr [ns name]
   (error (string "Cannot eval qualified symbol at compile time: " ns "/" name)))
@@ -1006,12 +975,37 @@
   (each arg args (array/push exprs (emit-expr arg)))
   (tuple/slice (tuple ;exprs)))
 
+# A vector literal builds a mode-appropriate jolt vector (pvec when immutable,
+# array when mutable) via make-vec — the same constructor the interpreter uses —
+# so compiled and interpreted vectors share one representation. (Emitting a bare
+# Janet tuple diverged: type-strict ops like rseq reject tuples.)
 (defn- emit-vector-expr [items]
-  (def exprs @['tuple])
-  (each item items (array/push exprs (emit-expr item)))
-  (tuple/slice (tuple ;exprs)))
+  (def t @['tuple])
+  (each item items (array/push t (emit-expr item)))
+  [make-vec (tuple/slice t)])
 
-(defn- emit-map-expr [form] form)
+# Build a jolt map literal from evaluated alternating k/v args, mirroring the
+# interpreter (eval-form's map-literal case): a Janet struct unless a key is a
+# collection, in which case a phm so the key compares by value. Embedded as a
+# function constant in emitted code (functions marshal by reference).
+(defn build-map-literal [& kvs]
+  (var coll-key false)
+  (var ki 0)
+  (while (< ki (length kvs))
+    (let [kk (in kvs ki)] (when (or (table? kk) (array? kk)) (set coll-key true)))
+    (+= ki 2))
+  (if coll-key
+    (do (var m (make-phm)) (var j 0)
+        (while (< j (length kvs)) (set m (phm-assoc m (in kvs j) (in kvs (+ j 1)))) (+= j 2))
+        m)
+    (struct ;kvs)))
+
+(defn- emit-map-expr [pairs]
+  (def call @[build-map-literal])
+  (each [k v] pairs
+    (array/push call (emit-expr k))
+    (array/push call (emit-expr v)))
+  (tuple/slice call))
 
 (defn- emit-set-expr [items]
   (tuple/slice (tuple make-phs ;(map emit-expr items))))
@@ -1040,7 +1034,7 @@
       :recur (emit-recur-expr (ast :args) (ast :loop-name))
       :invoke (emit-invoke-expr (ast :fn) (ast :args))
       :vector (emit-vector-expr (ast :items))
-      :map (emit-map-expr (ast :form))
+      :map (emit-map-expr (ast :pairs))
       :set (emit-set-expr (ast :items))
       :quote (emit-quote-expr (ast :expr))
       (error (string "Unhandled op: " (ast :op))))))

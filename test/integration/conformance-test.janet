@@ -299,27 +299,38 @@
    ["map literal in fn"  "6"       "(do (defn mk [a b] {:sum (+ a b)}) (:sum (mk 2 4)))"]
   ])
 
-(var pass 0)
-(def fails @[])
-(each [name expected actual] cases
-  (def ctx (init))
-  (def prog (string "(= " expected " " actual ")"))
-  (def res (protect (eval-string ctx prog)))
-  (cond
-    (not= (res 0) true)
-    (array/push fails [name "ERROR" (string (res 1))])
-    (= (res 1) true)
-    (++ pass)
-    # not equal: re-eval actual alone to show what we got
-    (let [got (protect (eval-string (init) actual))]
-      (array/push fails [name "MISMATCH"
-                         (string "want=" expected
-                                 " got=" (if (= (got 0) true) (string/format "%q" (got 1)) (string "ERR:" (got 1))))]))))
+# Run every case under a given context factory and return the failures. The same
+# cases run under both the interpreter and the compiler: results must match real
+# Clojure semantics either way, so the compile path (hybrid: hot compiles,
+# unsupported forms fall back to the interpreter) must not diverge.
+(defn- run-cases [opts]
+  (def fails @[])
+  (each [name expected actual] cases
+    (def ctx (init opts))
+    (def prog (string "(= " expected " " actual ")"))
+    (def res (protect (eval-string ctx prog)))
+    (cond
+      (not= (res 0) true)
+      (array/push fails [name "ERROR" (string (res 1))])
+      (= (res 1) true)
+      nil
+      (let [got (protect (eval-string (init opts) actual))]
+        (array/push fails [name "MISMATCH"
+                           (string "want=" expected
+                                   " got=" (if (= (got 0) true) (string/format "%q" (got 1)) (string "ERR:" (got 1))))]))))
+  fails)
 
-(printf "\n=== CONFORMANCE: %d/%d passed ===" pass (length cases))
-(unless (empty? fails)
-  (print "\n--- Failures ---")
-  (each [name kind detail] fails
-    (printf "[%s] %s: %s" kind name detail)))
+(defn- report [label fails]
+  (printf "=== CONFORMANCE (%s): %d/%d passed ===" label (- (length cases) (length fails)) (length cases))
+  (unless (empty? fails)
+    (print "--- Failures ---")
+    (each [name kind detail] fails
+      (printf "[%s] %s: %s" kind name detail))))
+
+(def interp-fails (run-cases {}))
+(report "interpret" interp-fails)
+(def compile-fails (run-cases {:compile? true}))
+(report "compile" compile-fails)
 (print)
-(when (pos? (length fails)) (os/exit 1))
+(when (or (pos? (length interp-fails)) (pos? (length compile-fails)))
+  (os/exit 1))
