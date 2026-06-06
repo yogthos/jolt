@@ -370,7 +370,13 @@
           {:op :local :name name}
           (if (and (not (special-form? name)) (get core-renames name))
             {:op :core-symbol :name name :janet-name (get core-renames name)}
-            {:op :symbol :name name}))))
+            # A global reference: resolve (or create) the Jolt var cell now and
+            # compile a deref through it, so redefinition is visible to compiled
+            # callers (Janet early-binds plain symbols). No ctx -> plain symbol.
+            (if ctx
+              {:op :var :name name
+               :var (ns-intern (ctx-find-ns ctx (ctx-current-ns ctx)) name)}
+              {:op :symbol :name name})))))
 
     (array? form)
     (let [first-form (first form)
@@ -435,9 +441,13 @@
                   :else (if (> (length form) 3)
                          (analyze-form (in form 3) bindings ctx)
                          {:op :const :val nil})}
-            "def" {:op :def
-                   :name (in form 1)
-                   :init (analyze-form (in form 2) bindings ctx)}
+            "def" (let [name-sym (in form 1)
+                        nm (if (struct? name-sym) (name-sym :name) (string name-sym))
+                        # Create/find the var cell first so a recursive init body
+                        # self-references the same cell.
+                        cell (when ctx (ns-intern (ctx-find-ns ctx (ctx-current-ns ctx)) nm))]
+                    {:op :def :name name-sym :var cell
+                     :init (analyze-form (in form 2) bindings ctx)})
             "fn*" (let [params (in form 1)
                         body-bindings (do
                                         (var bb @{})
@@ -709,6 +719,7 @@
     (match (ast :op)
       :const (emit-const-str (ast :val) buf)
       :symbol (emit-symbol-str (ast :name) buf)
+      :var (emit-symbol-str (ast :name) buf)
       :local (emit-local-str (ast :name) buf)
       :core-symbol (emit-core-symbol-str (ast :janet-name) buf)
       :qualified-symbol (emit-qualified-symbol-str (ast :ns) (ast :name) buf)
@@ -767,6 +778,19 @@
 
 (defn- emit-def-expr [name-sym init]
   ['def (symbol (name-sym :name)) (emit-expr init)])
+
+# Var-indirection: a global reference derefs its cell at call time, and a def
+# sets the same cell's root and returns it (Clojure's #'var). Janet COPIES table
+# constants when compiling but references functions, so we embed memoized
+# getter/setter CLOSURES over the cell (by reference) rather than the cell itself.
+(defn- var-getter [cell]
+  (or (get cell :jolt/getter)
+      (let [g (fn [] (var-get cell))] (put cell :jolt/getter g) g)))
+(defn- var-setter [cell]
+  (or (get cell :jolt/setter)
+      (let [s (fn [v] (bind-root cell v) cell)] (put cell :jolt/setter s) s)))
+(defn- emit-var-expr [cell] (tuple (var-getter cell)))
+(defn- emit-def-var-expr [cell init] (tuple (var-setter cell) (emit-expr init)))
 
 (defn- emit-fn-expr [params body]
   (def param-syms @[])
@@ -828,7 +852,7 @@
   # only when the head is a keyword/collection literal in call position (an IFn
   # that needs runtime lookup), e.g. (:k m) or ({:a 1} :a).
   (def direct (case (f-ast :op)
-                :core-symbol true :symbol true :local true
+                :core-symbol true :symbol true :var true :local true
                 :qualified-symbol true :fn true
                 false))
   (def f (emit-expr f-ast))
@@ -854,12 +878,14 @@
     (match (ast :op)
       :const (emit-const-expr (ast :val))
       :symbol (emit-symbol-expr (ast :name))
+      :var (emit-var-expr (ast :var))
       :local (emit-local-expr (ast :name))
       :core-symbol (emit-core-symbol-expr (ast :janet-name))
       :qualified-symbol (emit-qualified-symbol-expr (ast :ns) (ast :name))
       :do (emit-do-expr (ast :statements) (ast :ret))
       :if (emit-if-expr (ast :test) (ast :then) (ast :else))
-      :def (emit-def-expr (ast :name) (ast :init))
+      :def (if (ast :var) (emit-def-var-expr (ast :var) (ast :init))
+             (emit-def-expr (ast :name) (ast :init)))
       :fn (emit-fn-expr (ast :params) (ast :body))
       :let (emit-let-expr (ast :binding-pairs) (ast :body))
       :throw (emit-throw-expr (ast :val))
@@ -893,30 +919,10 @@
   (emit-expr (analyze-form form @{} ctx)))
 
 (defn compile-and-eval
-  "Compile a Clojure form and evaluate it as Janet, in the context's persistent
-  Janet env (so compiled def/defn bindings resolve across forms). For def/defn
-  forms, also interns the result in the Jolt namespace so the interpreter can
-  resolve it later."
+  "Compile a Clojure form and evaluate it as Janet. Globals resolve through Jolt
+  var cells (see analyze-form/:var), so compiled def/defn results are visible to
+  the interpreter (the cell is the namespace var), recursion self-references the
+  cell, and redefinition is seen by compiled callers — no separate interning or
+  named-fn rewrite needed."
   [form ctx]
-  (def env (ctx-janet-env ctx))
-  (def def-form? (and ctx (array? form) (> (length form) 0)
-                      (struct? (first form)) (= :symbol ((first form) :jolt/type))
-                      (let [h ((first form) :name)] (or (= h "def") (= h "defn") (= h "defn-")))))
-  (def def-name (when def-form?
-                  (let [name-sym (in form 1)] (if (struct? name-sym) (name-sym :name) name-sym))))
-  (var compiled (compile-ast form ctx))
-  # Name the fn after the def so a recursive body self-references lexically
-  # ((def f (fn [..] (f ..))) -> (def f (fn f [..] (f ..)))); the anonymous form
-  # can't resolve f at compile time.
-  (when (and def-name (indexed? compiled) (= 3 (length compiled))
-             (= 'def (in compiled 0))
-             (indexed? (in compiled 2)) (= 'fn (in (in compiled 2) 0))
-             (indexed? (in (in compiled 2) 1)))   # 3rd elem is (fn [params] ...)
-    (let [f (in compiled 2)]
-      (set compiled [(in compiled 0) (in compiled 1)
-                     [(in f 0) (symbol def-name) ;(tuple/slice f 1)]])))
-  (def result (eval compiled env))
-  # Also intern def/defn results in the Jolt namespace for interpreter resolution.
-  (when def-name
-    (ns-intern (ctx-find-ns ctx (ctx-current-ns ctx)) def-name result))
-  result)
+  (eval (compile-ast form ctx) (ctx-janet-env ctx)))

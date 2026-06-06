@@ -297,7 +297,10 @@
         (when (not (nil? val))
           (bind-root existing val))
         existing)
-      (let [v (make-var sym val {:ns ns :name sym})]
+      # Store the namespace *name*, not the ns table: a back-pointer to the ns
+      # would make the var cyclic (ns -> mappings -> var -> ns), and the compiler
+      # embeds var cells as constants, which can't be cyclic.
+      (let [v (make-var sym val {:ns (get ns :name) :name sym})]
         (put mappings sym v)
         v))))
 

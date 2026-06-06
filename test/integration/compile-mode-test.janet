@@ -100,10 +100,19 @@
   (assert (= 2 (ct-eval ctx "(#{1 2 3} 2)")) "set as fn")
   (assert (= true (ct-eval ctx "(= [1 2] [1 2])")) "= is value equality, not core-= bypass"))
 
-# Context isolation: a def in one compiled context is invisible in another.
+# Context isolation: a def in one compiled context is invisible in another. With
+# var-indirection each context has its own var cells, so b's `secret` is a
+# distinct, unbound var (nil) rather than a's 7.
 (let [a (init {:compile? true}) b (init {:compile? true})]
   (eval-string a "(def secret 7)")
   (assert (= 7 (ct-eval a "secret")) "def visible in its own ctx")
-  (assert (not ((protect (ct-eval b "secret")) 0)) "def isolated to its ctx"))
+  (assert (nil? (ct-eval b "secret")) "def isolated to its ctx"))
+
+# Redefinition is visible to already-compiled callers (var-indirection).
+(let [c (init {:compile? true})]
+  (eval-string c "(defn g [] 1)")
+  (eval-string c "(defn calls-g [] (g))")
+  (eval-string c "(defn g [] 2)")
+  (assert (= 2 (ct-eval c "(calls-g)")) "compiled caller sees redefined global"))
 
 (print "\nAll Phase 6 tests passed!")
