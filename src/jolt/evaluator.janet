@@ -1069,12 +1069,30 @@
                               (let [fn (find-protocol-method ctx type-tag proto-name method-name)]
                                 (if fn (apply fn obj rest-args)
                                   (error (string "No method " method-name " in " proto-name " for " type-tag))))
-                              # host value: try candidate host type-tags (Long/String/Object/...)
-                              (let [cands (value-host-tags obj)]
-                                (var found nil)
-                                (each tag cands
-                                  (when (nil? found)
-                                    (set found (find-protocol-method ctx tag proto-name method-name))))
+                              # host value: try candidate host type-tags (Long/String/Object/...).
+                              # Generation-guarded inline cache: the candidate
+                              # walk (array alloc + up to ~15 registry lookups) is
+                              # the same for every value of a given host class, so
+                              # cache (most-specific-tag, proto, method) -> fn,
+                              # invalidated when the registry generation bumps.
+                              (let [env (ctx :env)
+                                    reg-gen (or (get env :type-registry-gen) 0)
+                                    pc (let [c (get env :proto-dispatch-cache)]
+                                         (if (and c (= (c :gen) reg-gen)) c
+                                           (let [n @{:gen reg-gen :map @{}}]
+                                             (put env :proto-dispatch-cache n) n)))
+                                    cands (value-host-tags obj)
+                                    ckey [(first cands) proto-name method-name]
+                                    cached (get (pc :map) ckey)
+                                    found (if (nil? cached)
+                                            (let [f (do (var r nil)
+                                                      (each tag cands
+                                                        (when (nil? r)
+                                                          (set r (find-protocol-method ctx tag proto-name method-name))))
+                                                      r)]
+                                              (put (pc :map) ckey (if f f :jolt/none))
+                                              f)
+                                            (if (= cached :jolt/none) nil cached))]
                                 (if found (apply found obj rest-args)
                                   (error (string "No dispatch for " method-name " on " (type obj))))))))
     "register-method" (let [type-sym (in form 1)

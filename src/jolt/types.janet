@@ -500,12 +500,15 @@
 (defn register-protocol-method
   "Register a protocol method implementation for a type."
   [ctx type-tag protocol-name method-name fn]
-  (let [registry (get (ctx :env) :type-registry)
+  (let [env (ctx :env)
+        registry (get env :type-registry)
         type-impls (or (get registry type-tag)
                       (do (put registry type-tag @{}) (get registry type-tag)))
         proto-impls (or (get type-impls protocol-name)
                        (do (put type-impls protocol-name @{}) (get type-impls protocol-name)))]
-    (put proto-impls method-name fn)))
+    (put proto-impls method-name fn)
+    # Bump the registry generation so any dispatch cache keyed on it invalidates.
+    (put env :type-registry-gen (+ 1 (or (get env :type-registry-gen) 0)))))
 
 (defn find-protocol-method
   "Find a protocol method implementation for a type."
