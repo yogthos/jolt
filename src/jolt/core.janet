@@ -940,11 +940,10 @@
       (if (jvec? coll) (make-vec dropped) dropped))))))
 
 (defn core-second [coll] (core-first (core-rest coll)))
-# ffirst / nfirst / fnext / nnext now live in the Clojure overlay (jolt-core/clojure/core.clj).
-
-(defn core-last [coll]
-  (let [c (realize-for-iteration coll)]
-    (if (= 0 (length c)) nil (in c (- (length c) 1)))))
+# ffirst / nfirst / fnext / nnext / last / butlast now live in the Clojure overlay
+# (jolt-core/clojure/core.clj). second stays here — the self-hosted compiler
+# (analyzer.clj) calls it, so it must exist as a Janet primitive before the
+# overlay (which the compiler compiles) loads.
 
 (defn core-drop-last [a & rest]
   (let [n (if (= 0 (length rest)) 1 a)
@@ -3098,10 +3097,6 @@
   (when (not (number? n)) (error "nthnext requires a numeric count"))
   (let [r (core-nthrest coll n)] (if (or (nil? r) (= 0 (length r))) nil r)))
 
-(defn core-butlast [coll]
-  (let [c (realize-for-iteration coll)]
-    (if (<= (length c) 1) nil (tuple/slice (tuple ;(array/slice c 0 (- (length c) 1)))))))
-
 (defn core-filterv [pred coll]
   (def pred (as-fn pred))
   (let [r @[]] (each x (realize-for-iteration coll) (when (truthy? (pred x)) (array/push r x)))
@@ -3806,7 +3801,6 @@
     "ex-cause" core-ex-cause
     "prefers" core-prefers
     "random-uuid" core-random-uuid
-    "last" core-last
     "drop-last" core-drop-last
     "take-last" core-take-last
     "interpose" core-interpose
@@ -3834,7 +3828,6 @@
     "take-nth" core-take-nth
     "nthrest" core-nthrest
     "nthnext" core-nthnext
-    "butlast" core-butlast
     "filterv" core-filterv
     "mapv" core-mapv
     "empty" core-empty
