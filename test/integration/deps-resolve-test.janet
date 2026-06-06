@@ -6,7 +6,7 @@
 (use ../../src/jolt/types)
 (import ../../src/jolt/deps :as deps)
 
-(def base (string (os/getenv "TMPDIR") "/jolt-deps-resolve-" (os/time)))
+(def base (string (or (os/getenv "TMPDIR") "/tmp") "/jolt-deps-resolve-" (os/time)))
 (defn rmrf [p]
   (when (os/stat p)
     (if (= :directory (os/stat p :mode))

@@ -6,7 +6,7 @@
 (use ../../src/jolt/api)
 (use ../../src/jolt/types)
 
-(def tmp (string (os/getenv "TMPDIR") "jolt-deps-test-" (os/time)))
+(def tmp (string (or (os/getenv "TMPDIR") "/tmp") "/jolt-deps-test-" (os/time)))
 (os/mkdir tmp)
 (os/mkdir (string tmp "/mylib"))
 (os/mkdir (string tmp "/other"))
