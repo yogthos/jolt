@@ -129,19 +129,25 @@
   "Deref the var. If the var is dynamic and has a thread-local binding, return that.
   Otherwise return the root binding."
   [v]
-  # walk binding stack top-down for this var
+  # Fast path: no dynamic bindings are active (the common case — the stack is
+  # only non-empty inside a `binding` block), so the value is just the root. This
+  # is the hot path for every global deref; skip building the walk otherwise.
   (def bs (cur-binding-stack))
-  (var result nil)
-  (var i (dec (length bs)))
-  (while (>= i 0)
-    (let [frame (in bs i)
-          val (get frame v)]
-      (if (not (nil? val))
-        (do
-          (set result (if (var? val) (var-get val) val))
-          (set i -1))
-        (-- i))))
-  (if (not (nil? result)) result (v :root)))
+  (if (= 0 (length bs))
+    (v :root)
+    # walk binding stack top-down for this var
+    (do
+      (var result nil)
+      (var i (dec (length bs)))
+      (while (>= i 0)
+        (let [frame (in bs i)
+              val (get frame v)]
+          (if (not (nil? val))
+            (do
+              (set result (if (var? val) (var-get val) val))
+              (set i -1))
+            (-- i))))
+      (if (not (nil? result)) result (v :root)))))
 
 (defn var-set
   "Set a var's value. If the var has a thread-local binding on the stack, update

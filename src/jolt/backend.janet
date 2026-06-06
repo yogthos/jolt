@@ -14,12 +14,9 @@
 (use ./evaluator)
 (import ./reader :as r)
 
-# Var late-binding: deref/set through the cell via a memoized closure so compiled
-# code sees redefinition (Janet early-binds plain symbols). Same scheme as the
-# bootstrap compiler.
-(defn- var-getter [cell]
-  (or (get cell :jolt/getter)
-      (let [g (fn [] (var-get cell))] (put cell :jolt/getter g) g)))
+# Var late-binding: reads go through `(var-get cell)` with the cell embedded as a
+# constant, so compiled code sees redefinition (Janet early-binds plain symbols)
+# — var-get reads the cell's root live. Writes go through a memoized setter.
 (defn- var-setter [cell]
   (or (get cell :jolt/setter)
       (let [s (fn [v] (bind-root cell v) cell)] (put cell :jolt/setter s) s)))
@@ -215,7 +212,10 @@
       :var (let [cell (cell-for ctx (node :ns) (node :name))]
              (if (direct-var? ctx cell)
                (cell :root)                          # direct link: embed the fn value
-               (tuple (var-getter cell))))           # indirect: live, redefinable
+               # Indirect: live deref. Quote the cell so it's embedded by
+               # reference (a bare table in arg position would be re-evaluated as
+               # a constructor — deep-copying it, and any atom in :root, each call).
+               (tuple var-get (tuple 'quote cell))))
       :if ['if (emit ctx (node :test)) (emit ctx (node :then)) (emit ctx (node :else))]
       :do (emit-seq ctx node)
       :loop (emit-loop ctx node)
