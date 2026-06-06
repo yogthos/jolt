@@ -74,9 +74,22 @@ env read would be frozen at build).
   `JOLT_PATH`/`:paths`. Test: `test/integration/deps-loader-test.janet`.
 - **Resolve git/local deps via jpm** — done. `deps.janet` + the `jolt-deps` tool.
   Test: `test/integration/deps-resolve-test.janet`.
-- **Build-time compile-in** — not started. Fold the dep namespaces a project uses
-  into the image at build (as with the embedded `jolt.nrepl` source), so a built
-  artifact needs neither the deps nor jpm.
-- **Conformance** — not started. Pull popular pure-`cljc` git libs, see what
-  loads/runs, and drive interpreter gaps from the failures — the same loop as the
-  clojure-test-suite battery.
+- **Bundling (uberscript)** — done. `jolt uberscript OUT -m NS` requires `NS`,
+  records the load order the loader emits (a dependency finishes loading before
+  the file that required it, so it's topological), and concatenates the source
+  into one `.clj` that runs on a plain `jolt` — no deps, no jpm. `jolt-deps
+  uberscript` resolves first. Test: `test/integration/uberscript-test.janet`.
+  (This is the practical form of "compile the used namespaces into the build";
+  embedding into a custom binary image is a heavier variant we haven't needed.)
+- **Conformance** — harness in place:
+  `test/integration/deps-conformance-test.janet` resolves real pure-`cljc` git
+  libs and reports load/run status (network-gated behind `JOLT_CONFORMANCE=1`, so
+  CI stays offline). First run:
+  - `medley` — loads and runs.
+  - `cuerdas` — fails to load: the reader rejects a char/literal it uses
+    (`Unsupported character: \`). A genuine reader gap to chase.
+  - `stuartsierra/dependency` — `Long/MAX_VALUE`: JVM interop, so out of scope
+    (it isn't actually pure-`cljc`).
+
+  The loop from here is the same as the clojure-test-suite battery: add libs,
+  see what breaks, fix interpreter/reader gaps.
