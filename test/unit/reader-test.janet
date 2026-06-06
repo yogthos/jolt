@@ -83,11 +83,19 @@
 (assert (deep= @[(sym "deref") (sym "x")] (parse-string "@x"))
         "deref shorthand")
 
-# Metadata
+# Metadata: a keyword/symbol/string hint on a symbol attaches to the symbol's
+# :meta and keeps it a bare symbol (so type hints are transparent everywhere).
 (let [form (parse-string "^:meta x")]
-  (assert (array? form) "metadata is array")
-  (assert (deep= @[(sym "with-meta") (sym "x") :meta] form)
-          "metadata form"))
+  (assert (and (struct? form) (= :symbol (form :jolt/type))) "meta-hinted symbol stays a symbol")
+  (assert (= "x" (form :name)) "symbol name preserved")
+  (assert (= true (get (form :meta) :meta)) "keyword hint -> {kw true}"))
+(let [form (parse-string "^String s")]
+  (assert (= "s" (form :name)) "type-hinted symbol name preserved")
+  (assert (= "String" (get (form :meta) :tag)) "symbol hint -> {:tag name}"))
+# Map metadata on a symbol still uses a runtime with-meta form.
+(let [form (parse-string "^{:doc \"d\"} y")]
+  (assert (and (array? form) (struct? (first form)) (= "with-meta" ((first form) :name)))
+          "map metadata -> with-meta form"))
 
 # Comments (skip to end of line)
 (assert (= 42 (parse-string "; comment\n42"))
