@@ -446,11 +446,30 @@
   (let [[form final-pos] (read-form s new-pos)]
     [(array token-sym form) final-pos]))
 
+(defn- meta-form->map
+  "Normalize a metadata reader form (Clojure semantics): a symbol or string is a
+  :tag, a keyword is {kw true}. Returns a metadata table, or nil if it isn't one
+  of those simple shapes (e.g. a map literal — handled via with-meta instead)."
+  [meta-form]
+  (cond
+    (keyword? meta-form) {meta-form true}
+    (and (struct? meta-form) (= :symbol (meta-form :jolt/type))) {:tag (meta-form :name)}
+    (string? meta-form) {:tag meta-form}
+    nil))
+
 (defn read-meta [s pos]
   # pos is at ^
   (let [[meta-form new-pos] (read-form s (+ pos 1))
-        [form new-pos2] (read-form s new-pos)]
-    [(array (sym "with-meta") form meta-form) new-pos2]))
+        [form new-pos2] (read-form s new-pos)
+        m (meta-form->map meta-form)]
+    (if (and m (struct? form) (= :symbol (form :jolt/type)))
+      # Attach the metadata to the symbol itself and keep it a bare symbol, so
+      # type hints (^String x) and ^:dynamic etc. are transparent in every
+      # position (params, lets, bodies) — the evaluator reads :name and ignores
+      # :meta. This is what makes type hints "parse and otherwise do nothing".
+      [(struct ;(kvs form) :meta (merge (or (form :meta) {}) m)) new-pos2]
+      # Map metadata or non-symbol targets keep the runtime with-meta form.
+      [(array (sym "with-meta") form meta-form) new-pos2])))
 
 (defn read-until-newline [s pos]
   (if (or (>= pos (length s)) (= (s pos) 10))

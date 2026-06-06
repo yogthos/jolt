@@ -122,6 +122,10 @@ unquote         = "~"  , form ;        (* (unquote form)          *)
 deref           = "@"  , form ;        (* (deref form)            *)
 metadata        = "^"  , meta-form , ws , form ;   (* attach metadata to form *)
 meta-form       = map | keyword | symbol | string ;
+(* Normalized like Clojure: a symbol or string is a type hint -> {:tag ...};
+   a keyword -> {keyword true}; a map is used as-is. On a symbol the metadata
+   rides on the symbol (it stays a bare symbol, so a hint like ^String is
+   transparent in params/lets/bodies); other targets use a runtime with-meta. *)
 
 (* --------------------------------------------------------------------------
    Dispatch forms — introduced by "#".

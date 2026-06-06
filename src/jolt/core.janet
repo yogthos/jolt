@@ -1410,8 +1410,12 @@
 
 (defn core-meta [x]
   "Returns the metadata of x, or nil."
-  (if (var? x) (var-meta x)
-    (if (table? x) (or (get x :jolt/meta) (get x :meta)) nil)))
+  (cond
+    (var? x) (var-meta x)
+    # symbols carry reader metadata (type hints etc.) in a :meta field
+    (and (struct? x) (= :symbol (get x :jolt/type))) (get x :meta)
+    (table? x) (or (get x :jolt/meta) (get x :meta))
+    nil))
 
 (defn core-every-pred [& preds]
   (fn [& xs]

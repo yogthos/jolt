@@ -56,6 +56,12 @@ then `<ns>.cljc`. Extra roots come from `JOLT_PATH` or `init`'s `:paths` option.
 together: it resolves the roots and runs the `jolt` binary with them on
 `JOLT_PATH`. The runtime's only dependency interface is that env var.
 
+`jolt uberscript` bundles a namespace and everything it requires into one
+standalone `.clj`. It requires the entry namespace and uses the order in which
+the loader finishes loading files — a dependency finishes before the file that
+required it, so the order is topological — then concatenates that source. The
+baked-in stdlib is excluded (it's part of the runtime, not bundled).
+
 Gotcha worth remembering: the `jolt` CLI's context is built into its image at
 build time, so `JOLT_PATH` is applied at runtime in `main`, not in `init` (whose
 env read would be frozen at build).
@@ -68,29 +74,18 @@ env read would be frozen at build).
 - Source only; compiled `.class` files in a git dep are ignored.
 - git `:git/sha` must be a full SHA (`git fetch` can't resolve a short one).
 
-## Status
+## Conformance
 
-- **Loader source roots** — done. `find-ns-file` + `:source-paths`, `.clj`/`.cljc`,
-  `JOLT_PATH`/`:paths`. Test: `test/integration/deps-loader-test.janet`.
-- **Resolve git/local deps via jpm** — done. `deps.janet` + the `jolt-deps` tool.
-  Test: `test/integration/deps-resolve-test.janet`.
-- **Bundling (uberscript)** — done. `jolt uberscript OUT -m NS` requires `NS`,
-  records the load order the loader emits (a dependency finishes loading before
-  the file that required it, so it's topological), and concatenates the source
-  into one `.clj` that runs on a plain `jolt` — no deps, no jpm. `jolt-deps
-  uberscript` resolves first. Test: `test/integration/uberscript-test.janet`.
-  (This is the practical form of "compile the used namespaces into the build";
-  embedding into a custom binary image is a heavier variant we haven't needed.)
-- **Conformance** — harness in place:
-  `test/integration/deps-conformance-test.janet` resolves real pure-`cljc` git
-  libs and reports load/run status (network-gated behind `JOLT_CONFORMANCE=1`, so
-  CI stays offline). First run:
-  - `medley` — loads and runs.
-  - `cuerdas` — now loads (it used `\{`, a one-char literal the reader rejected;
-    fixed). A function (`kebab`) still hits a separate runtime gap — a smaller,
-    per-function issue rather than a whole-namespace failure.
-  - `stuartsierra/dependency` — `Long/MAX_VALUE`: JVM interop, so out of scope
-    (it isn't actually pure-`cljc`).
+`test/integration/deps-conformance-test.janet` resolves a few real pure-`cljc`
+git libraries and reports whether their namespaces load and a sample call works.
+It's network-gated behind `JOLT_CONFORMANCE=1` so CI stays offline. Use it to
+check a library against the current interpreter, and to drive fixes for whatever
+gap a failure points at (the same loop as the clojure-test-suite battery). A
+library fails when it relies on something Jolt doesn't provide — JVM interop, or
+a regex feature like Unicode property classes (`\p{…}`).
 
-  The loop from here is the same as the clojure-test-suite battery: add libs,
-  see what breaks, fix interpreter/reader gaps.
+## Not yet
+
+- **Compiling deps into a binary image.** `uberscript` already produces a
+  standalone `.clj`; baking a project's dependencies directly into a custom
+  executable image is a heavier variant that isn't implemented.

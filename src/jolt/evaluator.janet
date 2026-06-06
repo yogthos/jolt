@@ -632,10 +632,16 @@
              (if (> (length form) 3) (eval-form ctx bindings (in form 3)) nil)))
     "def" (let [raw-name (in form 1)
                 name-sym (unwrap-meta-name raw-name)
-                # Check for ^:dynamic metadata
-                dynamic? (and (array? raw-name) (> (length raw-name) 0)
-                             (sym-name? (first raw-name) "with-meta")
-                             (= :dynamic (last raw-name)))
+                # Metadata on the name: keyword/type-hint metadata rides on the
+                # symbol (:meta); a ^{:map} reads as a with-meta form we evaluate.
+                sym-meta (or (and (struct? name-sym) (get name-sym :meta)) {})
+                wm-meta (if (and (array? raw-name) (> (length raw-name) 0)
+                                 (sym-name? (first raw-name) "with-meta"))
+                          (let [mv (protect (eval-form ctx bindings (last raw-name)))]
+                            (if (and (mv 0) (or (table? (mv 1)) (struct? (mv 1)))) (mv 1) {}))
+                          {})
+                name-meta (merge wm-meta sym-meta)
+                dynamic? (truthy? (get name-meta :dynamic))
                 ns-name (ctx-current-ns ctx)
                 ns (ctx-find-ns ctx ns-name)
                 # Create var first (unbound) so self-referencing defs resolve
@@ -644,8 +650,9 @@
                 has-doc (and (> (length form) 3) (string? (in form 2)))
                 val (eval-form ctx bindings (in form (if has-doc 3 2)))]
             (bind-root v val)
-            (when has-doc
-              (put v :meta (merge (or (get v :meta) {}) {:doc (in form 2)})))
+            (let [extra (if has-doc (merge name-meta {:doc (in form 2)}) name-meta)]
+              (when (not (empty? extra))
+                (put v :meta (merge (or (get v :meta) {}) extra))))
             (when dynamic?
               (put v :dynamic true))
             # def returns the var (Clojure semantics); REPL prints #'ns/name
