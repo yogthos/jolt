@@ -3078,10 +3078,6 @@
           start (max 0 (min n (length c)))]   # negative n -> whole coll
       (tuple/slice (tuple ;(array/slice c start))))))
 
-(defn core-nthnext [coll n]
-  (when (not (number? n)) (error "nthnext requires a numeric count"))
-  (let [r (core-nthrest coll n)] (if (or (nil? r) (= 0 (length r))) nil r)))
-
 # filterv now lives in the Clojure collection tier (core/20-coll.clj).
 
 # mapv lives in the Clojure kernel tier — core/00-kernel.clj.
@@ -3172,11 +3168,6 @@
       (-- i))
     (tuple/slice (tuple ;c))))
 
-(defn core-replace [smap coll]
-  (let [c (realize-for-iteration coll) r @[]]
-    (each x c (array/push r (let [v (core-get smap x :jolt/nf)] (if (= v :jolt/nf) x v))))
-    (tuple/slice (tuple ;r))))
-
 # some-fn now lives in the Clojure collection tier (core/20-coll.clj).
 
 (defn core-sequential? [x] (or (tuple? x) (array? x) (pvec? x) (plist? x) (lazy-seq? x)))
@@ -3190,10 +3181,6 @@
       (and (struct? x) (= :symbol (x :jolt/type)))))
 (defn core-indexed? [x] (or (tuple? x) (array? x) (pvec? x)))
 
-(defn core-distinct? [& xs]
-  (var seen @{}) (var ok true)
-  (each x xs (if (get seen x) (set ok false) (put seen x true)))
-  ok)
 
 # With a single item, Clojure returns it WITHOUT calling f. On ties, the last
 # extremal item wins (>=/<= update), matching Clojure.
@@ -3336,9 +3323,6 @@
 (defn core-dorun [a & rest]
   (let [coll (if (= 0 (length rest)) a (in rest 0))]
     (realize-for-iteration coll) nil))
-(defn core-run! [f coll]
-  (each x (realize-for-iteration coll) (f x)) nil)
-
 (defn core-tree-seq [branch? children root]
   (def out @[])
   (defn walk [node]
@@ -3363,9 +3347,6 @@
 (defn core-rand-nth [coll]
   (let [c (realize-for-iteration coll)]
     (in c (math/floor (* (math/random) (length c))))))
-
-(defn core-bounded-count [n coll]
-  (let [c (realize-for-iteration coll)] (min n (length c))))
 
 (defn core-counted? [x]
   (or (pvec? x) (plist? x) (phm? x) (set? x) (tuple? x) (array? x) (string? x)))
@@ -3412,9 +3393,6 @@
 
 (defn core-comparator [pred]
   (fn [a b] (cond (truthy? (pred a b)) -1 (truthy? (pred b a)) 1 true 0)))
-(defn core-completing [rf & cf]
-  (let [c (if (> (length cf) 0) (in cf 0) (fn [x] x))]
-    (fn [& a] (case (length a) 0 (rf) 1 (c (in a 0)) (rf (in a 0) (in a 1))))))
 (defn core-keyword-identical? [a b] (= a b))
 (defn core-object? [x] false)
 (defn core-tagged-literal [tag form] @{:jolt/type :jolt/tagged-literal :tag tag :form form})
@@ -3658,13 +3636,11 @@
     "apply" core-apply
     "doall" core-doall
     "dorun" core-dorun
-    "run!" core-run!
     "tree-seq" core-tree-seq
     "key" core-key
     "val" core-val
     "map-entry?" core-map-entry?
     "rand-nth" core-rand-nth
-    "bounded-count" core-bounded-count
     "counted?" core-counted?
     "reversible?" core-reversible?
     "seqable?" core-seqable?
@@ -3686,7 +3662,6 @@
     "future-cancel" core-future-cancel
     "future-cancelled?" core-future-cancelled?
     "comparator" core-comparator
-    "completing" core-completing
     "keyword-identical?" core-keyword-identical?
     "object?" core-object?
     "tagged-literal" core-tagged-literal
@@ -3744,16 +3719,13 @@
     "reduced?" core-reduced?
     "take-nth" core-take-nth
     "nthrest" core-nthrest
-    "nthnext" core-nthnext
     "empty" core-empty
     "rseq" core-rseq
     "shuffle" core-shuffle
-    "replace" core-replace
     "sequential?" core-sequential?
     "associative?" core-associative?
     "ifn?" core-ifn?
     "indexed?" core-indexed?
-    "distinct?" core-distinct?
     "vary-meta" core-vary-meta
     "ex-info" core-ex-info
     "ex-data" core-ex-data

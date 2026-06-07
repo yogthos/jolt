@@ -93,3 +93,31 @@
 (defn drop-last
   ([coll] (drop-last 1 coll))
   ([n coll] (let [c (vec coll)] (subvec c 0 (max 0 (- (count c) n))))))
+
+(defn distinct?
+  ([x] true)
+  ([x y] (not (= x y)))
+  ([x y & more]
+   (if (not (= x y))
+     (loop [s #{x y} xs more]
+       (if xs
+         (let [x (first xs)]
+           (if (contains? s x) false (recur (conj s x) (next xs))))
+         true))
+     false)))
+
+(defn replace [smap coll] (mapv (fn [x] (get smap x x)) coll))
+
+(defn nthnext [coll n]
+  (loop [n n xs (seq coll)]
+    (if (and xs (pos? n))
+      (recur (dec n) (next xs))
+      xs)))
+
+(defn bounded-count [n coll] (min n (count coll)))
+
+(defn run! [proc coll] (reduce (fn [_ x] (proc x) nil) nil coll) nil)
+
+(defn completing
+  ([f] (completing f identity))
+  ([f cf] (fn ([] (f)) ([x] (cf x)) ([x y] (f x y)))))
