@@ -65,3 +65,13 @@
 (defn not-any? [pred coll] (not (some pred coll)))
 
 (defn not-every? [pred coll] (not (every? pred coll)))
+
+(defn split-at [n coll] [(take n coll) (drop n coll)])
+
+(defn split-with [pred coll] [(take-while pred coll) (drop-while pred coll)])
+
+(defn ident? [x] (or (keyword? x) (symbol? x)))
+
+(defn qualified-ident? [x] (or (qualified-symbol? x) (qualified-keyword? x)))
+
+(defn simple-ident? [x] (or (simple-symbol? x) (simple-keyword? x)))

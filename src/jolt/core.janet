@@ -1408,11 +1408,6 @@
   (and (keyword? x) (not (nil? (string/find "/" (string x))))))
 (defn core-simple-keyword? [x]
   (and (keyword? x) (nil? (string/find "/" (string x)))))
-(defn core-ident? [x] (or (core-keyword? x) (core-symbol? x)))
-(defn core-qualified-ident? [x]
-  (or (core-qualified-symbol? x) (core-qualified-keyword? x)))
-(defn core-simple-ident? [x]
-  (or (core-simple-symbol? x) (core-simple-keyword? x)))
 # Jolt has no inst/uri/uuid host types, so these are always false; inst-ms has
 # nothing valid to read.
 (defn core-inst? [x] false)
@@ -3076,16 +3071,6 @@
         {:jolt/type :symbol :ns ns :name nm})
     (error "symbol expects 1 or 2 args")))
 
-(defn core-split-at [n coll]
-  (let [c (realize-for-iteration coll) m (min n (length c))]
-    [(tuple/slice (tuple ;(array/slice c 0 m))) (tuple/slice (tuple ;(array/slice c m)))]))
-
-(defn core-split-with [pred coll]
-  (let [c (realize-for-iteration coll)]
-    (var i 0)
-    (while (and (< i (length c)) (truthy? (pred (in c i)))) (++ i))
-    [(tuple/slice (tuple ;(array/slice c 0 i))) (tuple/slice (tuple ;(array/slice c i)))]))
-
 (defn- td-take-nth [n]
   (fn [rf]
     (var i 0)
@@ -3785,8 +3770,6 @@
     "sorted?" core-sorted-map?
     "reduced" core-reduced
     "reduced?" core-reduced?
-    "split-at" core-split-at
-    "split-with" core-split-with
     "take-nth" core-take-nth
     "nthrest" core-nthrest
     "nthnext" core-nthnext
@@ -4080,9 +4063,6 @@
     "simple-symbol?" core-simple-symbol?
     "qualified-keyword?" core-qualified-keyword?
     "simple-keyword?" core-simple-keyword?
-    "ident?" core-ident?
-    "qualified-ident?" core-qualified-ident?
-    "simple-ident?" core-simple-ident?
     "inst?" core-inst?
     "inst-ms" core-inst-ms
     "uri?" core-uri?
