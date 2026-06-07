@@ -156,8 +156,21 @@
       ['do ['var s nil] ['set s body] s])
     body))
 
-(defn- direct-call? [fnode]
-  (case (fnode :op) :var true :local true :fn true :host true false))
+# A direct Janet call (f args) is only correct when the callee is definitely a
+# function: Janet calling a pvec/keyword/etc. does get (or the wrong thing), not
+# IFn dispatch. So only emit a direct call for :fn / :host (always functions) and
+# a :var whose CURRENT root is a function (the common user/core-fn case). A :var
+# holding an IFn COLLECTION (vector/keyword/set used as a fn) or a :local of
+# unknown value falls through to jolt-call, which dispatches IFn correctly
+# (function fast-path first). Trade-off, like direct-linking: a fn-var redefined
+# to a collection after this call was compiled would still emit a direct call.
+(defn- direct-call? [ctx fnode]
+  (case (fnode :op)
+    :fn true
+    :host true
+    :var (let [r (get (cell-for ctx (fnode :ns) (fnode :name)) :root)]
+           (or (function? r) (cfunction? r)))
+    false))
 
 # Hot primitives emitted as native Janet ops (host-specific optimization): a
 # call to clojure.core/+ etc. becomes (+ …) rather than a var deref + variadic
@@ -188,7 +201,7 @@
           '++ ['+ (in args 0) 1]
           '-- ['- (in args 0) 1]
           (tuple nop ;args))
-    (direct-call? (node :fn)) (tuple (emit ctx (node :fn)) ;args)
+    (direct-call? ctx (node :fn)) (tuple (emit ctx (node :fn)) ;args)
     (tuple jolt-call (emit ctx (node :fn)) ;args)))
 
 (defn- emit-vector [ctx node]
