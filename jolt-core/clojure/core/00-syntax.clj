@@ -64,6 +64,22 @@
 ;; multi-arity); fn is just the public spelling.
 (defmacro fn [& args] `(fn* ~@args))
 
+;; let desugars destructuring patterns to plain bindings (via destructure) so the
+;; COMPILER sees only plain symbols — analyze-bindings rejects patterns as
+;; uncompilable, relying on this macro to have expanded them. (The interpreter
+;; could destructure let* directly, but the compiler can't.) let* is sequential, so
+;; a later init can reference an earlier destructured name. destructure is a
+;; clojure.core fn; calling it at expansion time is fine — it's interned at init.
+(defmacro let [bindings & body]
+  `(let* ~(destructure bindings) ~@body))
+
+;; loop -> loop* with raw bindings (matching the prior Janet macro). loop can't
+;; pre-destructure like let: that would change the binding count and break recur's
+;; arity. The interpreter destructures loop* directly; for destructuring loops the
+;; compiler falls back (a pre-existing limitation).
+(defmacro loop [bindings & body]
+  `(loop* ~bindings ~@body))
+
 ;; A fresh jolt symbol inside a macro body (a bare (gensym) returns a Janet symbol
 ;; the destructurer rejects). This defn compiles fine: by the time a tier triggers
 ;; the analyzer build the kernel is in place (the build is gated until then).

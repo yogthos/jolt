@@ -2433,25 +2433,6 @@
   (while (< i n) (d-process (in bindings i) (in bindings (+ i 1)) out) (+= i 2))
   (tuple/slice out))
 
-(defn core-let
-  "Macro: (let [bindings] body) → (let* [plain-bindings] body), expanding
-  destructuring patterns so the compiler/interpreter see only plain symbols."
-  [bindings & body]
-  (def result @[])
-  (array/push result {:jolt/type :symbol :ns nil :name "let*"})
-  (array/push result (core-destructure bindings))
-  (each b body (array/push result b))
-  result)
-
-(defn core-loop
-  "Macro: (loop [bindings] body) → (loop* [bindings] body)"
-  [bindings & body]
-  (def result @[])
-  (array/push result {:jolt/type :symbol :ns nil :name "loop*"})
-  (array/push result bindings)
-  (each b body (array/push result b))
-  result)
-
 # Protocol implementation — methods dispatch via type registry
 (defn core-defprotocol [protocol-name & sigs]
   (def result @[])
@@ -3424,8 +3405,7 @@
     "remove-all-methods" core-remove-all-methods
     "prefer-method" core-prefer-method
     "Object" core-Object
-    "let" core-let
-    "loop" core-loop
+    "destructure" core-destructure
     "defprotocol" core-defprotocol
     "extend-type" core-extend-type
     "extend-protocol" core-extend-protocol
@@ -3487,7 +3467,7 @@
 (defn core-macro-names
   "Set of core binding names that are macros."
   []
-  @{"when-let" true "defn" true "defn-" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "lazy-seq" true "lazy-cat" true})
+  @{"when-let" true "defn" true "defn-" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "lazy-seq" true "lazy-cat" true})
 
 (def init-core!
   (fn [& args]
