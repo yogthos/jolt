@@ -13,6 +13,19 @@
 (import ./compiler :as comp)
 (use ./evaluator)
 (import ./reader :as r)
+(import ./phm :as phm)
+
+# The IR is portable data; reading its representation is a host-layer concern.
+# Most nodes are Janet structs (raw-readable), but a node carrying a nil-valued
+# field — an anonymous fn's :name, a nil const's :val, a def with no :meta, an
+# arity with no :rest — is a phm, whose fields live under :buckets, not as direct
+# keys. Densify such a node to a struct: phm-to-struct drops exactly those
+# nil-valued fields, which is what the back end wants (it already treats an absent
+# field as nil). Structs (the common case) pass through untouched. Applied at the
+# few points where a node first reaches the emitter, so the rest of the back end
+# keeps using plain (node :key) access and the portable front end never sees this.
+(defn- norm-node [n]
+  (if (phm/phm? n) (phm/phm-to-struct n) n))
 
 # Var late-binding: reads go through `(var-get cell)` with the cell embedded as a
 # constant, so compiled code sees redefinition (Janet early-binds plain symbols)
@@ -120,7 +133,7 @@
     core))
 
 (defn- emit-fn-body [ctx node]
-  (def arities (vview (node :arities)))
+  (def arities (map norm-node (vview (node :arities))))
   (def multi (> (length arities) 1))
   (cond
     # Single fixed arity (the hot case): emit the arity fn directly — its name is
@@ -194,15 +207,16 @@
     op))
 
 (defn- emit-invoke [ctx node]
+  (def fnode (norm-node (node :fn)))
   (def args (map |(emit ctx $) (vview (node :args))))
-  (def nop (native-op (node :fn) (length args)))
+  (def nop (native-op fnode (length args)))
   (cond
     nop (case nop
           '++ ['+ (in args 0) 1]
           '-- ['- (in args 0) 1]
           (tuple nop ;args))
-    (direct-call? ctx (node :fn)) (tuple (emit ctx (node :fn)) ;args)
-    (tuple jolt-call (emit ctx (node :fn)) ;args)))
+    (direct-call? ctx fnode) (tuple (emit ctx fnode) ;args)
+    (tuple jolt-call (emit ctx fnode) ;args)))
 
 (defn- emit-vector [ctx node]
   (def items (map |(emit ctx $) (vview (node :items))))
@@ -217,7 +231,8 @@
   (tuple/slice args))
 
 (set emit
-  (fn emit [ctx node]
+  (fn emit [ctx raw]
+    (def node (norm-node raw))
     (case (node :op)
       :const (node :val)
       :local (symbol (node :name))
