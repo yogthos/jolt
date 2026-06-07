@@ -3231,14 +3231,6 @@
 # keys must be numbers (NaN allowed) — like Clojure, which compares them with </>.
 # min-key / max-key now live in the Clojure collection tier (core/20-coll.clj).
 
-(defn core-not-every? [pred coll]
-  (def pred (as-fn pred))
-  (not (do (var ok true) (each x (realize-for-iteration coll) (when (not (truthy? (pred x))) (set ok false))) ok)))
-
-(defn core-not-any? [pred coll]
-  (def pred (as-fn pred))
-  (do (var none true) (each x (realize-for-iteration coll) (when (truthy? (pred x)) (set none false))) none))
-
 (defn core-vary-meta [obj f & args]
   (let [m (core-meta obj)] (core-with-meta obj (apply f m args))))
 
@@ -3807,8 +3799,6 @@
     "ifn?" core-ifn?
     "indexed?" core-indexed?
     "distinct?" core-distinct?
-    "not-every?" core-not-every?
-    "not-any?" core-not-any?
     "vary-meta" core-vary-meta
     "ex-info" core-ex-info
     "ex-data" core-ex-data

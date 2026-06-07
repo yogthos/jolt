@@ -61,3 +61,7 @@
 
 (defn some-fn [& preds]
   (fn [& xs] (some (fn [p] (some p xs)) preds)))
+
+(defn not-any? [pred coll] (not (some pred coll)))
+
+(defn not-every? [pred coll] (not (every? pred coll)))
