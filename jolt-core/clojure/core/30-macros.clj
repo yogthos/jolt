@@ -134,3 +134,86 @@
                             (~(nth clause 2) p#)
                             ~(emit more)))))]
     `(let [~gp ~pred ~ge ~expr] ~(emit clauses))))
+
+;; --- protocols, records, types ---------------------------------------------
+;; These emit Jolt's protocol/type special forms (protocol-dispatch,
+;; register-method, make-reified, deftype). The :jolt/protocol value built by
+;; defprotocol is an opaque tagged struct — it self-evaluates (see eval-form).
+
+;; Group a flat seq that starts with a head symbol followed by its list specs
+;; into [[head spec spec ...] ...] runs. Used by extend-protocol and defrecord.
+(defn- group-by-head [items]
+  (reduce (fn [acc x]
+            (if (symbol? x)
+              (conj acc [x])
+              (conj (pop acc) (conj (peek acc) x))))
+          [] items))
+
+;; The protocol value is built by make-protocol (a fn call) rather than an embedded
+;; tagged map literal: the interpreter would otherwise self-evaluate such a struct
+;; instead of evaluating its fields. methods is a {kw {:name str}} map (only :name
+;; is consulted). Each method is a thin dispatch fn over protocol-dispatch.
+(defmacro defprotocol [pname & sigs]
+  (let [methods (reduce (fn [m sig]
+                          (assoc m (keyword (name (first sig))) {:name (name (first sig))}))
+                        {} sigs)]
+    `(do
+       (def ~pname (make-protocol ~(name pname) ~methods))
+       ~@(map (fn [sig]
+                `(def ~(first sig)
+                   (fn* [this# & rest#] (protocol-dispatch ~pname ~(first sig) this# rest#))))
+              sigs))))
+
+(defmacro extend-type [tsym psym & impls]
+  `(do ~@(map (fn [spec]
+                `(register-method ~tsym ~psym ~(first spec)
+                                  (fn* ~(nth spec 1) ~@(drop 2 spec))))
+              impls)))
+
+(defmacro extend-protocol [psym & type-impls]
+  `(do ~@(map (fn [g] `(extend-type ~(first g) ~psym ~@(rest g)))
+              (group-by-head type-impls))))
+
+;; extend (the fn form) is not supported — stub to nil, as before.
+(defmacro extend [& args] nil)
+;; JVM proxies are unsupported.
+(defmacro proxy [& args] nil)
+;; definterface is JVM-only; bind the name to an empty marker.
+(defmacro definterface [name-sym & body] `(def ~name-sym {}))
+
+;; Build a method map {kw (fn* ...)} as an embedded map literal — make-reified
+;; evaluates it (the fn* forms become fns) via build-eval-map, which yields a
+;; struct it can iterate; a (hash-map ...) call would instead yield a phm it can't.
+(defmacro reify [& forms]
+  (loop [items (seq forms) proto nil methods {}]
+    (if (empty? items)
+      `(make-reified ~proto ~methods)
+      (let [x (first items)]
+        (if (symbol? x)
+          (recur (rest items) (if proto proto x) methods)
+          (recur (rest items) proto
+                 (assoc methods (keyword (name (first x)))
+                        `(fn* ~(nth x 1) ~@(drop 2 x)))))))))
+
+(defmacro defrecord [name-sym fields & body]
+  (let [tn (name name-sym)
+        dot (symbol (str tn "."))
+        arrow (symbol (str "->" tn))
+        mapf (symbol (str "map->" tn))
+        m (fresh-sym)
+        ;; each method body sees the record fields, bound from the instance (the
+        ;; method's first param), matching Clojure's defrecord method scope. vec the
+        ;; spliced binding seq so ~@ splices its elements, not the lazy-seq itself.
+        impl (fn [proto specs]
+               `(extend-type ~name-sym ~proto
+                  ~@(map (fn [spec]
+                           (let [argv (nth spec 1)
+                                 inst (first argv)
+                                 binds (vec (mapcat (fn [f] [f `(get ~inst ~(keyword (name f)))]) fields))]
+                             `(~(first spec) ~argv (let [~@binds] ~@(drop 2 spec)))))
+                         specs)))]
+    `(do
+       (deftype ~name-sym ~fields)
+       (def ~arrow (fn* ~fields (~dot ~@fields)))
+       (def ~mapf (fn* [~m] (~arrow ~@(map (fn [f] `(get ~m ~(keyword (name f)))) fields))))
+       ~@(map (fn [g] (impl (first g) (rest g))) (group-by-head body)))))

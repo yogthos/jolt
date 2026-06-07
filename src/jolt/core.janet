@@ -2190,81 +2190,11 @@
 
 
 # Proxy stub — returns nil form (macro, args not evaluated)
-(defn core-proxy [& args] nil)
-
 # Thread stubs
 (def core-Thread (fn [& args] (struct ;[:jolt/type :jolt/thread])))
 (def core-ThreadLocal (fn [& args] (struct ;[:jolt/type :jolt/thread-local])))
 (def core-IllegalStateException (fn [& args] (struct ;[:jolt/type :jolt/exception])))
 
-# definterface stub — JVM-only, emits def form
-(defn core-definterface [name-sym & body]
-  @[{:jolt/type :symbol :ns nil :name "def"}
-    name-sym
-    @{}])
-
-
-# defrecord — creates a proper type via deftype + factory functions
-(defn core-defrecord [name-sym fields-vec & body]
-  (def type-name (name-sym :name))
-  (def type-name-dot (string type-name "."))
-  (def arrow-name (string "->" type-name))
-  (def map-name (string "map->" type-name))
-  
-  # (deftype TypeName [fields...])
-  (def dt-form @[{:jolt/type :symbol :ns nil :name "deftype"} name-sym fields-vec])
-  
-  # Arrow factory: (def ->TypeName (fn [field1 field2 ...] (TypeName. field1 field2 ...)))
-  (def arrow-call @[{:jolt/type :symbol :ns nil :name type-name-dot}])
-  (each f fields-vec (array/push arrow-call f))
-  (def arrow-sym {:jolt/type :symbol :ns nil :name arrow-name})
-  (def arrow-body @[{:jolt/type :symbol :ns nil :name "fn"} fields-vec arrow-call])
-  
-  # map-> factory: (def map->TypeName (fn [m] (->TypeName (get m :field1) (get m :field2) ...)))
-  (def map-call @[{:jolt/type :symbol :ns nil :name arrow-name}])
-  (each f fields-vec
-    (array/push map-call @[{:jolt/type :symbol :ns nil :name "get"} {:jolt/type :symbol :ns nil :name (string "m")} (keyword (f :name))]))
-  (def map-sym {:jolt/type :symbol :ns nil :name map-name})
-  # params must be a tuple (a vector), not an array — fn* treats an array
-  # first-arg as multi-arity clauses
-  (def map-body @[{:jolt/type :symbol :ns nil :name "fn"} [{:jolt/type :symbol :ns nil :name "m"}] map-call])
-  
-  (def out @[{:jolt/type :symbol :ns nil :name "do"}
-    dt-form
-    @[{:jolt/type :symbol :ns nil :name "def"} arrow-sym arrow-body]
-    @[{:jolt/type :symbol :ns nil :name "def"} map-sym map-body]])
-  # Process inline protocol/interface implementations:
-  #   (defrecord T [fs] Proto (m [this] body) ... Proto2 (m2 [this] body))
-  # Emit an extend-type per protocol. Each method body is wrapped in a let that
-  # binds the record's fields from the instance (first method param), matching
-  # Clojure's field-in-scope semantics for deftype/defrecord methods.
-  (var i 0)
-  (while (< i (length body))
-    (def elem (in body i))
-    (if (and (struct? elem) (= :symbol (elem :jolt/type)))
-      # protocol name; collect following method specs
-      (let [proto-sym elem
-            et @[{:jolt/type :symbol :ns nil :name "extend-type"} name-sym proto-sym]]
-        (++ i)
-        (while (and (< i (length body)) (not (and (struct? (in body i)) (= :symbol ((in body i) :jolt/type)))))
-          (let [spec (in body i)
-                mname (spec 0)
-                argv (spec 1)
-                mbody (tuple/slice spec 2)
-                instance (in argv 0)
-                # (let [f0 (core-get instance :f0) ...] body...)
-                field-binds @[]
-                _ (each f fields-vec
-                    (array/push field-binds f)
-                    (array/push field-binds @[{:jolt/type :symbol :ns nil :name "get"}
-                                              instance (keyword (f :name))]))
-                wrapped @[{:jolt/type :symbol :ns nil :name "let"}
-                          (tuple/slice (tuple ;field-binds)) ;mbody]]
-            (array/push et @[mname argv wrapped]))
-          (++ i))
-        (array/push out et))
-      (++ i)))
-  out)
 
 
 # letfn — mutually-recursive local fns. Expands to let* of fn* bindings; jolt
@@ -2399,113 +2329,14 @@
   (while (< i n) (d-process (in bindings i) (in bindings (+ i 1)) out) (+= i 2))
   (tuple/slice out))
 
-# Protocol implementation — methods dispatch via type registry
-(defn core-defprotocol [protocol-name & sigs]
-  (def result @[])
-  (array/push result {:jolt/type :symbol :ns nil :name "do"})
-  (def methods @{})
-  (each sig sigs
-    (def method-name (first sig))
-    (def arglists (tuple/slice sig 1))
-    (put methods (keyword (if (struct? method-name) (method-name :name) method-name)) {:name method-name :arglists arglists}))
-  (def proto-def @[])
-  (array/push proto-def {:jolt/type :symbol :ns nil :name "def"})
-  (array/push proto-def protocol-name)
-  (array/push proto-def @{:jolt/type :jolt/protocol
-                          :name {:jolt/type :symbol :ns nil :name (protocol-name :name)}
-                          :methods methods})
-  (array/push result proto-def)
-  (each sig sigs
-    (def method-name (first sig))
-    (def method-def @[])
-    (array/push method-def {:jolt/type :symbol :ns nil :name "def"})
-    (array/push method-def method-name)
-    (def fn-form @[])
-    (array/push fn-form {:jolt/type :symbol :ns nil :name "fn*"})
-    (array/push fn-form [{:jolt/type :symbol :ns nil :name "this"} {:jolt/type :symbol :ns nil :name "&"} {:jolt/type :symbol :ns nil :name "rest-args"}])
-    (array/push fn-form @[
-      {:jolt/type :symbol :ns nil :name "protocol-dispatch"}
-      protocol-name
-      method-name
-      {:jolt/type :symbol :ns nil :name "this"}
-      {:jolt/type :symbol :ns nil :name "rest-args"}])
-    (array/push method-def fn-form)
-    (array/push result method-def))
-  result)
-
-(defn core-extend-type [type-sym proto-sym & impls]
-  (def result @[{:jolt/type :symbol :ns nil :name "do"}])
-  (each method-spec impls
-    (def method-name (method-spec 0))
-    (def arg-vec (method-spec 1))
-    (def body (tuple/slice method-spec 2))
-    (def fn-form @[{:jolt/type :symbol :ns nil :name "fn*"} arg-vec ;body])
-    (array/push result @[
-      {:jolt/type :symbol :ns nil :name "register-method"}
-      type-sym
-      proto-sym
-      method-name
-      fn-form]))
-  result)
-
-(defn core-extend-protocol [proto-sym & type-impls]
-  (def result @[{:jolt/type :symbol :ns nil :name "do"}])
-  (var i 0)
-  (while (< i (length type-impls))
-    (let [type-sym (type-impls i)
-          methods (type-impls (+ i 1))]
-      # methods is a single method spec array or an array of method specs
-      # If the first element is a symbol (method name), treat as single spec
-      (if (and (struct? (methods 0)) (= :symbol ((methods 0) :jolt/type)))
-        (let [method-spec methods]
-          (def method-name (method-spec 0))
-          (def arg-vec (method-spec 1))
-          (def body (tuple/slice method-spec 2))
-          (def fn-form @[{:jolt/type :symbol :ns nil :name "fn*"} arg-vec ;body])
-          (array/push result @[
-            {:jolt/type :symbol :ns nil :name "register-method"}
-            type-sym
-            proto-sym
-            method-name
-            fn-form]))
-        (each method-spec methods
-          (def method-name (method-spec 0))
-          (def arg-vec (method-spec 1))
-          (def body (tuple/slice method-spec 2))
-          (def fn-form @[{:jolt/type :symbol :ns nil :name "fn*"} arg-vec ;body])
-          (array/push result @[
-            {:jolt/type :symbol :ns nil :name "register-method"}
-            type-sym
-            proto-sym
-            method-name
-            fn-form]))))
-    (+= i 2))
-  result)
-
-(def core-extend (fn [& args] nil))
-
-(defn core-reify [& forms]
-  # forms interleaves protocol-name symbols with method specs (name [args] body);
-  # collect every method spec (a list), tracking the first protocol for the tag.
-  (def result @[{:jolt/type :symbol :ns nil :name "do"}])
-  (def methods @{})
-  (var proto-sym nil)
-  (var i 0)
-  (while (< i (length forms))
-    (def elem (in forms i))
-    (if (and (struct? elem) (= :symbol (elem :jolt/type)))
-      (do (when (nil? proto-sym) (set proto-sym elem)) (++ i))
-      (let [method-name (in elem 0)
-            arg-vec (in elem 1)
-            body (tuple/slice elem 2)]
-        (put methods (keyword (if (struct? method-name) (method-name :name) method-name))
-             @{:fn* true :args arg-vec :body body})
-        (++ i))))
-  (array/push result @[
-    {:jolt/type :symbol :ns nil :name "make-reified"}
-    proto-sym
-    methods])
-  result)
+# Build a protocol value (a self-evaluating tagged table). Exposed so the overlay
+# `defprotocol` can construct one via a fn call rather than embedding a tagged
+# struct literal (which the interpreter would try to re-evaluate). `methods` is a
+# {kw {:name str}} map; only :name is consulted (by satisfies?).
+(defn core-make-protocol [name-str methods]
+  @{:jolt/type :jolt/protocol
+    :name {:jolt/type :symbol :ns nil :name name-str}
+    :methods methods})
 
 (def core-satisfies? (fn [proto-sym obj] false))
 
@@ -3370,11 +3201,7 @@
     "prefer-method" core-prefer-method
     "Object" core-Object
     "destructure" core-destructure
-    "defprotocol" core-defprotocol
-    "extend-type" core-extend-type
-    "extend-protocol" core-extend-protocol
-    "extend" core-extend
-    "reify" core-reify
+    "make-protocol" core-make-protocol
     "satisfies?" core-satisfies?
     "extends?" core-extends?
     "implements?" core-implements?
@@ -3382,12 +3209,9 @@
     "volatile!" core-volatile!
     "vswap!" core-vswap!
     "vreset!" core-vreset!
-    "proxy" core-proxy
     "Thread" core-Thread
     "ThreadLocal" core-ThreadLocal
     "IllegalStateException" core-IllegalStateException
-    "definterface" core-definterface
-    "defrecord" core-defrecord
     "resolve" core-resolve
     "ns-name" core-ns-name
     "update-in" core-update-in
@@ -3431,7 +3255,7 @@
 (defn core-macro-names
   "Set of core binding names that are macros."
   []
-  @{"when-let" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "lazy-seq" true "lazy-cat" true})
+  @{"when-let" true "lazy-seq" true "lazy-cat" true})
 
 (def init-core!
   (fn [& args]
