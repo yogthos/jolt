@@ -2142,17 +2142,6 @@
 # temp around the if; the name is rebound to the temp inside the taken branch only.
 (defn- sym* [name] {:jolt/type :symbol :ns nil :name name})
 
-(defn core-if-let
-  "Macro: (if-let [binding val-expr] then else?)"
-  [bindings then-form & else-forms]
-  (def form-sym (in bindings 0))
-  (def val-form (in bindings 1))
-  (def temp (gensym "if_let__"))
-  @[(sym* "let*") @[temp val-form]
-    @[(sym* "if") temp
-      @[(sym* "let*") @[form-sym temp] then-form]
-      ;else-forms]])
-
 (defn core-when-let
   "Macro: (when-let [binding val-expr] & body)"
   [bindings & body]
@@ -2161,28 +2150,6 @@
   (def temp (gensym "when_let__"))
   @[(sym* "let*") @[temp val-form]
     @[(sym* "if") temp
-      @[(sym* "let*") @[form-sym temp] @[(sym* "do") ;body]]
-      nil]])
-
-(defn core-if-some
-  "Macro: (if-some [binding val-expr] then else?)"
-  [bindings then-form & else-forms]
-  (def form-sym (in bindings 0))
-  (def val-form (in bindings 1))
-  (def temp (gensym "if_some__"))
-  @[(sym* "let*") @[temp val-form]
-    @[(sym* "if") @[(sym* "some?") temp]
-      @[(sym* "let*") @[form-sym temp] then-form]
-      ;else-forms]])
-
-(defn core-when-some
-  "Macro: (when-some [binding val-expr] & body)"
-  [bindings & body]
-  (def form-sym (in bindings 0))
-  (def val-form (in bindings 1))
-  (def temp (gensym "when_some__"))
-  @[(sym* "let*") @[temp val-form]
-    @[(sym* "if") @[(sym* "some?") temp]
       @[(sym* "let*") @[form-sym temp] @[(sym* "do") ;body]]
       nil]])
 
@@ -2228,34 +2195,6 @@
             v
             (build (tuple/slice cls 2))]))))
   @[{:jolt/type :symbol :ns nil :name "let*"} @[g expr] (build clauses)])
-
-(defn core-dotimes
-  "Macro: (dotimes [sym n] & body) -> loop from 0 to n-1"
-  [bindings & body]
-  (def sym (in bindings 0))
-  (def n-form (in bindings 1))
-  (def i (gensym))
-  @[{:jolt/type :symbol :ns nil :name "let*"}
-    @[i n-form]
-    @[{:jolt/type :symbol :ns nil :name "loop*"}
-      @[sym 0]
-      @[{:jolt/type :symbol :ns nil :name "if"}
-        @[{:jolt/type :symbol :ns nil :name "<"} sym i]
-        @[{:jolt/type :symbol :ns nil :name "do"}
-          ;body
-          @[{:jolt/type :symbol :ns nil :name "recur"}
-            @[{:jolt/type :symbol :ns nil :name "inc"} sym]]]
-        nil]]])
-
-(defn core-while
-  "Macro: (while test & body) -> loop while test is truthy"
-  [test & body]
-  @[{:jolt/type :symbol :ns nil :name "loop*"}
-    @[]
-    @[{:jolt/type :symbol :ns nil :name "when"}
-      test
-      @[{:jolt/type :symbol :ns nil :name "do"} ;body]
-      @[{:jolt/type :symbol :ns nil :name "recur"}]]])
 
 (defn core-for
   "Macro: (for [binding-form coll :when test :let [bindings]] body)
@@ -3836,14 +3775,9 @@
     "when" core-when
     "when-not" core-when-not
     "when-first" core-when-first
-    "if-let" core-if-let
     "when-let" core-when-let
-    "if-some" core-if-some
-    "when-some" core-when-some
     "doto" core-doto
     "condp" core-condp
-    "dotimes" core-dotimes
-    "while" core-while
     "->" core-thread-first
     "->>" core-thread-last
     "some->" core-some->
@@ -3932,7 +3866,7 @@
 (defn core-macro-names
   "Set of core binding names that are macros."
   []
-  @{"and" true "or" true "cond" true "case" true "for" true "when" true "when-not" true "if-let" true "when-let" true "if-some" true "when-some" true "doto" true "defn" true "defn-" true "declare" true "fn" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "binding" true "lazy-seq" true "lazy-cat" true "when-first" true "condp" true "dotimes" true "while" true "some->" true "some->>" true "cond->" true "cond->>" true "as->" true "->" true "->>" true "letfn" true "doseq" true "delay" true "assert" true "future" true})
+  @{"and" true "or" true "cond" true "case" true "for" true "when" true "when-not" true "when-let" true "doto" true "defn" true "defn-" true "declare" true "fn" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "binding" true "lazy-seq" true "lazy-cat" true "when-first" true "condp" true "some->" true "some->>" true "cond->" true "cond->>" true "as->" true "->" true "->>" true "letfn" true "doseq" true "delay" true "assert" true "future" true})
 
 (def init-core!
   (fn [& args]

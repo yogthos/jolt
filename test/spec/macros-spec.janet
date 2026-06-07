@@ -34,4 +34,13 @@
   ["if-not no else"      "nil"    "(if-not true :then)"]
   ["if-not no else hit"  ":then"  "(if-not false :then)"]
   ["comment -> nil"      "nil"    "(comment a b c)"]
-  ["comment in do"       "42"     "(do (comment ignored) 42)"])
+  ["comment in do"       "42"     "(do (comment ignored) 42)"]
+  ["if-let then"         "6"      "(if-let [x 5] (inc x) :none)"]
+  ["if-let else"         ":none"  "(if-let [x nil] (inc x) :none)"]
+  ["if-let else scope"   "9"      "(let [x 9] (if-let [x nil] :t x))"]
+  ["if-some zero"        "1"      "(if-some [x 0] (inc x) :none)"]
+  ["if-some nil"         ":none"  "(if-some [x nil] x :none)"]
+  ["when-some multi"     "14"     "(when-some [x 7] (inc x) (* x 2))"]
+  ["when-some nil"       "nil"    "(when-some [x nil] x)"]
+  ["while loop"          "3"      "(let [a (atom 0)] (while (< @a 3) (swap! a inc)) @a)"]
+  ["dotimes sum"         "10"     "(let [a (atom 0)] (dotimes [i 5] (swap! a + i)) @a)"])
