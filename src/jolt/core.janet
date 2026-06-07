@@ -2153,29 +2153,6 @@
       @[(sym* "let*") @[form-sym temp] @[(sym* "do") ;body]]
       nil]])
 
-(defn core-doto
-  "Macro: (doto obj (method args)...) → let obj, call methods, return obj"
-  [obj & forms]
-  (def sym (gensym "doto"))
-  (def result @[{:jolt/type :symbol :ns nil :name "let*"} 
-                 @[sym obj]])
-  (each f forms
-    (if (array? f)
-      # (doto x (f a b)) -> (f x a b)  (thread x as first arg, not a method call)
-      (array/push result @[(first f) sym ;(tuple/slice f 1)])
-      (array/push result @[f sym])))
-  (array/push result sym)
-  result)
-
-
-(defn core-when-first
-  "Macro: (when-first [sym coll] & body) -> (when-let [sym (first coll)] body...)"
-  [bindings & body]
-  (def sym (in bindings 0))
-  (def coll-form (in bindings 1))
-  @[{:jolt/type :symbol :ns nil :name "when-let"}
-    @[sym @[{:jolt/type :symbol :ns nil :name "first"} coll-form]]
-    ;body])
 
 (defn core-condp
   "Macro: (condp pred expr clause1 val1 ... default)"
@@ -2277,48 +2254,6 @@
                           arr) ;rest-forms])
         (apply core-thread-last [@[f x] ;rest-forms])))))
 
-(defn core-some->
-  "Macro: (some-> expr & forms) — thread first, stop at nil"
-  [expr & forms]
-  (if (= 0 (length forms)) expr
-    (let [f (first forms)
-          rest-forms (tuple/slice forms 1)]
-      @[{:jolt/type :symbol :ns nil :name "let*"}
-        @[{:jolt/type :symbol :ns nil :name "some->__x"} expr]
-        @[{:jolt/type :symbol :ns nil :name "if"}
-          @[{:jolt/type :symbol :ns nil :name "some?"}
-            {:jolt/type :symbol :ns nil :name "some->__x"}]
-          @[{:jolt/type :symbol :ns nil :name "let*"}
-            @[{:jolt/type :symbol :ns nil :name "some->__x"}
-              (if (array? f)
-                (let [arr (array/slice f)]
-                  (array/insert arr 1 {:jolt/type :symbol :ns nil :name "some->__x"})
-                  arr)
-                @[f {:jolt/type :symbol :ns nil :name "some->__x"}])]
-            (apply core-some-> [{:jolt/type :symbol :ns nil :name "some->__x"} ;rest-forms])]
-          nil]])))
-
-(defn core-some->>
-  "Macro: (some->> expr & forms) — thread last, stop at nil"
-  [expr & forms]
-  (if (= 0 (length forms)) expr
-    (let [f (first forms)
-          rest-forms (tuple/slice forms 1)]
-      @[{:jolt/type :symbol :ns nil :name "let*"}
-        @[{:jolt/type :symbol :ns nil :name "some->__x"} expr]
-        @[{:jolt/type :symbol :ns nil :name "if"}
-          @[{:jolt/type :symbol :ns nil :name "some?"}
-            {:jolt/type :symbol :ns nil :name "some->__x"}]
-          @[{:jolt/type :symbol :ns nil :name "let*"}
-            @[{:jolt/type :symbol :ns nil :name "some->__x"}
-              (if (array? f)
-                (let [arr (array/slice f)]
-                  (array/push arr {:jolt/type :symbol :ns nil :name "some->__x"})
-                  arr)
-                @[f {:jolt/type :symbol :ns nil :name "some->__x"}])]
-            (apply core-some->> [{:jolt/type :symbol :ns nil :name "some->__x"} ;rest-forms])]
-          nil]])))
-
 (defn core-cond->
   "Macro: (cond-> expr test form ...) — thread first only when test is true"
   [expr & clauses]
@@ -2360,18 +2295,6 @@
                  f-call
                  result-form]))))
   @[{:jolt/type :symbol :ns nil :name "let*"} @[g expr] (build clauses g)])
-
-(defn core-as->
-  "Macro: (as-> expr name & forms) — bind name to expr, thread through forms"
-  [expr name & forms]
-  (defn build [fs acc]
-    (if (= 0 (length fs))
-      acc
-      (let [f (first fs)]
-        @[{:jolt/type :symbol :ns nil :name "let*"}
-          @[name acc]
-          (build (tuple/slice fs 1) f)])))
-  (build forms expr))
 
 (defn core-push-thread-bindings [b] (push-thread-bindings b))
 (defn core-pop-thread-bindings [] (pop-thread-bindings))
@@ -3774,17 +3697,12 @@
     "for" core-for
     "when" core-when
     "when-not" core-when-not
-    "when-first" core-when-first
     "when-let" core-when-let
-    "doto" core-doto
     "condp" core-condp
     "->" core-thread-first
     "->>" core-thread-last
-    "some->" core-some->
-    "some->>" core-some->>
     "cond->" core-cond->
     "cond->>" core-cond->>
-    "as->" core-as->
     "defn" core-defn
     "defn-" core-defn-
     "derive" core-derive
@@ -3866,7 +3784,7 @@
 (defn core-macro-names
   "Set of core binding names that are macros."
   []
-  @{"and" true "or" true "cond" true "case" true "for" true "when" true "when-not" true "when-let" true "doto" true "defn" true "defn-" true "declare" true "fn" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "binding" true "lazy-seq" true "lazy-cat" true "when-first" true "condp" true "some->" true "some->>" true "cond->" true "cond->>" true "as->" true "->" true "->>" true "letfn" true "doseq" true "delay" true "assert" true "future" true})
+  @{"and" true "or" true "cond" true "case" true "for" true "when" true "when-not" true "when-let" true "defn" true "defn-" true "declare" true "fn" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "binding" true "lazy-seq" true "lazy-cat" true "condp" true "cond->" true "cond->>" true "->" true "->>" true "letfn" true "doseq" true "delay" true "assert" true "future" true})
 
 (def init-core!
   (fn [& args]

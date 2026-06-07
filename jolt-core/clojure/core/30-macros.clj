@@ -43,3 +43,42 @@
     `(let [n# ~n]
        (loop [~i 0]
          (when (< ~i n#) ~@body (recur (inc ~i)))))))
+
+;; A fresh jolt symbol inside a macro body: (gensym) here resolves to Janet's
+;; builtin (a Janet symbol the destructurer rejects), so round-trip through str.
+(defn- fresh-sym [] (symbol (str (gensym))))
+
+;; Lazy-safe: take only the head via first (Clojure uses (seq coll), but Jolt's
+;; eager seq would realize an infinite coll like (repeat nil) and hang). Matches
+;; the prior Janet behavior; the nil/false-head distinction waits on Phase 5
+;; laziness.
+(defmacro when-first [bindings & body]
+  (let [x (bindings 0) coll (bindings 1)]
+    `(when-let [~x (first ~coll)] ~@body)))
+
+;; doto threads a single fresh-bound value as the first arg of each form (side
+;; effects), returning the value. A shared explicit gensym is needed because the
+;; forms are built outside the let's template.
+(defmacro doto [x & forms]
+  (let [g (fresh-sym)
+        steps (map (fn [f] (if (seq? f) (apply list (first f) g (rest f)) (list f g))) forms)]
+    `(let [~g ~x] ~@steps ~g)))
+
+;; Threading-with-rebinding macros. The binding pairs are spliced into a TEMPLATE
+;; vector (so core-let sees a tuple form, not a runtime pvec value).
+(defn- thread-binds [g steps]
+  (reduce (fn [acc s] (conj (conj acc g) s)) [] (butlast steps)))
+
+(defmacro as-> [expr name & forms]
+  (let [pairs (reduce (fn [acc f] (conj (conj acc name) f)) [] (butlast forms))]
+    `(let [~name ~expr ~@pairs] ~(if (empty? forms) name (last forms)))))
+
+(defmacro some-> [expr & forms]
+  (let [g (fresh-sym)
+        steps (map (fn [f] `(if (nil? ~g) nil (-> ~g ~f))) forms)]
+    `(let [~g ~expr ~@(thread-binds g steps)] ~(if (empty? steps) g (last steps)))))
+
+(defmacro some->> [expr & forms]
+  (let [g (fresh-sym)
+        steps (map (fn [f] `(if (nil? ~g) nil (->> ~g ~f))) forms)]
+    `(let [~g ~expr ~@(thread-binds g steps)] ~(if (empty? steps) g (last steps)))))

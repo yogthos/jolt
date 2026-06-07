@@ -43,4 +43,15 @@
   ["when-some multi"     "14"     "(when-some [x 7] (inc x) (* x 2))"]
   ["when-some nil"       "nil"    "(when-some [x nil] x)"]
   ["while loop"          "3"      "(let [a (atom 0)] (while (< @a 3) (swap! a inc)) @a)"]
-  ["dotimes sum"         "10"     "(let [a (atom 0)] (dotimes [i 5] (swap! a + i)) @a)"])
+  ["dotimes sum"         "10"     "(let [a (atom 0)] (dotimes [i 5] (swap! a + i)) @a)"]
+  ["as-> threads"        "12"     "(as-> 5 x (+ x 1) (* x 2))"]
+  ["as-> no forms"       "5"      "(as-> 5 x)"]
+  ["some-> through"      "6"      "(some-> {:a {:b 5}} :a :b inc)"]
+  ["some-> short-circuit" "nil"   "(some-> {:a nil} :a :b)"]
+  ["some->> through"     "9"      "(some->> [1 2 3] (map inc) (reduce +))"]
+  ["some->> nil"         "nil"    "(some->> nil (map inc))"]
+  ["doto returns obj"    "[1 2]"  "(deref (doto (atom []) (swap! conj 1) (swap! conj 2)))"]
+  ["when-first"          "20"     "(when-first [x [10 20 30]] (* x 2))"]
+  ["when-first empty"    "nil"    "(when-first [x []] :body)"]
+  ["when-first nil coll" "nil"    "(when-first [x nil] :body)"]
+  ["when-first range"    "0"      "(when-first [x (range 5)] x)"])
