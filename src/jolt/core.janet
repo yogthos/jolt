@@ -64,6 +64,35 @@
       k)))
 (set-canonicalize-key! canon-key)
 
+# All [k v] entries of a map (struct or phm), nil-valued keys included. Use this
+# instead of (keys (phm-to-struct m)) — phm-to-struct drops keys whose value is
+# nil, which is exactly what Clojure maps must keep.
+(defn- map-entries-of [m]
+  (if (phm? m) (phm-entries m) (map (fn [k] [k (in m k)]) (keys m))))
+
+# assoc one entry onto a map value (struct or phm), preserving a nil key/value and
+# value-comparing collection keys (promotes a struct to a phm when needed). A
+# single-entry core-assoc usable by fns defined before core-assoc itself.
+(defn- map-assoc1 [m k v]
+  (cond
+    (phm? m) (phm-assoc m k v)
+    (or (nil? k) (nil? v) (table? k) (array? k))
+      (do (var p (make-phm)) (each ek (keys m) (set p (phm-assoc p ek (in m ek)))) (phm-assoc p k v))
+    (do (def t (merge @{} m)) (put t k v) (table/to-struct t))))
+
+# Build a map from a flat [k v k v ...] array: a phm when any key/value is nil or
+# a key is a collection (value hashing); a struct otherwise. One O(n) pass.
+(defn- kvs->map [kvs]
+  (var need-phm false) (var i 0)
+  (while (< i (length kvs))
+    (let [k (in kvs i) v (in kvs (+ i 1))]
+      (when (or (nil? k) (nil? v) (table? k) (array? k)) (set need-phm true)))
+    (+= i 2))
+  (if need-phm
+    (do (var m (make-phm)) (var j 0)
+        (while (< j (length kvs)) (set m (phm-assoc m (in kvs j) (in kvs (+ j 1)))) (+= j 2)) m)
+    (struct ;kvs)))
+
 (defn realize-for-iteration [c]
   "Normalize a seqable to a Janet array/tuple for iteration: pvec -> array,
   set -> seq, lazy-seq -> realized array; others pass through. Warning: will
@@ -329,16 +358,17 @@
             (each x xs
               (if (map-value? x)
                 # conj a map -> merge its entries
-                (each k (if (phm? x) (keys (phm-to-struct x)) (keys x))
-                  (set result (phm-assoc result k (if (phm? x) (phm-get x k) (in x k)))))
+                (each e (map-entries-of x)
+                  (set result (phm-assoc result (in e 0) (in e 1))))
                 (set result (phm-assoc result (vnth x 0) (vnth x 1)))))
             result)
           (do
             (var result coll)
             (each x xs
               (if (map-value? x)
-                (set result (merge result (if (phm? x) (phm-to-struct x) x)))
-                (set result (merge result {(vnth x 0) (vnth x 1)}))))
+                (each e (map-entries-of x)
+                  (set result (map-assoc1 result (in e 0) (in e 1))))
+                (set result (map-assoc1 result (vnth x 0) (vnth x 1)))))
             result)))))))))))
 
 (defn core-assoc [m & kvs]
@@ -460,13 +490,17 @@
 (defn core-get-in [m ks &opt default]
   (default default nil)
   (def ks (vview ks))
+  # Walk with a fresh sentinel so a PRESENT key whose value is nil is distinguished
+  # from a missing key: only a genuinely-absent step falls back to default.
+  (def absent @{})
   (var current m)
   (var i 0)
+  (var missing false)
   (while (< i (length ks))
-    (if (nil? current) (break))
-    (set current (core-get current (ks i)))
+    (let [nxt (core-get current (ks i) absent)]
+      (if (= nxt absent) (do (set missing true) (break)) (set current nxt)))
     (++ i))
-  (if (nil? current) default current))
+  (if missing default current))
 
 (defn core-contains? [coll key]
   (if (core-transient? coll)
@@ -632,8 +666,8 @@
           (cond
             (nil? m) nil
             (or (phm? m) (struct? m))
-              (each k (if (phm? m) (keys (phm-to-struct m)) (keys m))
-                (set result (core-assoc result k (if (phm? m) (phm-get m k) (in m k)))))
+              (each e (map-entries-of m)
+                (set result (core-assoc result (in e 0) (in e 1))))
             # a [k v] pair (map-entry / 2-vector), per conj
             (and (or (pvec? m) (tuple? m) (array? m))
                  (= 2 (if (pvec? m) (pv-count m) (length m))))
@@ -650,12 +684,24 @@
       result)))
 
 (defn core-merge-with [f & maps]
-  (if (phm? (first maps))
-    (do (var result (first maps)) (var mi 1) (while (< mi (length maps)) (let [m (maps mi)]
-      (each k (if (phm? m) (keys (phm-to-struct m)) (keys m)) (let [existing (phm-get result k)
-                                   val (if (phm? m) (phm-get m k) (m k))]
-        (set result (phm-assoc result k (if (nil? existing) val (f existing val)))))) (++ mi))) result)
-    (do (var result @{}) (each m maps (each k (if (phm? m) (keys (phm-to-struct m)) (keys m)) (let [existing (result k)] (put result k (if (nil? existing) (m k) (f existing (m k))))))) (table/to-struct result))))
+  # Presence — not nil-of-value — decides whether to combine: a key present in the
+  # accumulator with a nil value still triggers (f existing v), matching Clojure.
+  (if (= 0 (length maps))
+    nil
+    (do
+      (var result (first maps))
+      (var mi 1)
+      (while (< mi (length maps))
+        (let [m (maps mi)]
+          (when m
+            (each e (map-entries-of m)
+              (let [k (in e 0) v (in e 1)]
+                (set result
+                  (if (core-contains? result k)
+                    (core-assoc result k (f (core-get result k) v))
+                    (core-assoc result k v)))))))
+        (++ mi))
+      result)))
 
 (defn core-keys [m]
   # phm-entries (not phm-to-struct) so keys mapped to nil values are not dropped.
@@ -665,20 +711,23 @@
   (if (phm? m) (tuple ;(map |(in $ 1) (phm-entries m))) (tuple ;(map |(m $) (keys m)))))
 
 (defn core-select-keys [m ks]
-  (var result @{})
+  # Include a key when it is PRESENT (contains?), even if its value is nil — a
+  # struct/table would drop a nil value, so collect entries and build via kvs->map.
+  (def kvs @[])
   (each k (realize-for-iteration ks)
-    (let [v (core-get m k)]
-      (if (not (nil? v)) (put result k v))))
-  (if (struct? m) (table/to-struct result) result))
+    (when (core-contains? m k)
+      (array/push kvs k) (array/push kvs (core-get m k))))
+  (kvs->map kvs))
 
 (defn core-zipmap [ks vs]
   (let [ks (realize-for-iteration ks) vs (realize-for-iteration vs)]
-    (var result @{})
+    # collect pairs, then build once — a nil key/value must survive (kvs->map -> phm)
+    (def kvs @[])
     (var i 0)
     (while (and (< i (length ks)) (< i (length vs)))
-      (put result (in ks i) (in vs i))
+      (array/push kvs (in ks i)) (array/push kvs (in vs i))
       (++ i))
-    (table/to-struct result)))
+    (kvs->map kvs)))
 
 # ============================================================
 # Transducers
@@ -1266,7 +1315,7 @@
 (defn core-reduce-kv [f init m]
   (var acc init)
   (cond
-    (phm? m) (each k (keys (phm-to-struct m)) (set acc (f acc k (phm-get m k))))
+    (phm? m) (each e (phm-entries m) (set acc (f acc (in e 0) (in e 1))))
     (or (struct? m) (table? m)) (each k (keys m) (set acc (f acc k (get m k))))
     (indexed? m) (do (var i 0) (each x m (set acc (f acc i x)) (++ i))))
   acc)
@@ -3462,8 +3511,8 @@
                 (put (t :tbl) (canon-key (vnth x 0)) @[(vnth x 0) (vnth x 1)])
               # a map: merge all its entries
               (or (phm? x) (and (struct? x) (nil? (get x :jolt/type))))
-                (each k (if (phm? x) (keys (phm-to-struct x)) (keys x))
-                  (put (t :tbl) (canon-key k) @[k (if (phm? x) (phm-get x k) (in x k))]))
+                (each e (map-entries-of x)
+                  (put (t :tbl) (canon-key (in e 0)) @[(in e 0) (in e 1)]))
               (error "conj! on a transient map requires a [key value] pair or a map")))
   t)
 
