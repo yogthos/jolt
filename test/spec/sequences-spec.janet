@@ -234,4 +234,14 @@
   ["reductions with init"      "[10 11 13 16]" "(reductions + 10 [1 2 3])"]
   ["reductions empty calls f"  "[0]"    "(reductions + [])"]
   ["reductions empty + init"   "[5]"    "(reductions + 5 [])"]
-  ["tree-seq pre-order"        "[[1 [2] 3] 1 [2] 2 3]" "(tree-seq sequential? seq [1 [2] 3])"])
+  ["tree-seq pre-order"        "[[1 [2] 3] 1 [2] 2 3]" "(tree-seq sequential? seq [1 [2] 3])"]
+  ["some found"                "true"   "(some even? [1 3 4])"]
+  ["some none -> nil"          "nil"    "(some even? [1 3 5])"]
+  ["some keyword pred"         "7"      "(some :a [{:b 1} {:a 7}])"]
+  ["some returns value"        "4"      "(some (fn [x] (when (even? x) x)) [1 3 4 5])"]
+  ["flatten nested"            "[1 2 3 4 5]" "(flatten [1 [2 [3 4]] 5])"]
+  ["flatten lists too"         "[1 2 3]" "(flatten [1 (list 2 3)])"]
+  ["flatten scalar -> empty"   "[]"     "(flatten 5)"]
+  ["interleave"                "[1 :a 2 :b]" "(interleave [1 2 3] [:a :b])"]
+  ["interleave empty"          "[]"     "(interleave)"]
+  ["rationalize identity"      "5"      "(rationalize 5)"])

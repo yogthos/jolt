@@ -1786,7 +1786,6 @@
     (case (length a)
       0 (rf) 1 (rf (a 0))
       (do (var acc (a 0)) (each x (realize-for-iteration (a 1)) (set acc (rf acc x))) acc))))
-(defn core-rationalize [x] x)
 (defn core-random-sample [prob & rest]
   (if (= 0 (length rest))
     (core-filter (fn [_] (< (math/random) prob)))
@@ -3076,15 +3075,6 @@
       (each x items (if first? (set first? false) (array/push r sep)) (array/push r x))
       (tuple ;r))))
 
-(defn core-some-search
-  "(some pred coll) — first truthy (pred x), else nil."
-  [pred coll]
-  (def pred (as-fn pred))
-  (var result nil)
-  (each x (realize-for-iteration coll)
-    (let [r (pred x)] (when (truthy? r) (set result r) (break))))
-  result)
-
 (defn core-keep
   "(keep f coll) — (f x) for each x, dropping nils. (keep f) is a transducer."
   [f & rest]
@@ -3096,25 +3086,6 @@
         (let [v (f x)] (when (not (nil? v)) (array/push r v))))
       (tuple ;r))))
 
-(defn core-interleave
-  "(interleave & colls) — take one from each in turn until the shortest ends."
-  [& colls]
-  (if (= 0 (length colls)) (tuple)
-    (let [cs (map realize-for-iteration colls)
-          n (min ;(map length cs))
-          r @[]]
-      (var i 0)
-      (while (< i n) (each c cs (array/push r (in c i))) (++ i))
-      (tuple ;r))))
-
-(defn core-flatten
-  "(flatten coll) — fully flatten nested sequentials into one seq."
-  [coll]
-  (def r @[])
-  (defn seqish? [x] (or (tuple? x) (array? x) (pvec? x) (lazy-seq? x)))
-  (defn step [x] (each e (realize-for-iteration x) (if (seqish? e) (step e) (array/push r e))))
-  (when (seqish? coll) (step coll))
-  (tuple ;r))
 
 (defn core-empty [coll]
   (cond
@@ -3660,10 +3631,7 @@
     "random-uuid" core-random-uuid
     "interpose" core-interpose
     "mapcat" core-mapcat
-    "some" core-some-search
     "keep" core-keep
-    "interleave" core-interleave
-    "flatten" core-flatten
     "find" core-find
     "transduce" core-transduce
     "sequence" core-sequence
@@ -3810,7 +3778,6 @@
     "boolean" core-boolean
     "cat" core-cat
     "disj!" core-disj!
-    "rationalize" core-rationalize
     "random-sample" core-random-sample
     "reader-conditional" core-reader-conditional
     "reader-conditional?" core-reader-conditional?

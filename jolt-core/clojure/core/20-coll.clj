@@ -59,6 +59,10 @@
 (defn every-pred [& preds]
   (fn [& xs] (every? (fn [p] (every? p xs)) preds)))
 
+(defn some [pred coll]
+  (when-let [s (seq coll)]
+    (or (pred (first s)) (recur pred (next s)))))
+
 (defn some-fn [& preds]
   (fn [& xs] (some (fn [p] (some p xs)) preds)))
 
@@ -168,3 +172,23 @@
                    (reduce walk acc (children node))
                    acc)))]
     (walk [] root)))
+
+;; Canonical flatten via tree-seq: the leaves (non-sequential nodes) in order.
+;; Flattens lists too (sequential?), which the prior Janet impl missed.
+(defn flatten [coll]
+  (filter (complement sequential?) (rest (tree-seq sequential? seq coll))))
+
+;; Eager interleave (Clojure's is lazy): one from each coll in turn, until the
+;; shortest ends.
+(defn interleave [& colls]
+  (if (empty? colls)
+    (list)
+    (let [cs (mapv vec colls)
+          n (apply min (map count cs))]
+      (loop [i 0 out []]
+        (if (< i n)
+          (recur (inc i) (reduce (fn [o c] (conj o (nth c i))) out cs))
+          out)))))
+
+;; No ratio type on Jolt, so rationalize is identity.
+(defn rationalize [x] x)
