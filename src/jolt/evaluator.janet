@@ -163,6 +163,49 @@
       (array/push kvs (syntax-quote* ctx bindings (get form k) gsmap))) (struct ;kvs))
     form))
 
+# Syntax-quote LOWERING: instead of evaluating a `(...) form to a value (what
+# syntax-quote* does), produce equivalent CONSTRUCTION CODE so a backtick body is
+# plain compilable code (read -> macroexpand -> compile, zero runtime cost).
+# Mirrors syntax-quote*/sq-symbol exactly; the canonical algorithm is
+# tools.reader's syntax-quote*/expand-list. List forms build via __sqcat (-> array),
+# vectors via __sqvec (-> tuple), maps via __sqmap; symbols become (quote resolved);
+# ~ leaves the expr in place, ~@ passes the seq straight to __sqcat for splicing.
+(defn- sqsym* [nm] {:jolt/type :symbol :ns nil :name nm})
+
+(var syntax-quote-lower nil)
+
+(defn- sq-lower-part [ctx item gsmap]
+  (if (and (array? item) (> (length item) 0) (sym-name? (first item) "unquote-splicing"))
+    (in item 1)
+    @[(sqsym* "__sq1") (syntax-quote-lower ctx item gsmap)]))
+
+(set syntax-quote-lower
+  (fn syntax-quote-lower [ctx form &opt gsmap]
+    (default gsmap @{})
+    (cond
+      (and (array? form) (> (length form) 0) (sym-name? (first form) "unquote"))
+      (in form 1)
+      (and (array? form) (> (length form) 0) (sym-name? (first form) "unquote-splicing"))
+      (error "~@ used outside of a list or vector in syntax-quote")
+      (or (number? form) (string? form) (keyword? form) (nil? form) (= true form) (= false form))
+      form
+      (and (struct? form) (= :symbol (form :jolt/type)))
+      @[(sqsym* "quote") (sq-symbol ctx form gsmap)]
+      (array? form)
+      (array/concat @[(sqsym* "__sqcat")] (map (fn [it] (sq-lower-part ctx it gsmap)) form))
+      (tuple? form)
+      (array/concat @[(sqsym* "__sqvec")] (map (fn [it] (sq-lower-part ctx it gsmap)) form))
+      # tagged structs (sets/chars): syntax-quote* returns them as-is (no recursion)
+      (and (struct? form) (get form :jolt/type))
+      @[(sqsym* "quote") form]
+      (struct? form)
+      (do (var parts @[(sqsym* "__sqmap")])
+          (each k (keys form)
+            (array/push parts (syntax-quote-lower ctx k gsmap))
+            (array/push parts (syntax-quote-lower ctx (get form k) gsmap)))
+          parts)
+      @[(sqsym* "quote") form])))
+
 (defn resolve-var
   [ctx bindings sym-s]
   (let [name (sym-s :name) ns (sym-s :ns)]
@@ -621,6 +664,10 @@
               nil))
   (match name
     "quote" (in form 1)
+    # Interpreter builds the form directly (self-contained, no core dependency).
+    # The COMPILE path instead lowers syntax-quote to construction code (via
+    # syntax-quote-lower) so a backtick body is compilable; the two are kept in
+    # sync and cross-checked by conformance (interpret vs compile modes).
     "syntax-quote" (syntax-quote* ctx bindings (in form 1))
     "unquote" (error "Unquote not valid outside of syntax-quote")
     "unquote-splicing" (error "Unquote-splicing not valid outside of syntax-quote")

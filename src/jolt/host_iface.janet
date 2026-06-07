@@ -143,6 +143,11 @@
 # Form predicates use `form-*` names (not list?/vector?/map?/set?/char?) so the
 # analyzer can refer them unqualified without the bootstrap's core-renames
 # intercepting them as the value-level predicates.
+# Lower a syntax-quote's inner form to construction code (so the analyzer can
+# compile it). The portable analyzer calls this and analyzes the result.
+(defn h-syntax-quote-lower [ctx inner]
+  (syntax-quote-lower ctx inner))
+
 (def- exports
   {"form-sym?" h-sym? "form-sym-name" h-sym-name "form-sym-ns" h-sym-ns
    "form-sym-meta" h-sym-meta
@@ -152,6 +157,7 @@
    "form-map-pairs" h-map-pairs "form-set-items" h-set-items
    "form-special?" h-special? "compile-ns" h-current-ns "form-macro?" h-macro?
    "form-expand-1" h-expand-1 "resolve-global" h-resolve-global
+   "form-syntax-quote-lower" h-syntax-quote-lower
    "host-intern!" h-intern!})
 
 (defn install! [ctx]

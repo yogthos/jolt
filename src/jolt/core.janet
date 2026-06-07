@@ -124,6 +124,26 @@
       items)
     c))
 
+# Syntax-quote form builders. The syntax-quote lowering (evaluator) emits calls to
+# these so a `(...)/`[...] body is plain compilable code instead of an interpreted
+# special form. A list FORM is a Janet array, a vector FORM a tuple (the reader's
+# representation), so these build those types. Each concat part is either a 1-elem
+# wrap (__sq1, a non-spliced item) or a spliced seq (~@), flattened in order.
+(defn core-sq1 [x] @[x])
+
+(defn core-sqcat [& parts]
+  (def r @[])
+  (each p parts (each x (realize-for-iteration p) (array/push r x)))
+  r)
+
+(defn core-sqvec [& parts]
+  (def r @[])
+  (each p parts (each x (realize-for-iteration p) (array/push r x)))
+  (tuple/slice r))
+
+# Map builder: parts are alternating k v (no splicing in map syntax-quote).
+(defn core-sqmap [& parts] (kvs->map (array ;parts)))
+
 # ============================================================
 # Predicates
 # ============================================================
@@ -3289,6 +3309,10 @@
     "cons" core-cons
     "seq" core-seq
     "vec" core-vec
+    "__sq1" core-sq1
+    "__sqcat" core-sqcat
+    "__sqvec" core-sqvec
+    "__sqmap" core-sqmap
     "into" core-into
     "merge" core-merge
     "merge-with" core-merge-with

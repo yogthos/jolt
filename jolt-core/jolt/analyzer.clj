@@ -22,12 +22,13 @@
                                form-literal? form-elements form-vec-items
                                form-map-pairs form-special? compile-ns
                                form-macro? form-expand-1 resolve-global
-                               form-sym-meta host-intern!]]))
+                               form-sym-meta host-intern! form-syntax-quote-lower]]))
 
 (declare analyze)
 
 (def ^:private handled
-  #{"quote" "if" "do" "def" "fn*" "let*" "loop*" "recur" "throw" "try"})
+  #{"quote" "if" "do" "def" "fn*" "let*" "loop*" "recur" "throw" "try"
+    "syntax-quote"})
 
 (defn- uncompilable [why]
   (throw (str "jolt/uncompilable: " why)))
@@ -159,6 +160,9 @@
                :args (mapv #(analyze ctx % env) (rest items))})
     "try" (analyze-try ctx items env)
     "fn*" (analyze-fn ctx items env)
+    ;; Lower the backtick to construction code (zero runtime cost), then analyze
+    ;; it — the macroexpand/compile-time step, per read -> macroexpand -> compile.
+    "syntax-quote" (analyze ctx (form-syntax-quote-lower ctx (second items)) env)
     (uncompilable (str "special form " op))))
 
 (defn- analyze-symbol [ctx form env]
