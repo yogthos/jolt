@@ -2200,13 +2200,6 @@
   (array/push result sym)
   result)
 
-(defn core-if-not
-  "Macro: (if-not test then else?) -> (if (not test) then else?)"
-  [test then-form & else-forms]
-  @[{:jolt/type :symbol :ns nil :name "if"}
-    @[{:jolt/type :symbol :ns nil :name "not"} test]
-    then-form
-    ;else-forms])
 
 (defn core-when-first
   "Macro: (when-first [sym coll] & body) -> (when-let [sym (first coll)] body...)"
@@ -2626,9 +2619,6 @@
     name-sym
     @{}])
 
-# comment macro — ignores body, returns nil
-(defn core-comment [& body]
-  nil)
 
 # defrecord — creates a proper type via deftype + factory functions
 (defn core-defrecord [name-sym fields-vec & body]
@@ -3845,7 +3835,6 @@
     "for" core-for
     "when" core-when
     "when-not" core-when-not
-    "if-not" core-if-not
     "when-first" core-when-first
     "if-let" core-if-let
     "when-let" core-when-let
@@ -3899,7 +3888,6 @@
     "IllegalStateException" core-IllegalStateException
     "definterface" core-definterface
     "defrecord" core-defrecord
-    "comment" core-comment
     "resolve" core-resolve
     "ns-name" core-ns-name
     "update-in" core-update-in
@@ -3944,7 +3932,7 @@
 (defn core-macro-names
   "Set of core binding names that are macros."
   []
-  @{"and" true "or" true "cond" true "case" true "for" true "when" true "when-not" true "if-let" true "when-let" true "if-some" true "when-some" true "doto" true "defn" true "defn-" true "declare" true "fn" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "comment" true "binding" true "lazy-seq" true "lazy-cat" true "if-not" true "when-first" true "condp" true "dotimes" true "while" true "some->" true "some->>" true "cond->" true "cond->>" true "as->" true "->" true "->>" true "letfn" true "doseq" true "delay" true "assert" true "future" true})
+  @{"and" true "or" true "cond" true "case" true "for" true "when" true "when-not" true "if-let" true "when-let" true "if-some" true "when-some" true "doto" true "defn" true "defn-" true "declare" true "fn" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "binding" true "lazy-seq" true "lazy-cat" true "when-first" true "condp" true "dotimes" true "while" true "some->" true "some->>" true "cond->" true "cond->>" true "as->" true "->" true "->>" true "letfn" true "doseq" true "delay" true "assert" true "future" true})
 
 (def init-core!
   (fn [& args]

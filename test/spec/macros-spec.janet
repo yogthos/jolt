@@ -25,3 +25,13 @@
    "(= (gensym) (gensym))"]
   ["gensym# in template" "true"
    "(do (defmacro m [] `(let [x# 1] x#)) (= 1 (m)))"])
+
+# Core macros ported from Janet to the Clojure overlay (jolt-1j0 phase 3,
+# jolt-core/clojure/core/30-macros.clj).
+(defspec "macros / core-overlay"
+  ["if-not true branch"  ":then"  "(if-not false :then :else)"]
+  ["if-not else branch"  ":else"  "(if-not true :then :else)"]
+  ["if-not no else"      "nil"    "(if-not true :then)"]
+  ["if-not no else hit"  ":then"  "(if-not false :then)"]
+  ["comment -> nil"      "nil"    "(comment a b c)"]
+  ["comment in do"       "42"     "(do (comment ignored) 42)"])
