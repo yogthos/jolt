@@ -64,3 +64,33 @@ add-watch aget alter-meta! alter-var-root aset aset-boolean aset-byte aset-char 
 
 ## LAZY-coupled (Phase 5, 28)
 concat cycle dedupe distinct flatten interleave interpose iterate keep keep-indexed line-seq macro-names map-indexed mapcat partition partition-all partition-by rand-int random-uuid realized? repeat repeatedly seqable? sequence sequential? take-nth trampoline tree-seq unreduced
+
+## Phase 3 (macros) — status & findings
+
+20 macros moved to the overlay: 19 user-facing in `30-macros.clj`, plus `when`
+in a new `00-syntax.clj` tier loaded **before** the kernel (interpreted defmacros,
+so the macros exist before any code that uses them compiles).
+
+Macro-authoring toolkit for jolt (learned the hard way):
+- single-template hygiene: auto-gensym `foo#`
+- shared explicit fresh symbol: `(symbol (str (gensym)))` — a bare `(gensym)` in a
+  macro body returns a *Janet* symbol the destructurer rejects
+- let-rebinding: splice binding *pairs* into a TEMPLATE vector (`[~a ~b ~@pairs]`),
+  not a pre-built pvec value — `core-let` wants a tuple form
+- build sub-forms via templates, never `cons`/`list` (those make plists the
+  evaluator can't run as a form)
+- Jolt `defmacro` is **single-arity** — use `& rest`/destructuring
+- syntax-tier macros may use only special forms + core-renames seed primitives
+
+**Performance wall (the hot macros stay in Janet for now):** the load-order story
+works, but moving the *hot* fundamental control macros (`and`/`or`/`cond`/
+`when-not`) regressed the battery — as interpreted overlay defmacros they expand
+slower than native Janet, and since they appear in nearly every form the
+cumulative overhead tipped a heavy suite file over the 6 s per-file timeout
+(3930 -> 3911, +1 timeout). They are correct (conformance 228×3, all edge cases),
+but reverted. Moving `and/or/cond/when-not/case/doseq/declare/cond->/->/->>`
+needs a **fast (compiled) macro-expansion path**, not interpreted defmacros.
+
+Deferred: `defn/defn-/fn/let/loop` (fundamental + same speed concern), the type
+machinery (`defrecord/defprotocol/extend-*/reify/proxy/definterface` → Phase 4),
+`lazy-seq/lazy-cat` (→ Phase 5).
