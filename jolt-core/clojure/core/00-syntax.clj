@@ -80,6 +80,21 @@
 (defmacro loop [bindings & body]
   `(loop* ~bindings ~@body))
 
+;; defn: drop an optional leading docstring and attr-map, then (def name (fn* ...)).
+;; Both single- and multi-arity reduce to (fn* ~@body) — fn* takes either a params
+;; vector + body or a sequence of ([params] body) clauses, so no arity branching is
+;; needed. (map? is true for symbol forms too, so guard the attr-map with symbol?.)
+;; Defined before fresh-sym below, which is a defn-.
+(defmacro defn [fn-name & body]
+  (let [body (if (and (seq body) (string? (first body))) (rest body) body)
+        body (if (and (seq body) (map? (first body)) (not (symbol? (first body))))
+               (rest body) body)]
+    `(def ~fn-name (fn* ~@body))))
+
+;; Jolt doesn't enforce privacy, so defn- is just defn (matching how Clojure's own
+;; defn- delegates to defn with :private metadata).
+(defmacro defn- [fn-name & body] `(defn ~fn-name ~@body))
+
 ;; A fresh jolt symbol inside a macro body (a bare (gensym) returns a Janet symbol
 ;; the destructurer rejects). This defn compiles fine: by the time a tier triggers
 ;; the analyzer build the kernel is in place (the build is gated until then).

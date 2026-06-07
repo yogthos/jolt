@@ -2093,40 +2093,6 @@
 
 (defn core-intern [ns-name sym-name val] val)
 
-(defn- defn->def
-  "Shared expansion for defn/defn-: (name doc-string? attr-map? params body...)
-  or (name doc-string? attr-map? ([params] body)... attr-map?) -> (def name (fn* ...))."
-  [fn-name rest]
-  (var items (array/slice rest))
-  # strip optional docstring
-  (when (and (> (length items) 0) (string? (first items)))
-    (set items (array/slice items 1)))
-  # strip optional attr-map (a map literal, i.e. struct/table that isn't a symbol)
-  (when (and (> (length items) 0)
-             (let [x (first items)]
-               (and (or (struct? x) (table? x))
-                    (not (and (struct? x) (= :symbol (get x :jolt/type)))))))
-    (set items (array/slice items 1)))
-  (def fn-form @[{:jolt/type :symbol :ns nil :name "fn*"}])
-  (if (and (> (length items) 0) (array? (first items)) (indexed? (first (first items))))
-    # multi-arity: each remaining item is an ([params] body...) clause
-    (each pair items (array/push fn-form pair))
-    # single-arity: items = [params-vector body...]
-    (do
-      (array/push fn-form (first items))
-      (each b (tuple/slice items 1) (array/push fn-form b))))
-  @[{:jolt/type :symbol :ns nil :name "def"} fn-name fn-form])
-
-(defn core-defn
-  "Macro: (defn name doc-string? attr-map? [args] body...) (or multi-arity)
-  -> (def name (fn* ...))"
-  [fn-name & rest]
-  (defn->def fn-name rest))
-
-# defn- — same as defn (private not enforced in Jolt)
-(defn core-defn- [fn-name & rest]
-  (defn->def fn-name rest))
-
 # Hierarchy stubs for sci bootstrap
 (def core-make-hierarchy make-hierarchy)
 (defn core-derive
@@ -3390,8 +3356,6 @@
     "remove-watch" core-remove-watch
     "not" core-not
     "when-let" core-when-let
-    "defn" core-defn
-    "defn-" core-defn-
     "derive" core-derive
     "isa?" core-isa?
     "parents" core-parents
@@ -3467,7 +3431,7 @@
 (defn core-macro-names
   "Set of core binding names that are macros."
   []
-  @{"when-let" true "defn" true "defn-" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "lazy-seq" true "lazy-cat" true})
+  @{"when-let" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "lazy-seq" true "lazy-cat" true})
 
 (def init-core!
   (fn [& args]
