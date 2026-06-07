@@ -42,9 +42,19 @@ is essentially already complete** — to verify, not build.
 Re-run after each phase; watch for regressions as fns move from native Janet to
 self-hosted Clojure (interpreted/compiled, slower than native primitives).
 
-## Per-batch gate (every migration step)
-conformance 218/218 ×3 modes · clojure-test-suite ≥ baseline · stage2==stage3
-fixpoint · fib compiled-fast · core-bench no major regression.
+## Per-batch workflow + gate (every migration step)
+1. Canonical Clojure def in the overlay tier; remove the Janet `core-X` defn +
+   its `core-bindings` entry (confirm leaf first: only defn+binding refs).
+2. **Add regression tests** for each moved fn — spec cases (test/spec/*-spec.janet,
+   interpret) and, for any fn whose behavior is subtle or was buggy, a case in the
+   3-mode conformance set (test/integration/conformance-test.janet).
+3. Gate: conformance ×3 modes · clojure-test-suite ≥ baseline · stage2==stage3
+   fixpoint · fib compiled-fast · core-bench A/B under identical load (the
+   absolute number is load-sensitive — compare batch-vs-prior back to back).
+
+If a moved fn surfaces a latent bug (e.g. nthrest's nil-vs-() result, the
+if-let/when-let else-scope leak), fix it to match Clojure and add a regression
+test, rather than preserving the bug.
 
 ## MOVABLE candidates (Phase 2 worklist, 193)
 >Eduction NaN? abs aclone alength ancestors array-map array-seq assoc! associative? bean bigdec bigint biginteger boolean boolean? booleans byte bytes bytes? cat char char-escape-string char-name-string char? chars chunk chunk-append chunk-buffer chunk-cons chunk-first chunk-next chunk-rest chunked-seq? class clojure-version comparator compare-and-set! completing conj! counted? decimal? deliver denominator derive descendants destructure disj disj! dissoc! distinct? doall dorun double? doubles drop-last eduction empty ensure-reduced enumeration-seq ex-cause ex-data ex-info ex-info? ex-message find float? floats force halt-when hash-combine hash-map hash-ordered-coll hash-set hash-unordered-coll ident? ifn? indexed? infinite? inst-ms inst? integer? ints isa? iterator-seq key keyword keyword-identical? list* list? longs macrofy map-entry? memfn munge nat-int? neg-int? not-any? not-every? nthnext nthrest numerator numeric= object? parents persistent! pop pop! pos-int? pr prefers println-str prn-str promise qualified-ident? qualified-keyword? qualified-symbol? rand rand-nth random-sample ratio? rational? rationalize re-groups re-matcher record? reduce-kv reduced reduced? reductions replace replicate resolve reversible? rseq rsubseq run! seq-to-map-for-destructuring seque set set? short shorts shuffle simple-ident? simple-keyword? simple-symbol? some-search sort sort-by sorted-map sorted-map-by sorted-map? sorted-set sorted-set-by sorted-set? special-symbol? split-at split-with str-join str-replace-all str-replace-first str-split subseq supers symbol tagged-literal tagged-literal? take-last test transduce unchecked-add unchecked-byte unchecked-char unchecked-dec unchecked-divide-int unchecked-double unchecked-float unchecked-inc unchecked-int unchecked-multiply unchecked-negate unchecked-remainder-int unchecked-short unchecked-subtract undefined? underive uri? uuid? val vector volatile! volatile? xml-seq
