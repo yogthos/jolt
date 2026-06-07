@@ -106,3 +106,22 @@
   (let [binds (reduce (fn [acc spec] (conj (conj acc (first spec)) `(fn* ~@(rest spec))))
                       [] fnspecs)]
     `(let* [~@binds] ~@body)))
+
+;; condp: clauses are test-expr result-expr, or test-expr :>> result-fn (calls
+;; result-fn on the truthy (pred test-expr value)); a lone trailing expr is the
+;; default. The recursive emit builds a nested if chain.
+(defmacro condp [pred expr & clauses]
+  (let [gp (fresh-sym) ge (fresh-sym)
+        emit (fn emit [args]
+               (let [n (if (= :>> (second args)) 3 2)
+                     clause (take n args)
+                     more (drop n args)
+                     cn (count clause)]
+                 (cond
+                   (= 0 cn) `(throw (ex-info (str "No matching clause: " ~ge) {}))
+                   (= 1 cn) (first clause)
+                   (= 2 cn) `(if (~gp ~(first clause) ~ge) ~(second clause) ~(emit more))
+                   :else `(if-let [p# (~gp ~(first clause) ~ge)]
+                            (~(nth clause 2) p#)
+                            ~(emit more)))))]
+    `(let [~gp ~pred ~ge ~expr] ~(emit clauses))))

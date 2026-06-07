@@ -2150,25 +2150,6 @@
       nil]])
 
 
-(defn core-condp
-  "Macro: (condp pred expr clause1 val1 ... default)"
-  [pred expr & clauses]
-  (def g (gensym))
-  (defn build [cls]
-    (if (= 0 (length cls))
-      nil
-      (if (= 1 (length cls))
-        (first cls)
-        (let [c (first cls)
-              v (first (tuple/slice cls 1))]
-          @[{:jolt/type :symbol :ns nil :name "if"}
-            (if (and (struct? c) (= :symbol (c :jolt/type)) (= ":>>" (c :name)))
-              @[v g]
-              @[pred c g])
-            v
-            (build (tuple/slice cls 2))]))))
-  @[{:jolt/type :symbol :ns nil :name "let*"} @[g expr] (build clauses)])
-
 (defn core-for
   "Macro: (for [binding-form coll :when test :let [bindings]] body)
    List comprehension. Basic support for :when and :let."
@@ -3645,7 +3626,6 @@
     "when" core-when
     "when-not" core-when-not
     "when-let" core-when-let
-    "condp" core-condp
     "->" core-thread-first
     "->>" core-thread-last
     "cond->" core-cond->
@@ -3730,7 +3710,7 @@
 (defn core-macro-names
   "Set of core binding names that are macros."
   []
-  @{"and" true "or" true "cond" true "case" true "for" true "when" true "when-not" true "when-let" true "defn" true "defn-" true "declare" true "fn" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "binding" true "lazy-seq" true "lazy-cat" true "condp" true "cond->" true "->" true "->>" true "doseq" true})
+  @{"and" true "or" true "cond" true "case" true "for" true "when" true "when-not" true "when-let" true "defn" true "defn-" true "declare" true "fn" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "binding" true "lazy-seq" true "lazy-cat" true "cond->" true "->" true "->>" true "doseq" true})
 
 (def init-core!
   (fn [& args]

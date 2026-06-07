@@ -64,4 +64,8 @@
   ["delay forces once"   "1"      "(let [c (atom 0) d (delay (swap! c inc))] @d @d @c)"]
   ["future deref"        "9"      "(deref (future (* 3 3)))"]
   ["letfn simple"        "25"     "(letfn [(sq [x] (* x x))] (sq 5))"]
-  ["letfn mutual"        "true"   "(letfn [(ev? [n] (if (zero? n) true (od? (dec n)))) (od? [n] (if (zero? n) false (ev? (dec n))))] (ev? 8))"])
+  ["letfn mutual"        "true"   "(letfn [(ev? [n] (if (zero? n) true (od? (dec n)))) (od? [n] (if (zero? n) false (ev? (dec n))))] (ev? 8))"]
+  ["condp match"         ":two"   "(condp = 2 1 :one 2 :two 3 :three)"]
+  ["condp default"       ":else"  "(condp = 9 1 :one 2 :two :else)"]
+  ["condp :>> form"      "\"got 2\"" "(condp some [1 2 3] #{0 9} :>> (fn [x] (str \"got \" x)) #{2 6} :>> (fn [x] (str \"got \" x)))"]
+  ["condp no match"      ":threw" "(try (condp = 9 1 :one) (catch :default e :threw))"])
