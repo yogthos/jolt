@@ -121,3 +121,22 @@
 (defn completing
   ([f] (completing f identity))
   ([f cf] (fn ([] (f)) ([x] (cf x)) ([x y] (f x y)))))
+
+;; Canonical loop form: short-circuits on an empty/nil coll before examining n
+;; (so (nthrest nil n) is nil without a number check), matching Clojure.
+(defn nthrest [coll n]
+  (loop [n n xs coll]
+    (if (and (pos? n) (seq xs))
+      (recur (dec n) (rest xs))
+      xs)))
+
+(defn abs [x] (if (neg? x) (- 0 x) x))
+
+(defn NaN? [x]
+  (if (number? x) (not (= x x)) (throw (str "NaN? requires a number"))))
+
+;; No distinct host object / undefined types on Jolt.
+(defn object? [x] false)
+(defn undefined? [x] false)
+
+(defn keyword-identical? [a b] (= a b))

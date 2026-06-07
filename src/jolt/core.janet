@@ -223,7 +223,6 @@
 (defn core-max [& args] (each x args (need-num x "max")) (apply max args))
 (defn core-min [& args] (each x args (need-num x "min")) (apply min args))
 
-(defn core-abs [x] (if (neg? x) (- 0 x) x))
 (defn core-rand [] (math/random))
 (defn core-rand-int [n] (math/floor (* (math/random) n)))
 
@@ -3071,13 +3070,6 @@
       (var i 0) (while (< i (length c)) (array/push r (in c i)) (+= i n))
       (tuple/slice (tuple ;r)))))
 
-(defn core-nthrest [coll n]
-  (when (not (number? n)) (error "nthrest requires a numeric count"))
-  (if (nil? coll) nil
-    (let [c (realize-for-iteration coll)
-          start (max 0 (min n (length c)))]   # negative n -> whole coll
-      (tuple/slice (tuple ;(array/slice c start))))))
-
 # filterv now lives in the Clojure collection tier (core/20-coll.clj).
 
 # mapv lives in the Clojure kernel tier — core/00-kernel.clj.
@@ -3278,7 +3270,6 @@
 (defn core-construct-proxy [c & args] (error "construct-proxy: not supported in Jolt"))
 (defn core-init-proxy [proxy mappings] proxy)
 (defn core-get-proxy-class [& interfaces] (error "get-proxy-class: not supported in Jolt"))
-(defn core-undefined? [x] false)
 
 (def- char-escapes
   {10 "\\n" 9 "\\t" 13 "\\r" 12 "\\f" 8 "\\b" 34 "\\\"" 92 "\\\\"})
@@ -3362,7 +3353,6 @@
 (defn core-double? [x] (and (number? x) (not (intval? x))))
 (defn core-float? [x] (and (number? x) (not (intval? x))))
 (defn core-infinite? [x] (and (number? x) (= (math/abs x) math/inf)))
-(defn core-NaN? [x] (if (number? x) (not= x x) (error "NaN? requires a number")))
 # Jolt has no ratio type, so numerator/denominator have no valid input (Clojure
 # requires a Ratio and throws otherwise).
 (defn core-numerator [x] (error "numerator requires a ratio (Jolt has no ratios)"))
@@ -3393,8 +3383,6 @@
 
 (defn core-comparator [pred]
   (fn [a b] (cond (truthy? (pred a b)) -1 (truthy? (pred b a)) 1 true 0)))
-(defn core-keyword-identical? [a b] (= a b))
-(defn core-object? [x] false)
 (defn core-tagged-literal [tag form] @{:jolt/type :jolt/tagged-literal :tag tag :form form})
 (defn core-ensure-reduced [x] (if (core-reduced? x) x (core-reduced x)))
 (defn core-halt-when [pred & rest]
@@ -3586,7 +3574,6 @@
     "quot" core-quot
     "max" core-max
     "min" core-min
-    "abs" core-abs
     "rand" core-rand
     "rand-int" core-rand-int
     "=" core-=
@@ -3647,7 +3634,6 @@
     "double?" core-double?
     "float?" core-float?
     "infinite?" core-infinite?
-    "NaN?" core-NaN?
     "numerator" core-numerator
     "denominator" core-denominator
     "list*" core-list*
@@ -3662,8 +3648,6 @@
     "future-cancel" core-future-cancel
     "future-cancelled?" core-future-cancelled?
     "comparator" core-comparator
-    "keyword-identical?" core-keyword-identical?
-    "object?" core-object?
     "tagged-literal" core-tagged-literal
     "ensure-reduced" core-ensure-reduced
     "unreduced" core-unreduced
@@ -3718,7 +3702,6 @@
     "reduced" core-reduced
     "reduced?" core-reduced?
     "take-nth" core-take-nth
-    "nthrest" core-nthrest
     "empty" core-empty
     "rseq" core-rseq
     "shuffle" core-shuffle
@@ -3886,7 +3869,6 @@
     "construct-proxy" core-construct-proxy
     "init-proxy" core-init-proxy
     "get-proxy-class" core-get-proxy-class
-    "undefined?" core-undefined?
     "char-escape-string" core-char-escape-string
     "char-name-string" core-char-name-string
     "subseq" core-subseq
