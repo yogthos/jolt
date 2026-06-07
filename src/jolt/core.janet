@@ -2235,85 +2235,6 @@
 
 # declare macro — accepts symbols, does nothing (forward declaration)
 
-# --- Destructuring expansion (Clojure's `destructure`) -----------------------
-# Expands a binding vector containing destructuring patterns into a plain binding
-# vector (alternating plain-symbol / init-form), using nth/nthnext/get. Shared by
-# let/loop/fn so BOTH the interpreter and the compiler see only plain bindings —
-# the compiler can then compile destructuring (it never sees a pattern), and the
-# kernel needn't destructure at runtime. Mirrors evaluator/destructure-bind.
-
-(defn- d-sym [name] {:jolt/type :symbol :ns nil :name name})
-(defn- d-amp? [x] (and (struct? x) (= :symbol (x :jolt/type)) (= "&" (x :name))))
-(defn- d-plain-sym? [x] (and (struct? x) (= :symbol (x :jolt/type))))
-
-(defn- d-find-or [or-map nm]
-  # [has-default default-form] for binding name nm in an :or map
-  (var found false) (var dv nil)
-  (when or-map
-    (each k (keys or-map)
-      (when (and (d-plain-sym? k) (= nm (k :name)))
-        (set found true) (set dv (get or-map k)))))
-  [found dv])
-
-(var d-process nil)
-
-(defn- d-vec [pat g out]
-  (var i 0) (var idx 0) (def n (length pat))
-  (while (< i n)
-    (def elem (in pat i))
-    (cond
-      (d-amp? elem)
-        (do (d-process (in pat (+ i 1)) @[(d-sym "nthnext") g idx] out) (+= i 2))
-      (= elem :as)
-        (do (d-process (in pat (+ i 1)) g out) (+= i 2))
-      true
-        (do (d-process elem @[(d-sym "nth") g idx nil] out) (++ idx) (++ i)))))
-
-(defn- d-map [pat g out]
-  (def or-map (get pat :or))
-  (def as-sym (get pat :as))
-  (when as-sym (array/push out as-sym) (array/push out g))
-  (each spec [[:keys :kw] [:strs :str] [:syms :sym]]
-    (def kw (in spec 0)) (def kind (in spec 1)) (def names (get pat kw))
-    (when names
-      (each s names
-        (def is-sym (d-plain-sym? s))
-        (def local (if is-sym (s :name) (string s)))
-        # A namespaced symbol in :keys/:syms (x/y) looks up the namespaced key
-        # but binds the bare local y.
-        (def nsp (and is-sym (s :ns)))
-        (def keyform (case kind
-                       :kw (keyword (if nsp (string nsp "/" local) local))
-                       :str local
-                       :sym @[(d-sym "quote") {:jolt/type :symbol :ns nsp :name local}]))
-        (def fo (d-find-or or-map local))
-        (array/push out (d-sym local))
-        (array/push out (if (in fo 0)
-                          @[(d-sym "get") g keyform (in fo 1)]
-                          @[(d-sym "get") g keyform])))))
-  (each k (keys pat)
-    (when (not (keyword? k))   # explicit {pattern key-expr}
-      (d-process k @[(d-sym "get") g (get pat k)] out))))
-
-(set d-process
-  (fn dp [pat init out]
-    (cond
-      (d-plain-sym? pat) (do (array/push out pat) (array/push out init))
-      (tuple? pat) (let [g (gensym "_d__")]
-                     (array/push out g) (array/push out init) (d-vec pat g out))
-      (and (struct? pat) (nil? (pat :jolt/type)))
-        (let [g (gensym "_d__")]
-          (array/push out g) (array/push out init) (d-map pat g out))
-      (error "unsupported destructuring pattern"))))
-
-(defn core-destructure
-  "Clojure `destructure`: binding vector with patterns -> plain binding vector."
-  [bindings]
-  (def out @[])
-  (var i 0) (def n (length bindings))
-  (while (< i n) (d-process (in bindings i) (in bindings (+ i 1)) out) (+= i 2))
-  (tuple/slice out))
-
 # Build a protocol value (a self-evaluating tagged table). Exposed so the overlay
 # `defprotocol` can construct one via a fn call rather than embedding a tagged
 # struct literal (which the interpreter would try to re-evaluate). `methods` is a
@@ -3183,7 +3104,6 @@
     "remove-all-methods" core-remove-all-methods
     "prefer-method" core-prefer-method
     "Object" core-Object
-    "destructure" core-destructure
     "make-protocol" core-make-protocol
     "satisfies?" core-satisfies?
     "extends?" core-extends?

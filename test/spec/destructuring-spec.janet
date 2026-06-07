@@ -35,7 +35,10 @@
   [":strs"              "7"      "(let [{:strs [a]} {\"a\" 7}] a)"]
   [":syms"              "8"      "(let [{:syms [a]} {(quote a) 8}] a)"]
   ["namespaced :keys"   "3"      "(let [{:keys [x/y]} {:x/y 3}] y)"]
-  ["namespaced :syms"   "4"      "(let [{:syms [p/q]} {(quote p/q) 4}] q)"])
+  ["namespaced :syms"   "4"      "(let [{:syms [p/q]} {(quote p/q) 4}] q)"]
+  # :keys also accepts keyword elements ({:keys [:a :b]}), binding bare locals.
+  ["keyword :keys"      "3"      "(let [{:keys [:a :b]} {:a 1 :b 2}] (+ a b))"]
+  ["keyword :keys ns"   "3"      "(let [{:keys [:x/y]} {:x/y 3}] y)"])
 
 (defspec "destructure / keyword args (& {:keys})"
   ["fn kwargs"          "[1 2]"  "(do (defn f [& {:keys [a b]}] [a b]) (f :a 1 :b 2))"]

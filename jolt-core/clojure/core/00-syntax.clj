@@ -60,14 +60,99 @@
 ;; pending cells (matching the prior Janet macro).
 (defmacro declare [& syms] `(do))
 
+;; destructure — Clojure's binding-vector expander, ported from the Janet seed
+;; (was core-destructure). Turns a binding vector that may contain destructuring
+;; patterns into a plain binding vector (alternating symbol / init-form) built from
+;; nth/nthnext/get, so the COMPILER only ever sees plain symbols (analyze-bindings
+;; rejects patterns). `let` consumes it directly; `loop`/`fn` reuse it transitively
+;; through `let`. Written with let*/fn* and seed primitives only — it never uses
+;; let/loop/fn, so expanding its own body can't recurse back into destructure.
+;; Note map? is true for symbol structs too, so the symbol? clause must come first.
+;; def+fn* (not defn) because the defn macro is not defined until later in the tier.
+(def destructure
+ (fn* destructure [bindings]
+  (let* [find-or
+           (fn* [or-map nm]
+             (reduce (fn* [acc k]
+                       (if (and (symbol? k) (= nm (name k)))
+                         [true (get or-map k)]
+                         acc))
+                     [false nil]
+                     (if or-map (keys or-map) [])))
+         amp? (fn* [x] (and (symbol? x) (= "&" (name x))))
+         proc
+           (fn* proc [pat init acc]
+             (cond
+               (symbol? pat) (conj (conj acc pat) init)
+               (vector? pat)
+                 (let* [g (symbol (str (gensym)))
+                        n (count pat)
+                        vloop
+                          (fn* vloop [i idx a]
+                            (if (< i n)
+                              (let* [elem (nth pat i)]
+                                (cond
+                                  (amp? elem)
+                                    (vloop (+ i 2) idx (proc (nth pat (inc i)) `(nthnext ~g ~idx) a))
+                                  (= elem :as)
+                                    (vloop (+ i 2) idx (proc (nth pat (inc i)) g a))
+                                  :else
+                                    (vloop (inc i) (inc idx) (proc elem `(nth ~g ~idx nil) a))))
+                              a))]
+                   (vloop 0 0 (conj (conj acc g) init)))
+               (map? pat)
+                 (let* [g (symbol (str (gensym)))
+                        or-map (get pat :or)
+                        as-sym (get pat :as)
+                        base (if as-sym
+                               (conj (conj (conj (conj acc g) init) as-sym) g)
+                               (conj (conj acc g) init))
+                        group
+                          (fn* [a kw kind]
+                            (let* [names (get pat kw)]
+                              (if names
+                                (reduce
+                                  ;; s is a symbol (a b) or a keyword (:a :b); name/
+                                  ;; namespace handle both, so :keys [:major] binds
+                                  ;; `major` looking up :major (str would keep the colon).
+                                  (fn* [aa s]
+                                    (let* [local (name s)
+                                           nsp (namespace s)
+                                           keyform (cond
+                                                     (= kind :kw) (keyword (if nsp (str nsp "/" local) local))
+                                                     (= kind :str) local
+                                                     :else `(quote ~(symbol nsp local)))
+                                           fo (find-or or-map local)]
+                                      (conj (conj aa (symbol local))
+                                            (if (nth fo 0)
+                                              `(get ~g ~keyform ~(nth fo 1))
+                                              `(get ~g ~keyform)))))
+                                  a names)
+                                a)))
+                        g1 (group base :keys :kw)
+                        g2 (group g1 :strs :str)
+                        g3 (group g2 :syms :sym)]
+                   (reduce (fn* [a k]
+                             (if (keyword? k)
+                               a
+                               (proc k `(get ~g ~(get pat k)) a)))
+                           g3 (keys pat)))
+               :else (throw (str "unsupported destructuring pattern"))))
+         ploop
+           (fn* ploop [i acc]
+             (if (< i (count bindings))
+               (ploop (+ i 2) (proc (nth bindings i) (nth bindings (inc i)) acc))
+               acc))]
+    (ploop 0 []))))
+
 ;; let desugars destructuring patterns to plain bindings (via destructure) so the
 ;; COMPILER sees only plain symbols — analyze-bindings rejects patterns as
 ;; uncompilable, relying on this macro to have expanded them. (The interpreter
 ;; could destructure let* directly, but the compiler can't.) let* is sequential, so
-;; a later init can reference an earlier destructured name. destructure is a
-;; clojure.core fn; calling it at expansion time is fine — it's interned at init.
+;; a later init can reference an earlier destructured name. Splice via [~@..] so the
+;; binding vector is a tuple form (destructure returns a pvec), not a pvec literal.
 (defmacro let [bindings & body]
-  `(let* ~(destructure bindings) ~@body))
+  `(let* [~@(destructure bindings)] ~@body))
 
 ;; loop binds destructuring forms like let, but recur must target the loop* vars,
 ;; whose count can't change. So (matching Clojure): gensym one loop var per binding,
