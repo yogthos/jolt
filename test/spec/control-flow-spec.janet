@@ -69,7 +69,11 @@
   ["for :while"         "[0 1 2]" "(for [x (range 10) :while (< x 3)] x)"]
   ["for :let"           "[0 1 4]" "(for [x (range 3) :let [sq (* x x)]] sq)"]
   ["doseq side-effect"  "6"      "(let [a (atom 0)] (doseq [x [1 2 3]] (swap! a (fn [v] (+ v x)))) @a)"]
-  ["doseq nested"       "4"      "(let [c (atom 0)] (doseq [x [1 2] y [10 20]] (swap! c inc)) @c)"])
+  ["doseq nested"       "4"      "(let [c (atom 0)] (doseq [x [1 2] y [10 20]] (swap! c inc)) @c)"]
+  ["doseq :when"        "[1 3]"  "(let [a (atom [])] (doseq [x [1 2 3] :when (odd? x)] (swap! a conj x)) @a)"]
+  ["doseq :while"       "6"      "(let [a (atom 0)] (doseq [x (range 10) :while (< x 4)] (swap! a + x)) @a)"]
+  ["doseq :let"         "[0 1 4]" "(let [a (atom [])] (doseq [x (range 3) :let [sq (* x x)]] (swap! a conj sq)) @a)"]
+  ["doseq returns nil"  "nil"    "(doseq [x [1 2 3]] x)"])
 
 (defspec "control / threading"
   ["->"                 "6"      "(-> 1 inc (+ 4))"]

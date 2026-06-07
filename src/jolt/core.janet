@@ -2364,13 +2364,6 @@
 
 # doseq — like `for` but eager and returns nil. Reuse `for`, force realization
 # with `count`, discard the result.
-(defn core-doseq [bindings & body]
-  (def for-body @[{:jolt/type :symbol :ns nil :name "do"} ;body nil])
-  @[{:jolt/type :symbol :ns nil :name "do"}
-    @[{:jolt/type :symbol :ns nil :name "count"}
-      @[{:jolt/type :symbol :ns nil :name "for"} bindings for-body]]
-    nil])
-
 # assert — (assert x) / (assert x message). Throws when x is falsy.
 
 # resolve stub — returns nil (symbols not found in Jolt's clojure.core)
@@ -3174,7 +3167,6 @@
     "pop" core-pop
     "trampoline" core-trampoline
     "format" core-format
-    "doseq" core-doseq
     "first" core-first
     "rest" core-rest
     "next" core-next
@@ -3562,7 +3554,7 @@
 (defn core-macro-names
   "Set of core binding names that are macros."
   []
-  @{"for" true "when-let" true "defn" true "defn-" true "fn" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "lazy-seq" true "lazy-cat" true "doseq" true})
+  @{"for" true "when-let" true "defn" true "defn-" true "fn" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "lazy-seq" true "lazy-cat" true})
 
 (def init-core!
   (fn [& args]

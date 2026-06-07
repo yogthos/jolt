@@ -95,3 +95,9 @@
                     (first cls)
                     `(if ~(mk-test (first cls)) ~(nth cls 1) ~(build (drop 2 cls))))))]
     `(let* [~g ~expr] ~(build clauses))))
+
+;; doseq runs body for side effects across the bindings, returning nil. Same
+;; shortcut as the prior Janet macro: realize a `for` comprehension with count
+;; (for handles :when/:let/:while and multiple bindings).
+(defmacro doseq [bindings & body]
+  `(do (count (for ~bindings (do ~@body nil))) nil))
