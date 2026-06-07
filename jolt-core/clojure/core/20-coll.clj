@@ -143,3 +143,28 @@
 (defn undefined? [x] false)
 
 (defn keyword-identical? [a b] (= a b))
+
+(defn comparator [pred]
+  (fn [a b] (cond (pred a b) -1 (pred b a) 1 :else 0)))
+
+;; Eager (Jolt has no laziness yet): a vector of the running accumulators.
+(defn reductions
+  ([f coll]
+   (let [s (seq coll)]
+     (if s
+       (reductions f (first s) (rest s))
+       (list (f)))))
+  ([f init coll]
+   (loop [acc init xs (seq coll) out [init]]
+     (if xs
+       (let [a (f acc (first xs))] (recur a (next xs) (conj out a)))
+       out))))
+
+;; Eager pre-order DFS (Clojure's is lazy; same order, fully realized here).
+(defn tree-seq [branch? children root]
+  (let [walk (fn walk [acc node]
+               (let [acc (conj acc node)]
+                 (if (branch? node)
+                   (reduce walk acc (children node))
+                   acc)))]
+    (walk [] root)))

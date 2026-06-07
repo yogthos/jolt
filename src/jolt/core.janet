@@ -1254,21 +1254,6 @@
       (+= i n))
     result))
 
-(defn core-reductions
-  "(reductions f coll) or (reductions f init coll) -> seq of intermediate accs."
-  [f init-or-coll &opt maybe-coll]
-  (let [has-init (not (nil? maybe-coll))
-        coll (realize-for-iteration (if has-init maybe-coll init-or-coll))
-        result @[]]
-    (if has-init
-      (do (var acc init-or-coll) (array/push result acc)
-          (each x coll (set acc (f acc x)) (array/push result acc)))
-      (when (> (length coll) 0)
-        (var acc (in coll 0)) (array/push result acc)
-        (var i 1)
-        (while (< i (length coll)) (set acc (f acc (in coll i))) (array/push result acc) (++ i))))
-    (tuple/slice (tuple ;result))))
-
 (defn core-dedupe [coll]
   (let [c (realize-for-iteration coll) result @[]]
     (var prev :jolt/none)
@@ -3318,14 +3303,6 @@
 (defn core-dorun [a & rest]
   (let [coll (if (= 0 (length rest)) a (in rest 0))]
     (realize-for-iteration coll) nil))
-(defn core-tree-seq [branch? children root]
-  (def out @[])
-  (defn walk [node]
-    (array/push out node)
-    (when (truthy? (branch? node))
-      (each c (realize-for-iteration (children node)) (walk c))))
-  (walk root)
-  (tuple ;out))
 
 # Map entries (represented as 2-element vectors)
 # key/val require a map entry (a 2-element vector/tuple in Jolt); Clojure throws
@@ -3385,8 +3362,6 @@
 (defn core-promise [] (core-atom nil))
 (defn core-deliver [p v] (core-reset! p v) p)
 
-(defn core-comparator [pred]
-  (fn [a b] (cond (truthy? (pred a b)) -1 (truthy? (pred b a)) 1 true 0)))
 (defn core-tagged-literal [tag form] @{:jolt/type :jolt/tagged-literal :tag tag :form form})
 (defn core-ensure-reduced [x] (if (core-reduced? x) x (core-reduced x)))
 (defn core-halt-when [pred & rest]
@@ -3594,7 +3569,6 @@
     "contains?" core-contains?
     "count" core-count
     "partition-all" core-partition-all
-    "reductions" core-reductions
     "dedupe" core-dedupe
     "keep-indexed" core-keep-indexed
     "map-indexed" core-map-indexed
@@ -3627,7 +3601,6 @@
     "apply" core-apply
     "doall" core-doall
     "dorun" core-dorun
-    "tree-seq" core-tree-seq
     "key" core-key
     "val" core-val
     "map-entry?" core-map-entry?
@@ -3651,7 +3624,6 @@
     "future-done?" core-future-done?
     "future-cancel" core-future-cancel
     "future-cancelled?" core-future-cancelled?
-    "comparator" core-comparator
     "tagged-literal" core-tagged-literal
     "ensure-reduced" core-ensure-reduced
     "unreduced" core-unreduced

@@ -227,4 +227,11 @@
   ["replicate"                 "[:x :x :x]" "(replicate 3 :x)"]
   ["bounded-count"             "3"      "(bounded-count 3 [1 2 3 4 5])"]
   ["run! side effects"         "6"      "(let [a (atom 0)] (run! (fn [x] (swap! a + x)) [1 2 3]) @a)"]
-  ["completing wraps rf"       "3"      "((completing +) 1 2)"])
+  ["completing wraps rf"       "3"      "((completing +) 1 2)"]
+  ["comparator <"              "[1 2 3]" "(sort (comparator <) [3 1 2])"]
+  ["comparator >"              "[3 2 1]" "(sort (comparator >) [3 1 2])"]
+  ["reductions"                "[1 3 6 10]" "(reductions + [1 2 3 4])"]
+  ["reductions with init"      "[10 11 13 16]" "(reductions + 10 [1 2 3])"]
+  ["reductions empty calls f"  "[0]"    "(reductions + [])"]
+  ["reductions empty + init"   "[5]"    "(reductions + 5 [])"]
+  ["tree-seq pre-order"        "[[1 [2] 3] 1 [2] 2 3]" "(tree-seq sequential? seq [1 [2] 3])"])
