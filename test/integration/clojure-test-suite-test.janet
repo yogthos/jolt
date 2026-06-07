@@ -27,10 +27,12 @@
 # platform gap, not a regression in any previously-working behavior.
 # Raised 3913 -> 3916 with the staged-bootstrap kernel tier (ns-restore-on-throw
 # + faithful subvec coercion), then 3916 -> 3919 moving juxt/every-pred/some-fn to
-# Clojure (the canonical defs are more correct than the prior Janet ones). 3919 is
-# the stable value; runs can read 3920 when a timeout-prone test (of the 9 that
-# can time out) happens to finish, so the floor is set at the consistent 3919.
-(def baseline-pass 3919)
+# Clojure (the canonical defs are more correct than the prior Janet ones). Raised
+# 3919 -> 3926 preserving nil map values (jolt-c7h): a nil value is a present key,
+# which several suite tests assert. Runs read 3927 consistently, occasionally 3926
+# when a timeout-prone test (of the 9 that can time out) doesn't finish; floor at
+# the consistent-minus-one 3926.
+(def baseline-pass 3926)
 # A file is "clean" when it ran with zero failures AND zero errors.
 (def baseline-clean-files 45)
 # Per-file wall-clock budget (seconds). Normal files finish in well under 1s;
