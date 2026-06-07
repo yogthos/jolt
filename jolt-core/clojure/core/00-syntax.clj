@@ -35,3 +35,27 @@
   (if (empty? clauses)
     nil
     `(if ~(first clauses) ~(nth clauses 1) (cond ~@(drop 2 clauses)))))
+
+;; Threading: a list form threads x in as the first (->) or last (->>) arg; a bare
+;; symbol becomes (form x). Recursive; the expand-once cache makes that free.
+(defmacro -> [x & forms]
+  (if (empty? forms)
+    x
+    (let [form (first forms)
+          threaded (if (seq? form)
+                     `(~(first form) ~x ~@(rest form))
+                     `(~form ~x))]
+      `(-> ~threaded ~@(rest forms)))))
+
+(defmacro ->> [x & forms]
+  (if (empty? forms)
+    x
+    (let [form (first forms)
+          threaded (if (seq? form)
+                     `(~(first form) ~@(rest form) ~x)
+                     `(~form ~x))]
+      `(->> ~threaded ~@(rest forms)))))
+
+;; Forward declaration is a no-op on Jolt — the compiler resolves forward refs via
+;; pending cells (matching the prior Janet macro).
+(defmacro declare [& syms] `(do))

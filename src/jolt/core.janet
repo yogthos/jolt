@@ -2170,30 +2170,6 @@
     (build 0 (parse-groups bindings))
     body))
 
-(defn core-thread-first
-  "Macro: (-> x & forms) — thread first"
-  [x & forms]
-  (if (= 0 (length forms)) x
-    (let [f (first forms)
-          rest-forms (tuple/slice forms 1)]
-      (if (array? f)
-        (apply core-thread-first [(let [arr (array/slice f)]
-                         (array/insert arr 1 x)
-                         arr) ;rest-forms])
-        (apply core-thread-first [@[f x] ;rest-forms])))))
-
-(defn core-thread-last
-  "Macro: (->> x & forms) — thread last"
-  [x & forms]
-  (if (= 0 (length forms)) x
-    (let [f (first forms)
-          rest-forms (tuple/slice forms 1)]
-      (if (array? f)
-        (apply core-thread-last [(let [arr (array/slice f)]
-                          (array/push arr x)
-                          arr) ;rest-forms])
-        (apply core-thread-last [@[f x] ;rest-forms])))))
-
 (defn core-cond->
   "Macro: (cond-> expr test form ...) — thread first only when test is true"
   [expr & clauses]
@@ -2494,8 +2470,6 @@
 (defn core-avoid-method-too-large [& args] @{})
 
 # declare macro — accepts symbols, does nothing (forward declaration)
-(defn core-declare [& syms]
-  @[{:jolt/type :symbol :ns nil :name "do"}])
 
 (defn core-fn
   "Macro: (fn [args] body) → (fn* [args] body)"
@@ -3563,8 +3537,6 @@
     "case" core-case
     "for" core-for
     "when-let" core-when-let
-    "->" core-thread-first
-    "->>" core-thread-last
     "cond->" core-cond->
     "defn" core-defn
     "defn-" core-defn-
@@ -3581,7 +3553,6 @@
     "remove-all-methods" core-remove-all-methods
     "prefer-method" core-prefer-method
     "Object" core-Object
-    "declare" core-declare
     "fn" core-fn
     "let" core-let
     "loop" core-loop
@@ -3646,7 +3617,7 @@
 (defn core-macro-names
   "Set of core binding names that are macros."
   []
-  @{"case" true "for" true "when-let" true "defn" true "defn-" true "declare" true "fn" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "lazy-seq" true "lazy-cat" true "cond->" true "->" true "->>" true "doseq" true})
+  @{"case" true "for" true "when-let" true "defn" true "defn-" true "fn" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "lazy-seq" true "lazy-cat" true "cond->" true "doseq" true})
 
 (def init-core!
   (fn [& args]
