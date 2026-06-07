@@ -34,6 +34,14 @@
 
 (var eval-form nil)
 
+# Macro expansion cache (interpreter): a macro CALL form expands ONCE and the
+# result is reused — macroexpansion is a compile-time step with zero runtime cost,
+# the proper Lisp model. Keyed by the call form's identity (a fn body re-evaluates
+# the same form arrays each call). Also gives compile-once gensym semantics (a
+# foo# auto-gensym is fixed across calls, unlike per-call re-expansion). Cleared
+# when a macro is (re)defined so stale expansions don't linger.
+(def macro-cache @{})
+
 # Compile hook for macro expanders: set by the api to (fn [ctx args-form body] ->
 # compiled-janet-fn | nil). When set and the body is compilable (no &env/&form,
 # analyzer available), defmacro uses the compiled expander instead of the
@@ -785,6 +793,8 @@
                        ns (ctx-find-ns ctx ns-name)]
                    (def v (ns-intern ns (name-sym :name) macro-fn))
                    (put v :macro true)
+                   # A (re)defined macro invalidates any cached expansions.
+                   (table/clear macro-cache)
                    (var-get v)))
     "ns" (let [raw-name (in form 1)
                name-sym (unwrap-meta-name raw-name)
@@ -1493,9 +1503,14 @@
             (apply ctor args))
           (let [v (resolve-var ctx bindings first-form)]
             (if (and v (var-macro? v))
-              (let [macro-fn (var-get v)
-                    args (tuple/slice form 1)]
-                (eval-form ctx bindings (apply macro-fn args)))
+              # Expand once (cached by call-form identity), then evaluate the
+              # macro-free expansion with the current bindings each call.
+              (let [cached (in macro-cache form)]
+                (if (not (nil? cached))
+                  (eval-form ctx bindings cached)
+                  (let [expanded (apply (var-get v) (tuple/slice form 1))]
+                    (put macro-cache form expanded)
+                    (eval-form ctx bindings expanded))))
               (let [f (eval-form ctx bindings first-form)
                     args (map |(eval-form ctx bindings $) (tuple/slice form 1))]
                 (jolt-invoke ctx f args)))))))
