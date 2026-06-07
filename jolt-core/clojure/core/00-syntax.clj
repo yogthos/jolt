@@ -321,3 +321,12 @@
 ;; (for handles :when/:let/:while and multiple bindings).
 (defmacro doseq [bindings & body]
   `(do (count (for ~bindings (do ~@body nil))) nil))
+
+;; when-let must live in this (early) tier, not 30-macros with its if-let/if-some/
+;; when-some siblings: 20-coll uses it (not-empty), and 20-coll loads before 30. The
+;; name binds only in the taken branch (temp# tests the value); via `let` so the
+;; binding form may itself destructure, matching Clojure.
+(defmacro when-let [bindings & body]
+  (let [form (bindings 0) tst (bindings 1)]
+    `(let [temp# ~tst]
+       (if temp# (let [~form temp#] ~@body) nil))))

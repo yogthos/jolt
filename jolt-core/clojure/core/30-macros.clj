@@ -25,6 +25,8 @@
     `(let [temp# ~tst]
        (if temp# (let [~form temp#] ~then) ~else))))
 
+;; when-let lives in 00-syntax (not here): 20-coll uses it, which loads before this tier.
+
 (defmacro if-some [bindings then & [else]]
   (let [form (bindings 0) tst (bindings 1)]
     `(let [temp# ~tst]

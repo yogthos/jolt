@@ -2048,23 +2048,8 @@
   {:jolt/type :symbol :ns nil :name (string prefix-string n)})
 
 
-# if-let / when-let / if-some / when-some bind the name ONLY in the then/body
-# branch — the else branch must see the surrounding scope, not the binding (so
-# (let [x 5] (if-let [x nil] x x)) returns 5, like Clojure). Achieved with a fresh
-# temp around the if; the name is rebound to the temp inside the taken branch only.
-(defn- sym* [name] {:jolt/type :symbol :ns nil :name name})
-
-(defn core-when-let
-  "Macro: (when-let [binding val-expr] & body)"
-  [bindings & body]
-  (def form-sym (in bindings 0))
-  (def val-form (in bindings 1))
-  (def temp (gensym "when_let__"))
-  @[(sym* "let*") @[temp val-form]
-    @[(sym* "if") temp
-      @[(sym* "let*") @[form-sym temp] @[(sym* "do") ;body]]
-      nil]])
-
+# if-let/when-let/if-some/when-some now live in the Clojure overlay
+# (core/30-macros.clj) as defmacros.
 
 (defn core-push-thread-bindings [b] (push-thread-bindings b))
 (defn core-pop-thread-bindings [] (pop-thread-bindings))
@@ -3090,7 +3075,6 @@
     "add-watch" core-add-watch
     "remove-watch" core-remove-watch
     "not" core-not
-    "when-let" core-when-let
     "derive" core-derive
     "isa?" core-isa?
     "parents" core-parents
@@ -3156,9 +3140,10 @@
     "*assert" true})
 
 (defn core-macro-names
-  "Set of core binding names that are macros."
+  "Set of core binding names that are macros. Empty now that every core macro
+  lives in the Clojure overlay (clojure.core.*-syntax / *-macros tiers)."
   []
-  @{"when-let" true})
+  @{})
 
 (def init-core!
   (fn [& args]
