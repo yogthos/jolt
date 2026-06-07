@@ -299,6 +299,21 @@
    ["map literal nested" "{:a {:b 2}}" "(let [y 2] {:a {:b y}})"]
    ["map literal keyfn"  "{:x 1}"  "(let [k :x] {k 1})"]
    ["map literal in fn"  "6"       "(do (defn mk [a b] {:sum (+ a b)}) (:sum (mk 2 4)))"]
+
+   ### ---- overlay migration (jolt-1j0): run in all 3 modes ----
+   # if-let/when-let bind only in the taken branch (else sees outer scope)
+   ["if-let else outer scope" "5"   "(let [x 5] (if-let [x nil] :then x))"]
+   ["if-some else outer"     "5"    "(let [x 5] (if-some [x nil] :then x))"]
+   ["when-let body multi"    "14"   "(when-let [x 7] (inc x) (* x 2))"]
+   # nthrest returns () (not nil) for an exhausted n>0 walk; coll for n<=0
+   ["nthrest exhausted"      "(quote ())"  "(nthrest nil 100)"]
+   ["nthrest n=0 keeps coll" "[1 2 3]"     "(nthrest [1 2 3] 0)"]
+   ["nthnext surprising nil" "nil"         "(nthnext nil nil)"]
+   # distinct? compares by value
+   ["distinct? equal colls"  "false" "(distinct? [1 2] [1 2])"]
+   ["not-any?"               "true"  "(not-any? even? [1 3 5])"]
+   ["take-last"              "[3 4]" "(take-last 2 [1 2 3 4])"]
+   ["replace nil val"        "[1 nil 3]" "(replace {2 nil} [1 2 3])"]
   ])
 
 # Run every case under a given context factory and return the failures. The same

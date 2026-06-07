@@ -199,3 +199,32 @@
   ["nthnext nil count"  :throws "(nthnext [0 1 2] nil)"]
   ["update vec oob"     :throws "(update [] 1 identity)"]
   ["update vec kw key"  :throws "(update [1 2 3] :k identity)"])
+
+# Regression cases for clojure.core fns moved from Janet to the Clojure overlay
+# (jolt-1j0), plus two bugs fixed in the process: nthrest returns () (not nil)
+# for an exhausted n>0 walk, and distinct? compares by VALUE (equal collections
+# are not distinct).
+(defspec "seq / overlay-migrated fns"
+  ["nthrest exhausted -> ()"   "()"     "(nthrest nil 100)"]
+  ["nthrest vec exhausted"     "()"     "(nthrest [1 2 3] 100)"]
+  ["nthrest n<=0 keeps coll"   "[1 2 3]" "(nthrest [1 2 3] 0)"]
+  ["nthrest drops n"           "[3 4 5]" "(nthrest [1 2 3 4 5] 2)"]
+  ["nthnext exhausted -> nil"  "nil"    "(nthnext [1 2] 5)"]
+  ["nthnext surprising nil"    "nil"    "(nthnext nil nil)"]
+  ["nthnext drops n"           "[3 4]"  "(nthnext [1 2 3 4] 2)"]
+  ["distinct? distinct"        "true"   "(distinct? 1 2 3)"]
+  ["distinct? dup"             "false"  "(distinct? 1 2 1)"]
+  ["distinct? equal colls"     "false"  "(distinct? [1 2] [1 2])"]
+  ["distinct? single"          "true"   "(distinct? 5)"]
+  ["replace maps elements"     "[:a 2 :c 2]" "(replace {1 :a 3 :c} [1 2 3 2])"]
+  ["replace preserves nil val" "[1 nil 3]"   "(replace {2 nil} [1 2 3])"]
+  ["take-last"                 "[3 4]"  "(take-last 2 [1 2 3 4])"]
+  ["take-last empty -> nil"    "nil"    "(take-last 2 [])"]
+  ["take-last n>len"           "[1 2]"  "(take-last 9 [1 2])"]
+  ["drop-last default 1"       "[1 2]"  "(drop-last [1 2 3])"]
+  ["drop-last n"               "[1 2]"  "(drop-last 2 [1 2 3 4])"]
+  ["split-with"                "[[2 4] [5 6]]" "(split-with even? [2 4 5 6])"]
+  ["replicate"                 "[:x :x :x]" "(replicate 3 :x)"]
+  ["bounded-count"             "3"      "(bounded-count 3 [1 2 3 4 5])"]
+  ["run! side effects"         "6"      "(let [a (atom 0)] (run! (fn [x] (swap! a + x)) [1 2 3]) @a)"]
+  ["completing wraps rf"       "3"      "((completing +) 1 2)"])

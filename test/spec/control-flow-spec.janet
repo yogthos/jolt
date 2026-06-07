@@ -44,6 +44,22 @@
   ["if-some zero"       "1"      "(if-some [x 0] (inc x) :none)"]
   ["when-some nil"      "nil"    "(when-some [x nil] x)"])
 
+# Regression: if-let/when-let/if-some/when-some bind the name ONLY in the
+# then/body branch. The else branch (and a falsy when-let body, which there is
+# none of) must see the surrounding scope, not the binding — so the else of
+# (let [x 5] (if-let [x nil] ...)) sees x=5, like Clojure. (Previously the macros
+# wrapped the whole `if` in the binding's let*, leaking it into the else.)
+(defspec "control / conditional-binding scope"
+  ["if-let else sees outer"    "5"   "(let [x 5] (if-let [x nil] :then x))"]
+  ["if-let then binds"         "7"   "(let [x 5] (if-let [x 7] x :else))"]
+  ["if-some else sees outer"   "5"   "(let [x 5] (if-some [x nil] :then x))"]
+  ["if-some binds false"       "false" "(if-some [x false] x :else)"]
+  ["when-let else via or"      "5"   "(let [x 5] (or (when-let [x nil] x) x))"]
+  ["when-let multi-form body"  "14"  "(when-let [x 7] (inc x) (* x 2))"]
+  ["if-let in fn param"        "9"   "((fn [xs] (if-let [xs nil] :then xs)) 9)"]
+  ["when-some binds zero"      "1"   "(when-some [x 0] (inc x))"]
+  ["if-let evals test once"    "1"   "(let [c (atom 0)] (if-let [v (do (swap! c inc) :v)] @c :none))"])
+
 (defspec "control / iteration"
   ["dotimes side-effect" "5"     "(let [a (atom 0)] (dotimes [i 5] (swap! a inc)) @a)"]
   ["while"              "5"      "(let [a (atom 0)] (while (< @a 5) (swap! a inc)) @a)"]

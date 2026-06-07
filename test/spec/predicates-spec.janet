@@ -59,6 +59,35 @@
   ["symbol constructor" "(quote x)" "(symbol \"x\")"]
   ["name of string"     "\"s\""  "(name \"s\")"])
 
+# Predicates moved from Janet to the Clojure overlay (jolt-1j0). Jolt has no
+# ratio/bigdecimal types (so ratio?/decimal? are always false, rational?=int?),
+# and no distinct host object/undefined types (object?/undefined? always false).
+(defspec "predicates / overlay-migrated"
+  ["not-any? true"      "true"   "(not-any? even? [1 3 5])"]
+  ["not-any? false"     "false"  "(not-any? even? [1 2 3])"]
+  ["not-every? true"    "true"   "(not-every? even? [2 4 5])"]
+  ["not-every? false"   "false"  "(not-every? even? [2 4 6])"]
+  ["ident? number"      "false"  "(ident? 1)"]
+  ["qualified-ident?"   "true"   "(qualified-ident? :a/b)"]
+  ["qualified-ident? no" "false" "(qualified-ident? :a)"]
+  ["simple-ident?"      "true"   "(simple-ident? :a)"]
+  ["ratio?"             "false"  "(ratio? 3)"]
+  ["decimal?"           "false"  "(decimal? 3)"]
+  ["rational? int"      "true"   "(rational? 3)"]
+  ["rational? float"    "false"  "(rational? 3.5)"]
+  ["nat-int? zero"      "true"   "(nat-int? 0)"]
+  ["nat-int? neg"       "false"  "(nat-int? -1)"]
+  ["pos-int?"           "true"   "(pos-int? 5)"]
+  ["neg-int?"           "true"   "(neg-int? -3)"]
+  ["NaN? on nan"        "true"   "(NaN? (/ 0.0 0.0))"]
+  ["NaN? on number"     "false"  "(NaN? 5)"]
+  ["abs negative"       "3"      "(abs -3)"]
+  ["abs positive"       "2.5"    "(abs 2.5)"]
+  ["object?"            "false"  "(object? 1)"]
+  ["undefined?"         "false"  "(undefined? 1)"]
+  ["keyword-identical?" "true"   "(keyword-identical? :a :a)"]
+  ["keyword-identical? no" "false" "(keyword-identical? :a :b)"])
+
 (defspec "predicates / equality & identity"
   ["= same"             "true"   "(= 1 1)"]
   ["= vectors"          "true"   "(= [1 2] [1 2])"]
