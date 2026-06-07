@@ -2092,14 +2092,6 @@
             (build (tuple/slice cls 2))]))))
   @[{:jolt/type :symbol :ns nil :name "let*"} @[g expr] (build clauses)])
 
-(defn core-when
-  "Macro: (when test & body) -> (if test (do body...))"
-  [test & body]
-  (def arr (array ;body))
-  (array/insert arr 0 {:jolt/type :symbol :ns nil :name "do"})
-  @[{:jolt/type :symbol :ns nil :name "if"}
-    test
-    arr])
 
 (defn core-when-not
   "Macro: (when-not test & body) -> (when (not test) & body)"
@@ -3598,7 +3590,6 @@
     "cond" core-cond
     "case" core-case
     "for" core-for
-    "when" core-when
     "when-not" core-when-not
     "when-let" core-when-let
     "->" core-thread-first
@@ -3684,7 +3675,7 @@
 (defn core-macro-names
   "Set of core binding names that are macros."
   []
-  @{"and" true "or" true "cond" true "case" true "for" true "when" true "when-not" true "when-let" true "defn" true "defn-" true "declare" true "fn" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "lazy-seq" true "lazy-cat" true "cond->" true "->" true "->>" true "doseq" true})
+  @{"and" true "or" true "cond" true "case" true "for" true "when-not" true "when-let" true "defn" true "defn-" true "declare" true "fn" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "lazy-seq" true "lazy-cat" true "cond->" true "->" true "->>" true "doseq" true})
 
 (def init-core!
   (fn [& args]

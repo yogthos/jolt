@@ -37,7 +37,8 @@
 # source (compiled when :compile?, interpreted otherwise — the analyzer, built
 # lazily on the first such form, sees the kernel tier already in place).
 (def- core-tiers
-  [{:ns "clojure.core.00-kernel" :kernel true}
+  [{:ns "clojure.core.00-syntax" :kernel false}
+   {:ns "clojure.core.00-kernel" :kernel true}
    {:ns "clojure.core.10-seq"    :kernel false}
    {:ns "clojure.core.20-coll"   :kernel false}
    {:ns "clojure.core.30-macros" :kernel false}])
