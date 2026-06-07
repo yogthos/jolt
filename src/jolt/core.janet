@@ -2081,63 +2081,6 @@
       nil]])
 
 
-(defn core-for
-  "Macro: (for [binding-form coll :when test :let [bindings]] body)
-   List comprehension. Basic support for :when and :let."
-  [bindings body]
-  (defn parse-groups [bvec]
-    (var groups @[])
-    (var i 0)
-    (while (< i (length bvec))
-      (def bind (bvec i))
-      (var coll (bvec (+ i 1)))
-      (def mods @[])
-      (+= i 2)
-      (while (and (< i (length bvec)) (keyword? (bvec i)))
-        (case (bvec i)
-          :when (do (array/push mods @[{:jolt/type :symbol :ns nil :name "when"} (bvec (+ i 1))]) (+= i 2))
-          :let (do (array/push mods @[{:jolt/type :symbol :ns nil :name "let"} (bvec (+ i 1))]) (+= i 2))
-          # :while terminates iteration of this binding's collection
-          :while (do (set coll @[{:jolt/type :symbol :ns nil :name "take-while"}
-                                 @[{:jolt/type :symbol :ns nil :name "fn"} [bind] (bvec (+ i 1))]
-                                 coll])
-                     (+= i 2))
-          (do (+= i 1))))
-      (array/push groups @[bind coll mods]))
-    groups)
-  (defn wrap-mods [mods inner-form]
-    (if (= 0 (length mods))
-      inner-form
-      (let [m (in mods (- (length mods) 1))
-            rest-mods (array/slice mods 0 (- (length mods) 1))
-            kind (get (m 0) :name)]
-        (wrap-mods rest-mods
-          (if (= kind "when")
-            @[{:jolt/type :symbol :ns nil :name "if"} (m 1)
-              @[{:jolt/type :symbol :ns nil :name "list"} inner-form] @[]]
-            @[{:jolt/type :symbol :ns nil :name "let*"} (m 1) inner-form])))))
-  (defn build [group-idx groups]
-    (if (>= group-idx (length groups))
-      body
-      (let [g (in groups group-idx)
-            my-bind (in g 0)
-            my-coll (in g 1)
-            my-mods (in g 2)
-            inner (build (+ group-idx 1) groups)
-            inner-form (wrap-mods my-mods inner)
-            is-last (= group-idx (- (length groups) 1))
-            has-mods (> (length my-mods) 0)]
-        (if (and is-last (not has-mods))
-          @[{:jolt/type :symbol :ns nil :name "map"}
-            @[{:jolt/type :symbol :ns nil :name "fn"} [my-bind] inner-form]
-            my-coll]
-          @[{:jolt/type :symbol :ns nil :name "mapcat"}
-            @[{:jolt/type :symbol :ns nil :name "fn"} [my-bind] inner-form]
-            my-coll]))))
-  (if (>= (length bindings) 2)
-    (build 0 (parse-groups bindings))
-    body))
-
 (defn core-push-thread-bindings [b] (push-thread-bindings b))
 (defn core-pop-thread-bindings [] (pop-thread-bindings))
 
@@ -3473,7 +3416,6 @@
     "add-watch" core-add-watch
     "remove-watch" core-remove-watch
     "not" core-not
-    "for" core-for
     "when-let" core-when-let
     "defn" core-defn
     "defn-" core-defn-
@@ -3554,7 +3496,7 @@
 (defn core-macro-names
   "Set of core binding names that are macros."
   []
-  @{"for" true "when-let" true "defn" true "defn-" true "fn" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "lazy-seq" true "lazy-cat" true})
+  @{"when-let" true "defn" true "defn-" true "fn" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "lazy-seq" true "lazy-cat" true})
 
 (def init-core!
   (fn [& args]

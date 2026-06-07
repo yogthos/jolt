@@ -96,6 +96,59 @@
                     `(if ~(mk-test (first cls)) ~(nth cls 1) ~(build (drop 2 cls))))))]
     `(let* [~g ~expr] ~(build clauses))))
 
+;; for: list comprehension, desugared to nested map/mapcat over the binding colls.
+;; Per binding group: :when wraps the inner form in (if test (list inner) []) so
+;; mapcat drops it when false; :let wraps it in a let*; :while wraps the coll in
+;; take-while. The last group with no modifiers is a plain map (no flatten needed).
+;; Faithful port of the prior Janet macro (single body expr). The body uses only
+;; kernel/seed fns so it runs at analyzer-build time. `fn` (not fn*) carries the
+;; binding so destructuring forms work.
+(defmacro for [bindings body]
+  (let [scan (fn scan [bvec i bind coll mods]
+               (if (and (< i (count bvec)) (keyword? (nth bvec i)))
+                 (let [k (nth bvec i)
+                       v (nth bvec (inc i))]
+                   (cond
+                     (= k :when)  (scan bvec (+ i 2) bind coll (conj mods [:when v]))
+                     (= k :let)   (scan bvec (+ i 2) bind coll (conj mods [:let v]))
+                     (= k :while) (scan bvec (+ i 2) bind `(take-while (fn [~bind] ~v) ~coll) mods)
+                     :else        (scan bvec (inc i) bind coll mods)))
+                 [i bind coll mods]))
+        parse-groups (fn parse-groups [bvec i groups]
+                       (if (>= i (count bvec))
+                         groups
+                         (let [r (scan bvec (+ i 2) (nth bvec i) (nth bvec (inc i)) [])]
+                           (parse-groups bvec (nth r 0)
+                                         (conj groups [(nth r 1) (nth r 2) (nth r 3)])))))
+        ;; Apply the group's modifiers around a contribution that is ALREADY a seq
+        ;; (a (list body) for the last group, an inner comprehension otherwise), so
+        ;; :when just returns it or [] — no extra (list ...) that mapcat couldn't
+        ;; flatten. :let binds around it; mods apply outer-to-inner (left to right).
+        wrap-mods (fn wrap-mods [mods inner]
+                    (if (empty? mods)
+                      inner
+                      (let [m (first mods)
+                            sub (wrap-mods (rest mods) inner)]
+                        (if (= (first m) :when)
+                          `(if ~(nth m 1) ~sub [])
+                          `(let* ~(nth m 1) ~sub)))))
+        build (fn build [idx groups]
+                (let [g (nth groups idx)
+                      my-bind (nth g 0)
+                      my-coll (nth g 1)
+                      my-mods (nth g 2)
+                      is-last (= idx (dec (count groups)))]
+                  (if (and is-last (empty? my-mods))
+                    ;; fast path: last group, no modifiers -> a plain map of body
+                    `(map (fn [~my-bind] ~body) ~my-coll)
+                    ;; general: mapcat over a seq contribution (wrap a last-group
+                    ;; body in a one-element list so mapcat yields the bodies).
+                    (let [base (if is-last `(list ~body) (build (inc idx) groups))]
+                      `(mapcat (fn [~my-bind] ~(wrap-mods my-mods base)) ~my-coll)))))]
+    (if (>= (count bindings) 2)
+      (build 0 (parse-groups bindings 0 []))
+      body)))
+
 ;; doseq runs body for side effects across the bindings, returning nil. Same
 ;; shortcut as the prior Janet macro: realize a `for` comprehension with count
 ;; (for handles :when/:let/:while and multiple bindings).
