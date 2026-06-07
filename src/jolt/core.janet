@@ -2062,38 +2062,6 @@
   (put gensym_counter :val (+ n 1))
   {:jolt/type :symbol :ns nil :name (string prefix-string n)})
 
-(defn core-case
-  "Macro: (case expr val1 result1 ... default)
-   Supports single values, lists of values (one-of-many), and symbols."
-  [expr & clauses]
-  (def g (gensym))
-  (defn make-const [c]
-    # case constants are literals, never evaluated: quote symbols and list
-    # literals (read as arrays) so e.g. `sym` and a wrapped list `(a b c)` match
-    # by value rather than resolving/calling.
-    (if (or (and (struct? c) (= :symbol (c :jolt/type))) (array? c))
-      @[{:jolt/type :symbol :ns nil :name "quote"} c]
-      c))
-  (defn make-test [c]
-    (if (array? c)
-      (let [or-args @[{:jolt/type :symbol :ns nil :name "or"}]]
-        (each v c
-          (array/push or-args @[{:jolt/type :symbol :ns nil :name "="} g (make-const v)]))
-        or-args)
-      @[{:jolt/type :symbol :ns nil :name "="} g (make-const c)]))
-  (defn build [cls]
-    (if (= 0 (length cls))
-      nil
-      (if (= 1 (length cls))
-        (first cls)
-        (let [c (first cls)
-              r (first (tuple/slice cls 1))]
-          @[{:jolt/type :symbol :ns nil :name "if"}
-            (make-test c)
-            r
-            (build (tuple/slice cls 2))]))))
-  @[{:jolt/type :symbol :ns nil :name "let*"} @[g expr] (build clauses)])
-
 
 # if-let / when-let / if-some / when-some bind the name ONLY in the then/body
 # branch — the else branch must see the surrounding scope, not the binding (so
@@ -2169,27 +2137,6 @@
   (if (>= (length bindings) 2)
     (build 0 (parse-groups bindings))
     body))
-
-(defn core-cond->
-  "Macro: (cond-> expr test form ...) — thread first only when test is true"
-  [expr & clauses]
-  (def g (gensym))
-  (defn build [cls result-form]
-    (if (= 0 (length cls))
-      result-form
-      (let [t (first cls)
-            f (in cls 1)
-            f-call (if (array? f)
-                     (let [arr (array/slice f)]
-                       (array/insert arr 1 result-form)
-                       arr)
-                     @[f result-form])]
-        (build (tuple/slice cls 2)
-               @[{:jolt/type :symbol :ns nil :name "if"}
-                 t
-                 f-call
-                 result-form]))))
-  @[{:jolt/type :symbol :ns nil :name "let*"} @[g expr] (build clauses g)])
 
 (defn core-push-thread-bindings [b] (push-thread-bindings b))
 (defn core-pop-thread-bindings [] (pop-thread-bindings))
@@ -3534,10 +3481,8 @@
     "add-watch" core-add-watch
     "remove-watch" core-remove-watch
     "not" core-not
-    "case" core-case
     "for" core-for
     "when-let" core-when-let
-    "cond->" core-cond->
     "defn" core-defn
     "defn-" core-defn-
     "derive" core-derive
@@ -3617,7 +3562,7 @@
 (defn core-macro-names
   "Set of core binding names that are macros."
   []
-  @{"case" true "for" true "when-let" true "defn" true "defn-" true "fn" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "lazy-seq" true "lazy-cat" true "cond->" true "doseq" true})
+  @{"for" true "when-let" true "defn" true "defn-" true "fn" true "let" true "loop" true "defrecord" true "defprotocol" true "extend-type" true "extend-protocol" true "extend" true "reify" true "proxy" true "definterface" true "lazy-seq" true "lazy-cat" true "doseq" true})
 
 (def init-core!
   (fn [& args]

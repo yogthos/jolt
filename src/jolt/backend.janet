@@ -306,7 +306,17 @@
   (compile-load ctx "jolt.analyzer"))
 
 (defn- ensure-analyzer [ctx]
-  (when (= 0 (length ((ctx-find-ns ctx "jolt.analyzer") :mappings)))
+  # Don't build until the kernel tier is loaded (see api/load-core-overlay! and
+  # build-compiler!). Before then a compile request — e.g. a defn in a pre-kernel
+  # tier — must fall back to the interpreter, not build the analyzer against a
+  # core missing the fns it references (which would intern them as nil cells that
+  # then shadow the real definitions on the self-rebuild). The flag is absent in
+  # bare/test contexts that never load core; treat that as ready so those keep
+  # building the analyzer lazily as before.
+  (def env (ctx :env))
+  (def gated (and (has-key? env :kernel-ready?) (not (get env :kernel-ready?))))
+  (when (and (not gated)
+             (= 0 (length ((ctx-find-ns ctx "jolt.analyzer") :mappings))))
     (build-compiler! ctx)))
 
 (defn rebuild-compiler!

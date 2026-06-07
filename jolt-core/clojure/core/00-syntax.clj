@@ -59,3 +59,39 @@
 ;; Forward declaration is a no-op on Jolt — the compiler resolves forward refs via
 ;; pending cells (matching the prior Janet macro).
 (defmacro declare [& syms] `(do))
+
+;; A fresh jolt symbol inside a macro body (a bare (gensym) returns a Janet symbol
+;; the destructurer rejects). This defn compiles fine: by the time a tier triggers
+;; the analyzer build the kernel is in place (the build is gated until then).
+(defn- fresh-sym [] (symbol (str (gensym))))
+
+;; cond->: thread expr through each (test form) pair, only when the test is truthy.
+;; Linear nested let*, a distinct fresh symbol per step.
+(defmacro cond-> [expr & clauses]
+  (let [step (fn step [prev cls]
+               (if (empty? cls)
+                 prev
+                 (let [t (first cls)
+                       f (nth cls 1)
+                       gn (fresh-sym)
+                       call (if (seq? f) `(~(first f) ~prev ~@(rest f)) `(~f ~prev))]
+                   `(let* [~gn (if ~t ~call ~prev)] ~(step gn (drop 2 cls))))))
+        g0 (fresh-sym)]
+    `(let* [~g0 ~expr] ~(step g0 clauses))))
+
+;; case: nested =/or tests (no jump table). Test constants are NOT evaluated —
+;; symbols and list constants are quoted; a list in test position is a set (or).
+(defmacro case [expr & clauses]
+  (let [g (fresh-sym)
+        mk-const (fn [c] (if (or (symbol? c) (seq? c)) `(quote ~c) c))
+        mk-test (fn [c]
+                  (if (seq? c)
+                    `(or ~@(map (fn [v] `(= ~g ~(mk-const v))) c))
+                    `(= ~g ~(mk-const c))))
+        build (fn build [cls]
+                (if (empty? cls)
+                  nil
+                  (if (empty? (rest cls))
+                    (first cls)
+                    `(if ~(mk-test (first cls)) ~(nth cls 1) ~(build (drop 2 cls))))))]
+    `(let* [~g ~expr] ~(build clauses))))

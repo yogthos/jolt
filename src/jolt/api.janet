@@ -72,12 +72,21 @@
   (def core-dl (get env :aot-core?))
   (def saved (ctx-current-ns ctx))
   (ctx-set-current-ns ctx "clojure.core")
+  # Gate the analyzer build until the kernel tier loads (see ensure-analyzer):
+  # present-and-false here means pre-kernel compiles fall back to the interpreter.
+  (put env :kernel-ready? false)
   (each tier core-tiers
     (when-let [src (get stdlib-embed/sources (tier :ns))]
       (put env :direct-linking? core-dl)
       (if (and compile? (tier :kernel))
         (backend/bootstrap-load-source ctx "clojure.core" src)
-        (eval-overlay-source ctx src))))
+        (eval-overlay-source ctx src))
+      # The self-hosted compiler depends on the kernel tier (second/peek/mapv/...).
+      # Mark it ready once that tier is in place so the analyzer can be built; a
+      # pre-kernel tier that triggers a compile (e.g. a defn in 00-syntax) instead
+      # falls back to the interpreter rather than building the analyzer against a
+      # half-loaded core (which would forward-ref the missing kernel fns to nil).
+      (when (tier :kernel) (put env :kernel-ready? true))))
   (put env :direct-linking? user-dl)
   (ctx-set-current-ns ctx saved))
 
