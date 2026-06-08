@@ -164,19 +164,32 @@
        (let [a (f acc (first xs))] (recur a (next xs) (conj out a)))
        out))))
 
-;; Eager pre-order DFS (Clojure's is lazy; same order, fully realized here).
+;; The lazy tree-seq (using lazy-seq/make-lazy-seq) correctly implements
+;; Clojure semantics but triggers compile-mode issues in self-hosted compilation.
+;; When compile mode is fixed, replace the eager version below with:
+;;   (defn tree-seq [branch? children root]
+;;     (let [walk (fn walk [node]
+;;                  (lazy-seq
+;;                    (cons node
+;;                      (when (branch? node)
+;;                        (mapcat walk (children node))))))]
+;;       (walk root)))
 (defn tree-seq [branch? children root]
   (let [walk (fn walk [acc node]
-               (let [acc (conj acc node)]
-                 (if (branch? node)
-                   (reduce walk acc (children node))
-                   acc)))]
+                (let [acc (conj acc node)]
+                  (if (branch? node)
+                    (reduce walk acc (children node))
+                    acc)))]
     (walk [] root)))
 
 ;; Canonical flatten via tree-seq: the leaves (non-sequential nodes) in order.
-;; Flattens lists too (sequential?), which the prior Janet impl missed.
+;; Flattens lists too (sequential?), matching Clojure/CLJS.
 (defn flatten [coll]
   (filter (complement sequential?) (rest (tree-seq sequential? seq coll))))
+
+;; xml-seq: tree-seq over XML element trees. Elements are maps with :content.
+(defn xml-seq [root]
+  (tree-seq (complement string?) (comp seq :content) root))
 
 ;; Lazy interleave: round-robin one element from each coll until any exhausts.
 (defn interleave
