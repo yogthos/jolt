@@ -244,7 +244,6 @@
 (defn core-min [& args] (each x args (need-num x "min")) (apply min args))
 
 (defn core-rand [] (math/random))
-(defn core-rand-int [n] (math/floor (* (math/random) n)))
 
 # ============================================================
 # Comparison
@@ -1318,21 +1317,6 @@
           (+= i step))
         result))))
 
-(defn core-partition-by [f coll]
-  (def f (as-fn f))
-  (var result @[])
-  (var part @[])
-  (var last-k nil)
-  (each x (realize-for-iteration coll)
-    (let [k (f x)]
-      (if (and last-k (deep= k last-k))
-        (array/push part x)
-        (do
-          (if (> (length part) 0) (array/push result (tuple/slice (tuple ;part))))
-          (set part @[x])
-          (set last-k k)))))
-  (if (> (length part) 0) (array/push result (tuple/slice (tuple ;part))))
-  result)
 
 (defn core-partition-all [n coll]
   (if (lazy-seq? coll)
@@ -1419,10 +1403,6 @@
 
 # subvec lives in the Clojure kernel tier — core/00-kernel.clj.
 
-(defn core-trampoline [f & args]
-  (var result (apply f args))
-  (while (function? result) (set result (result)))
-  result)
 
 (def core-format (fn [fmt & args] (string/format fmt ;args)))
 
@@ -2818,7 +2798,6 @@
     "max" core-max
     "min" core-min
     "rand" core-rand
-    "rand-int" core-rand-int
     "=" core-=
     "not=" core-not=
     "<" core-<
@@ -2837,7 +2816,6 @@
     "map-indexed" core-map-indexed
     "cycle" core-cycle
     "pop" core-pop
-    "trampoline" core-trampoline
     "format" core-format
     "first" core-first
     "rest" core-rest
@@ -2958,7 +2936,6 @@
     "sort-by" core-sort-by
     "distinct" core-distinct
     "partition" core-partition
-    "partition-by" core-partition-by
     "range" core-range
     "repeat" core-repeat
     "iterate" core-iterate

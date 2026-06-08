@@ -208,16 +208,32 @@
 ;; No ratio type on Jolt, so rationalize is identity.
 (defn rationalize [x] x)
 
+;; trampoline: repeatedly calls f with args until a non-function result.
+(defn trampoline
+  ([f] (trampoline f (f)))
+  ([f & args]
+   (let [ret (apply f args)]
+     (if (fn? ret)
+       (recur ret)
+       ret))))
+
+;; rand-int: random integer in [0, n). Uses Janet math/random.
+(defn rand-int [n] (math/floor (* (math/random) n)))
+
 ;; Eager dedupe of consecutive equal elements (Jolt has no transducer arity yet).
 (defn dedupe [coll]
-  (let [c (vec coll)]
-    (if (empty? c)
-      []
-      (loop [prev (first c) xs (rest c) out [(first c)]]
-        (if (seq xs)
-          (let [x (first xs)]
-            (recur x (rest xs) (if (= x prev) out (conj out x))))
-          out)))))
+  (let [step (fn step [s prev]
+               (lazy-seq
+                 (let [s (seq s)]
+                   (when s
+                     (let [x (first s)]
+                       (if (= x prev)
+                         (step (rest s) prev)
+                         (cons x (step (rest s) x))))))))]
+    (let [s (seq coll)]
+      (if s
+        (cons (first s) (step (rest s) (first s)))
+        ()))))
 
 ;; Internal helper for {:keys [...]} destructuring over a seq of k/v pairs:
 ;; builds a map from consecutive pairs, dropping a trailing unpaired element.

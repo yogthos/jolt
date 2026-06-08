@@ -55,6 +55,7 @@
    ["take 6 mapcat dup range"             "(quote (0 0 1 1 2 2))" "(take 6 (mapcat (fn [x] [x x]) (range)))"]
    ["first rest lazy"                     "1"                     "(let [[a & r] (range)] (first r))"]
    ["take 3 rest lazy"                    "(quote (1 2 3))"       "(let [[a & r] (range)] (take 3 r))"]
+   ["dedupe inf"             "(quote (1 2 1 2 1))" "(take 5 (dedupe (cycle [1 1 2 2])))"]
    ["take 3 take-nth 2 range"             "(quote (0 2 4))"       "(take 3 (take-nth 2 (range)))"]
    ["take 3 interpose :x range"           "(quote (0 :x 1))"       "(take 3 (interpose :x (range)))"]
    ["take 3 map vector range iterate"     "(quote ([0 100] [1 101] [2 102]))" "(take 3 (map vector (range) (iterate inc 100)))"]

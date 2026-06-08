@@ -22,3 +22,15 @@
     (if (next s)
       (recur (conj ret (first s)) (next s))
       (seq ret))))
+
+;; Lazy partition-by: groups consecutive elements by (f x), matching Clojure/CLJS.
+(defn partition-by [f coll]
+  (let [step (fn step [s]
+               (lazy-seq
+                 (let [s (seq s)]
+                   (when s
+                     (let [fst (first s)
+                           fv (f fst)
+                           run (cons fst (take-while (fn [x] (= fv (f x))) (rest s)))]
+                       (cons run (step (lazy-seq (drop (count run) s)))))))))]
+    (step coll)))
