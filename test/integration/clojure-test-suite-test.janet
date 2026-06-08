@@ -41,9 +41,14 @@
 (def baseline-pass 3981)
 # A file is "clean" when it ran with zero failures AND zero errors.
 (def baseline-clean-files 66)
-# Per-file wall-clock budget (seconds). Normal files finish in well under 1s;
-# this only fires on infinite-sequence hangs.
-(def per-file-timeout 6)
+# Per-file wall-clock budget (seconds). Normal files finish in well under 1s, so
+# this normally only fires on genuinely-infinite-sequence hangs. It's an env var
+# (JOLT_SUITE_TIMEOUT) so CI — whose runners are slower than a dev machine — can
+# give slow-but-finite files generous headroom without timing them out (which
+# would drop total-pass below the baseline and flake CI red). Default 6 locally.
+(def per-file-timeout
+  (let [e (os/getenv "JOLT_SUITE_TIMEOUT")]
+    (or (and e (scan-number e)) 6)))
 
 (defn- walk [dir acc]
   (each e (os/dir dir)
