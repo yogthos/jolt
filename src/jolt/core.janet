@@ -2374,14 +2374,8 @@
 (defn core-ex-info [msg data & more]
   @{:jolt/type :jolt/ex-info :message msg :data data
     :cause (if (> (length more) 0) (in more 0) nil)})
-(defn core-ex-info? [x] (and (table? x) (= :jolt/ex-info (x :jolt/type))))
-(defn- unwrap-ex [e]
-  (if (and (or (table? e) (struct? e)) (= :jolt/exception (get e :jolt/type))) (get e :value) e))
-(defn core-ex-data [e]
-  (let [e (unwrap-ex e)] (if (core-ex-info? e) (e :data) nil)))
-(defn core-ex-message [e]
-  (let [e (unwrap-ex e)]
-    (cond (core-ex-info? e) (e :message) (string? e) e nil)))
+# ex-data / ex-message / ex-cause now live in the Clojure collection tier
+# (core/20-coll.clj) — pure over get on the tagged value the constructor builds.
 
 # String split/replace that accept either a literal string or a regex value.
 (defn core-str-split [pat s]
@@ -2688,7 +2682,6 @@
 (defn core-hash-unordered-coll [coll]
   (var h 0) (each x (realize-for-iteration coll) (set h (band (+ h (h24 x)) 0xffffff))) h)
 
-(defn core-ex-cause [e] (and (table? e) (get e :cause)))
 (defn core-prefers [mm-var] (or (get mm-var :jolt/prefers) {}))
 
 (defn core-random-uuid []
@@ -2840,7 +2833,6 @@
     "hash-combine" core-hash-combine
     "hash-ordered-coll" core-hash-ordered-coll
     "hash-unordered-coll" core-hash-unordered-coll
-    "ex-cause" core-ex-cause
     "prefers" core-prefers
     "random-uuid" core-random-uuid
     "interpose" core-interpose
@@ -2868,8 +2860,6 @@
     "ifn?" core-ifn?
     "indexed?" core-indexed?
     "ex-info" core-ex-info
-    "ex-data" core-ex-data
-    "ex-message" core-ex-message
     "prn-str" core-prn-str
     "println-str" core-println-str
     "volatile?" core-volatile?

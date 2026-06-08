@@ -236,3 +236,20 @@
     (map? coll)    (reduce (fn [acc k] (f acc k (get coll k))) init (keys coll))
     (nil? coll)    init
     :else (throw (str "reduce-kv not supported on: " coll))))
+
+;; ex-info accessors. The Janet constructor (ex-info) stays — it builds the tagged
+;; value and wires into throw — but the value exposes :jolt/type/:message/:data/
+;; :cause via get, so the accessors are pure over get. A thrown non-ex-info arrives
+;; wrapped as {:jolt/type :jolt/exception :value v}; unwrap that first.
+(defn- ex-info-val? [x] (= (get x :jolt/type) :jolt/ex-info))
+(defn- ex-unwrap [e]
+  (if (= (get e :jolt/type) :jolt/exception) (get e :value) e))
+(defn ex-data [e]
+  (let [e (ex-unwrap e)] (if (ex-info-val? e) (get e :data) nil)))
+(defn ex-message [e]
+  (let [e (ex-unwrap e)]
+    (cond (ex-info-val? e) (get e :message)
+          (string? e)      e
+          :else            nil)))
+(defn ex-cause [e]
+  (let [e (ex-unwrap e)] (if (ex-info-val? e) (get e :cause) nil)))
