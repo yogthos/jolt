@@ -286,3 +286,10 @@
   (jolt.host/ref-put! (get a :watches) key nil) a)
 (defn set-validator! [a f]
   (jolt.host/ref-put! a :validator f) nil)
+
+;; Volatiles. The constructor (volatile!) stays native — it builds the mutable box —
+;; but vreset! sets the box's slot through ref-put! and vswap! is pure over it + get.
+(defn vreset! [vol newval]
+  (jolt.host/ref-put! vol :val newval) newval)
+(defn vswap! [vol f & args]
+  (vreset! vol (apply f (get vol :val) args)))

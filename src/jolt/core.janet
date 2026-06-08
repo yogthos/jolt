@@ -2087,12 +2087,8 @@
 
 # Volatiles — typed box so deref/volatile? can recognize them.
 (defn core-volatile! [v] @{:jolt/type :jolt/volatile :val v})
-# volatile? now lives in the Clojure collection tier (tagged-value predicate).
-(defn core-vswap! [vol f & args]
-  (def new-val (apply f (vol :val) args))
-  (put vol :val new-val)
-  new-val)
-(defn core-vreset! [vol val] (put vol :val val) val)
+# volatile? / vreset! / vswap! now live in the Clojure collection tier — vreset!
+# over jolt.host/ref-put!, vswap! over vreset! + get. The constructor stays native.
 
 # Delays — created lazily by the `delay` macro; forced once via force/deref.
 (defn core-make-delay [thunk] @{:jolt/type :jolt/delay :fn thunk :realized false :val nil})
@@ -3022,8 +3018,6 @@
     "implements?" core-implements?
     "type->str" core-type->str
     "volatile!" core-volatile!
-    "vswap!" core-vswap!
-    "vreset!" core-vreset!
     "Thread" core-Thread
     "ThreadLocal" core-ThreadLocal
     "IllegalStateException" core-IllegalStateException
