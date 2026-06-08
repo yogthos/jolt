@@ -1675,18 +1675,9 @@
 # numeric arrays use Janet arrays. aget/aset/alength/aclone work over both.
 # ============================================================
 
-(defn core-alength [arr] (length arr))
-
-(defn core-aget [arr & idxs]
-  # multi-dim: aget arr i j ... walks nested arrays
-  (var v arr) (each i idxs (set v (in v i))) v)
-
-(defn core-aset [arr & more]
-  # (aset arr i v) or (aset arr i j ... v): last arg is the value
-  (let [n (length more) val (in more (- n 1))]
-    (var target arr) (var k 0)
-    (while (< k (- n 2)) (set target (in target (in more k))) (++ k))
-    (put target (in more (- n 2)) val) val))
+# alength / aget / aset now live in the Clojure collection tier — count/nth reads
+# and an aset write through jolt.host/ref-put!. The typed/object array constructors
+# below stay native (they build the mutable backing).
 
 (defn core-aclone [arr]
   (if (buffer? arr) (buffer/slice arr) (array/slice arr)))
@@ -2124,10 +2115,7 @@
 
 # resolve stub — returns nil (symbols not found in Jolt's clojure.core)
 (defn core-resolve [sym] nil)  # shadowed by the resolve special form (needs ctx)
-(defn core-ns-name [ns]
-  # ns object -> its name as a symbol (works whether ns is a table/struct/phm)
-  (let [nm (core-get ns :name)]
-    (if nm {:jolt/type :symbol :ns nil :name (string nm)} nil)))
+# ns-name now lives in the Clojure collection tier (pure over get + symbol).
 
 # update lives in the Clojure kernel tier — core/00-kernel.clj. update-in stays
 # (it's recursive and has internal callers).
@@ -2875,9 +2863,6 @@
     "prn" core-prn
     "pr-str" core-pr-str
     # Java-style arrays (buffers for bytes, arrays otherwise)
-    "alength" core-alength
-    "aget" core-aget
-    "aset" core-aset
     "aclone" core-aclone
     "object-array" core-object-array
     "int-array" core-int-array
@@ -3018,7 +3003,6 @@
     "ThreadLocal" core-ThreadLocal
     "IllegalStateException" core-IllegalStateException
     "resolve" core-resolve
-    "ns-name" core-ns-name
     "update-in" core-update-in
     "assoc-in" core-assoc-in
     "fnil" core-fnil

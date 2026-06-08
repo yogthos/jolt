@@ -301,3 +301,22 @@
   (if (future? x) (boolean (get x :cached)) (throw "future-done? requires a future")))
 (defn future-cancelled? [x]
   (and (future? x) (boolean (get x :cancelled))))
+
+;; ns-name: a namespace object's :name as a symbol. Pure over get + symbol.
+(defn ns-name [ns]
+  (let [nm (get ns :name)] (if nm (symbol (str nm)) nil)))
+
+;; Java-array element access. Jolt arrays are mutable backing arrays; aget/alength
+;; read them (nth/count) and aset writes a slot through ref-put!. Both handle the
+;; multi-dimensional form (aget a i j ... / aset a i j ... v) by walking. The array
+;; constructors (object-array/make-array/to-array/...) stay native — they build the
+;; mutable backing.
+(defn aget [arr & idxs]
+  (reduce (fn [v i] (nth v i)) arr idxs))
+(defn alength [arr] (count arr))
+(defn aset [arr & idxs+val]
+  (let [n (count idxs+val)
+        val (nth idxs+val (dec n))
+        target (reduce (fn [t k] (nth t k)) arr (take (- n 2) idxs+val))]
+    (jolt.host/ref-put! target (nth idxs+val (- n 2)) val)
+    val))
