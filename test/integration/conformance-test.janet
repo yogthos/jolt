@@ -62,6 +62,21 @@
    ["into map onto map"  "{:a 1 :b 2 :c 3}" "(into {:a 1} [[:b 2] [:c 3]])"]
    ["into list"          "(quote (3 2 1))"  "(into (list) [1 2 3])"]
 
+   ### ---- Option A: lazy transformers return seqs, not vectors ----
+   # map/filter/take/take-while over a concrete vector yield a lazy seq, matching
+   # Clojure: (seq? (map ...)) is true, (vector? (map ...)) is false.
+   ["map vec is seq"      "true"   "(seq? (map inc [1 2 3]))"]
+   ["map vec not vector"  "false"  "(vector? (map inc [1 2 3]))"]
+   ["filter vec is seq"   "true"   "(seq? (filter odd? [1 2 3]))"]
+   ["take vec is seq"     "true"   "(seq? (take 2 [1 2 3]))"]
+   ["map over set"        "true"   "(= #{2 3 4} (set (map inc #{1 2 3})))"]
+   ["filter over map ev"  "(quote ([:b 2]))" "(filter (fn [[k v]] (> v 1)) {:a 1 :b 2})"]
+   # cons of cons over a lazy tail must not leak the rest-thunk
+   ["cons cons lazy"      "(quote (1 2 3))" "(cons 1 (cons 2 (lazy-seq (cons 3 nil))))"]
+   ["juxt fns in vec"     "[1 3]"  "((juxt first last) [1 2 3])"]
+   ["last of lazy take"   "5"      "(last (take 5 (iterate inc 1)))"]
+   ["next empty lazy"     "nil"    "(next (take 1 [1]))"]
+
    ### ---- HIGH: destructuring ----
    ["destr nested seq"   "[1 2 3]"   "(let [[a [b c]] [1 [2 3]]] [a b c])"]
    ["destr rest+as"      "[1 (quote (2 3)) [1 2 3]]" "(let [[a & r :as all] [1 2 3]] [a r all])"]

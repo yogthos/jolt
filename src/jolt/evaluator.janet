@@ -152,6 +152,25 @@
         {:jolt/type :symbol :ns (ctx-current-ns ctx) :name nm}))
     form))
 
+(defn- d-realize
+  "Realize a lazy-seq to an array for positional destructuring / splicing; pass
+  others (pvec/plist coerced to array, everything else unchanged)."
+  [val]
+  (if (pvec? val) (pv->array val)
+  (if (plist? val) (pl->array val)
+  (if (lazy-seq? val)
+    (do
+      (var items @[]) (var cur val) (var go true)
+      (while go
+        (let [cell (realize-ls cur)]
+          (if (or (nil? cell) (= :jolt/pending cell) (= 0 (length cell)))
+            (set go false)
+            (do (array/push items (in cell 0))
+                (let [rt (in cell 1)]
+                  (if (nil? rt) (set go false) (set cur (make-lazy-seq rt))))))))
+      items)
+    val))))
+
 (defn- syntax-quote*
   [ctx bindings form &opt gsmap]
   (default gsmap @{})
@@ -169,7 +188,7 @@
       (let [item (in form i)]
         (if (and (array? item) (> (length item) 0) (sym-name? (first item) "unquote-splicing"))
           (let [sv (eval-form ctx bindings (in item 1))]
-            (each v (if (pvec? sv) (pv->array sv) sv) (array/push result v)))
+            (each v (d-realize sv) (array/push result v)))
           (array/push result (syntax-quote* ctx bindings item gsmap))))
       (++ i)) (tuple ;result))
     (array? form)
@@ -177,7 +196,7 @@
       (let [item (in form i)]
         (if (and (array? item) (> (length item) 0) (sym-name? (first item) "unquote-splicing"))
           (let [sv (eval-form ctx bindings (in item 1))]
-            (each v (if (pvec? sv) (pv->array sv) sv) (array/push result v)))
+            (each v (d-realize sv) (array/push result v)))
           (array/push result (syntax-quote* ctx bindings item gsmap))))
       (++ i)) result)
     (and (struct? form) (get form :jolt/type)) form
@@ -496,24 +515,6 @@
             (+= i 1))
         (do (array/push fixed a) (+= i 1)))))
   {:fixed (tuple/slice (tuple ;fixed)) :rest rest-pat})
-
-(defn- d-realize
-  "Realize a lazy-seq to an array for positional destructuring; pass others through."
-  [val]
-  (if (pvec? val) (pv->array val)
-  (if (plist? val) (pl->array val)
-  (if (lazy-seq? val)
-    (do
-      (var items @[]) (var cur val) (var go true)
-      (while go
-        (let [cell (realize-ls cur)]
-          (if (or (nil? cell) (= :jolt/pending cell) (= 0 (length cell)))
-            (set go false)
-            (do (array/push items (in cell 0))
-                (let [rt (in cell 1)]
-                  (if (nil? rt) (set go false) (set cur (make-lazy-seq rt))))))))
-      items)
-    val))))
 
 (defn- d-get
   "Look up key k in a map-like value (phm/struct/table/nil)."

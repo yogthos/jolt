@@ -600,9 +600,19 @@
     (= 0 (length coll)) nil
     (in coll 0)))
 
+(defn- seq-done?
+  "True when cursor c (a lazy-seq or a concrete collection) is exhausted.
+  Uses cell realization for lazy-seqs so nil elements don't end the seq early."
+  [c]
+  (if (lazy-seq? c)
+    (let [cell (realize-ls c)]
+      (or (nil? cell) (= :jolt/pending cell) (= 0 (length cell))))
+    (or (nil? c) (= 0 (length c)))))
+
 (defn core-rest [coll]
   (cond
-    (lazy-seq? coll) (ls-rest coll)
+    # rest never returns nil — Clojure's rest yields () on an exhausted seq.
+    (lazy-seq? coll) (let [r (ls-rest coll)] (if (nil? r) @[] r))
     (plist? coll) (pl-rest coll)
     (pvec? coll) (let [a (pv->array coll)] (if (<= (length a) 1) @[] (array/slice a 1)))
     (or (nil? coll) (= 0 (length coll))) @[]
@@ -611,14 +621,19 @@
     (array/slice coll 1)))
 
 (defn core-next [coll]
+  # next is rest, but nil when the rest is empty. seq-done? realizes one lazy
+  # cell so a lazy rest that turns out empty (length on the table won't tell us)
+  # collapses to nil, matching Clojure.
   (let [r (core-rest coll)]
-    (if (= 0 (length r)) nil r)))
+    (if (seq-done? r) nil r)))
 
 (defn core-cons [x coll]
   "Prepend x onto coll. For concrete collections this is an O(1) persistent cons
   node; for lazy-seqs it stays a lazy cell so laziness is preserved."
   (cond
-    (lazy-seq? coll) @[x (fn [] coll)]
+    # Lazy tail: return a LazySeq (NOT a bare cell), so a cons-of-a-cons stays a
+    # proper lazy-seq and the rest-thunk never leaks as a plain array element.
+    (lazy-seq? coll) (make-lazy-seq (fn [] @[x (fn [] coll)]))
     (or (nil? coll) (plist? coll) (array? coll) (tuple? coll)) (pl-cons x coll)
     # second arg must be seqable (a collection or string); reject scalars
     (not (or (core-coll? coll) (string? coll)))
@@ -853,14 +868,53 @@
     (core-seq a)
     (tuple ;(core-transduce a (fn [& x] (case (length x) 0 @[] 1 (x 0) (do (array/push (x 0) (x 1)) (x 0)))) @[] (in rest 0)))))
 
-(defn- seq-done?
-  "True when cursor c (a lazy-seq or a concrete collection) is exhausted.
-  Uses cell realization for lazy-seqs so nil elements don't end the seq early."
-  [c]
-  (if (lazy-seq? c)
-    (let [cell (realize-ls c)]
-      (or (nil? cell) (= :jolt/pending cell) (= 0 (length cell))))
-    (or (nil? c) (= 0 (length c)))))
+
+(defn coll->cells [c]
+  "Convert a seqable to a lazy-seq cell chain: nil or [first, rest-thunk].
+  A cons cell is a MUTABLE array `@[val rest-thunk]` (produced by `cons`/the lazy
+  transformers); user collections (tuples, pvecs, lists) are immutable. We rely
+  on that distinction: only a mutable 2-array whose tail is a function is treated
+  as an already-built cell — a user vector like `[first last]` (tail is the fn
+  `last`) is data and must NOT be misread as a cell. User data is recursed through
+  immutable tuples so its tails never reach the cell-detection branch."
+  (if (nil? c) nil
+    (if (pvec? c) (coll->cells (tuple ;(pv->array c)))
+    (if (plist? c) (coll->cells (tuple ;(pl->array c)))
+    (if (function? c)
+      (let [r (c)]
+        (if (and (array? r) (= 2 (length r)) (function? (in r 1)))
+          r
+          (coll->cells r)))
+      (if (lazy-seq? c)
+        (let [cell (realize-ls c)]
+          (if (= :jolt/pending cell) nil cell))
+        (if (tuple? c)
+          # user sequential data: every element is a value, no cell-detection.
+          (if (= 0 (length c)) nil
+            @[(in c 0) (fn [] (coll->cells (tuple/slice c 1)))])
+        (if (array? c)
+          # mutable array: a genuine cons cell, or an eager seq result.
+          (if (= 0 (length c)) nil
+            (if (and (= 2 (length c)) (function? (in c 1)))
+              c  # already a cell [val, rest-thunk]
+              @[(in c 0) (fn [] (coll->cells (array/slice c 1)))]))
+          # Other concrete seqables (set/map/string/buffer): coerce to a tuple
+          # seq via core-seq, then recurse. (lazy/indexed handled above.)
+          (if (or (set? c) (phm? c) (buffer? c) (string? c)
+                  (and (struct? c) (nil? (get c :jolt/type))))
+            (coll->cells (core-seq c))
+            nil)))))))))
+
+(defn lazy-from
+  "Coerce any seqable to a uniform lazy view without forcing.
+  Returns nil if coll is nil or empty, the LazySeq unchanged if already lazy,
+  or a new LazySeq that walks element by element."
+  [coll]
+  (if (nil? coll) nil
+    (if (lazy-seq? coll) coll
+      (let [cell (coll->cells coll)]
+        (if (nil? cell) nil
+          (make-lazy-seq (fn [] cell)))))))
 
 (defn core-map [f & colls]
   (def f (as-fn f))
@@ -868,18 +922,14 @@
     (td-map f)   # transducer arity
   (if (= 1 (length colls))
     (let [coll (colls 0)]
-      (if (lazy-seq? coll)
-        # Lazy input: stay lazy so infinite/self-referential seqs work.
-        (do
-          (defn mstep [c]
-            (fn []
-              (if (seq-done? c) nil
-                @[(f (core-first c)) (mstep (core-rest c))])))
-          (make-lazy-seq (mstep coll)))
-        # Concrete collection: eager (preserves tuple/array representation).
-        (let [c (if (set? coll) (phs-seq coll) (realize-for-iteration coll))
-              result (do (var res @[]) (each x c (array/push res (f x))) res)]
-          (if (jvec? coll) (make-vec result) result))))
+      # Option A: always lazy, even over concrete collections (matches Clojure —
+      # map returns a seq, not a vector).
+      (do
+        (defn mstep [c]
+          (fn []
+            (if (seq-done? c) nil
+              @[(f (core-first c)) (mstep (core-rest c))])))
+        (make-lazy-seq (mstep (lazy-from coll)))))
     # Multi-collection: lazy-seq with per-element independent state
     (let [init-cs (array/new-filled (length colls) nil)
           init-idxs (array/new-filled (length colls) 0)
@@ -934,8 +984,7 @@
   (def pred (as-fn pred))
   (if (= 0 (length rest)) (td-filter pred)
    (let [coll (in rest 0)]
-   (if (lazy-seq? coll)
-    # lazy input -> lazy output (supports infinite seqs)
+    # Option A: always lazy (matches Clojure — filter returns a seq).
     (do
       (defn fstep [c]
         (fn []
@@ -945,12 +994,7 @@
               (if (pred x) (do (set hit @[x (core-rest cur)]) (set found true))
                 (set cur (core-rest cur)))))
           (if found @[(in hit 0) (fstep (in hit 1))] nil)))
-      (make-lazy-seq (fstep coll)))
-    (do
-      (var result @[])
-      (each x (if (set? coll) (phs-seq coll) (realize-for-iteration coll))
-        (if (pred x) (array/push result x)))
-      (if (jvec? coll) (make-vec result) result))))))
+      (make-lazy-seq (fstep (lazy-from coll)))))))
 
 (defn core-remove [pred & rest]
   (def pred (as-fn pred))
@@ -981,23 +1025,12 @@
 (defn core-take [n & rest]
  (if (= 0 (length rest)) (td-take n)
   (let [coll (in rest 0)]
-  (if (lazy-seq? coll)
-    (do
-      (var result @[])
-      (var cur coll)
-      (var i 0)
-      (while (and (< i n) (not (nil? (ls-first cur))))
-        (array/push result (ls-first cur))
-        (set cur (ls-rest cur))
-        (++ i))
-      result)
-    (let [c (realize-for-iteration coll)]
-      (var result @[])
-      (var i 0)
-      (while (and (< i n) (< i (length c)))
-        (array/push result (in c i))
-        (++ i))
-      (if (jvec? coll) (make-vec result) result))))))
+    # Option A: lazy take (returns a seq, not a vector, even over a vector).
+    (defn tstep [c i]
+      (fn []
+        (if (or (>= i n) (seq-done? c)) nil
+          @[(core-first c) (tstep (core-rest c) (+ i 1))])))
+    (make-lazy-seq (tstep (lazy-from coll) 0)))))
 
 (defn core-drop [n & rest]
  (if (= 0 (length rest)) (td-drop n)
@@ -1024,18 +1057,13 @@
  (def pred (as-fn pred))
  (if (= 0 (length rest)) (td-take-while pred)
   (let [coll (in rest 0)]
-  (if (lazy-seq? coll)
-    (do
-      (var result @[]) (var cur coll) (var go true)
-      (while (and go (not (seq-done? cur)))
-        (let [x (core-first cur)]
-          (if (pred x) (do (array/push result x) (set cur (core-rest cur)))
-            (set go false))))
-      result)
-    (do
-      (var result @[])
-      (each x (realize-for-iteration coll) (if (pred x) (array/push result x) (break)))
-      (if (jvec? coll) (make-vec result) result))))))
+    # Option A: lazy take-while.
+    (defn twstep [c]
+      (fn []
+        (if (seq-done? c) nil
+          (let [x (core-first c)]
+            (if (pred x) @[x (twstep (core-rest c))] nil)))))
+    (make-lazy-seq (twstep (lazy-from coll))))))
 
 (defn core-drop-while [pred & rest]
  (def pred (as-fn pred))
@@ -1057,32 +1085,6 @@
        (if (tuple? c)
          (tuple/slice c start)
          (array/slice c start)))))))
-
-(defn coll->cells [c]
-  "Convert a seqable to lazy-seq cell chain: nil or [first, rest-thunk].
-  If the value is a function, call it and use the result.
-  If the result is already a cell (array of [val, function]), return it directly."
-  (if (nil? c) nil
-    (if (pvec? c) (coll->cells (pv->array c))
-    (if (plist? c) (coll->cells (pl->array c))
-    (if (function? c)
-      (let [r (c)]
-        (if (and (indexed? r) (= 2 (length r)) (function? (in r 1)))
-          r
-          (coll->cells r)))
-      (if (lazy-seq? c)
-        (let [cell (realize-ls c)]
-          (if (= :jolt/pending cell) nil cell))
-        (if (indexed? c)
-          (if (= 0 (length c)) nil
-            (if (and (= 2 (length c)) (function? (in c 1)))
-              c  # already a cell [val, rest-thunk]
-              (let [f (in c 0)
-                    rest (if (> (length c) 1)
-                           (if (tuple? c) (tuple/slice c 1) (array/slice c 1))
-                           nil)]
-                @[f (fn [] (coll->cells rest))])))
-          nil)))))))
 
 (defn core-concat [& colls]
   "Truly lazy concatenation. `step` returns a 0-arg thunk that is only forced
@@ -1109,16 +1111,6 @@
                                 (array/insert remaining 0 rest-fn)))]))))))
       (make-lazy-seq (step colls)))))
 
-(defn lazy-from
-  "Coerce any seqable to a uniform lazy view without forcing.
-  Returns nil if coll is nil or empty, the LazySeq unchanged if already lazy,
-  or a new LazySeq that walks element by element."
-  [coll]
-  (if (nil? coll) nil
-    (if (lazy-seq? coll) coll
-      (let [cell (coll->cells coll)]
-        (if (nil? cell) nil
-          (make-lazy-seq (fn [] cell)))))))
 
 (defn core-mapcat
   "(mapcat f & colls) — map then concat. (mapcat f) returns a transducer."

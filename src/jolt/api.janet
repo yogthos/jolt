@@ -30,6 +30,9 @@
   and lists with the same elements are equal."
   [x]
   (cond
+    # lazy-seq: realize to a tuple (map/filter/take now return lazy seqs).
+    (and (table? x) (= (get x :jolt/type) :jolt/lazy-seq))
+      (tuple ;(map normalize-pvecs (realize-for-iteration x)))
     (pvec? x) (tuple ;(map normalize-pvecs (pv->array x)))
     (plist? x) (tuple ;(map normalize-pvecs (pl->array x)))
     (tuple? x) (tuple ;(map normalize-pvecs x))
