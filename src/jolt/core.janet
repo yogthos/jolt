@@ -878,11 +878,47 @@
     (into-conj to (realize-for-iteration (in rest 0)))))
 
 (defn core-sequence
-  "(sequence coll) or (sequence xform coll) — eager here (returns a seq/tuple)."
+  "(sequence coll) -> a seq of coll. (sequence xform coll) -> a LAZY seq of coll
+  transformed by xform: elements are pulled and pushed through the transducer one
+  at a time, with outputs buffered and emitted lazily — so it works over infinite
+  input (matching Clojure). Honors `reduced` (early stop) and runs the completion
+  arity to flush stateful transducers (e.g. partition-all)."
   [a & rest]
   (if (= 0 (length rest))
     (core-seq a)
-    (tuple ;(core-transduce a (fn [& x] (case (length x) 0 @[] 1 (x 0) (do (array/push (x 0) (x 1)) (x 0)))) @[] (in rest 0)))))
+    (let [xform a
+          coll (in rest 0)
+          buf @[]
+          state @{:stopped false :completed false}
+          rf (fn [& args]
+               (case (length args)
+                 0 buf
+                 1 (in args 0)
+                 (do (array/push (in args 0) (in args 1)) (in args 0))))
+          xf (xform rf)]
+      # Pull/complete until buf holds an output or the source is fully drained.
+      (defn ensure-buf [src]
+        (var s src)
+        (while (and (= 0 (length buf)) (not (state :stopped)) (not (seq-done? s)))
+          (let [r (xf buf (core-first s))]
+            (set s (core-rest s))
+            (when (core-reduced? r) (put state :stopped true))))
+        (when (and (= 0 (length buf)) (not (state :completed))
+                   (or (state :stopped) (seq-done? s)))
+          (put state :completed true)
+          (xf buf))   # completion arity — flushes any buffered state
+        s)
+      (defn gen [src]
+        (fn []
+          (let [s (ensure-buf src)]
+            (if (= 0 (length buf)) nil
+              (let [val (in buf 0)]
+                (array/remove buf 0 1)
+                @[val (gen s)])))))
+      # core-seq normalizes to a tuple / lazy-seq / nil — all walkable by
+      # core-first/rest/seq-done?. (Walking a raw pvec/set would misfire:
+      # seq-done? uses length, which counts a pvec table's KEYS, not elements.)
+      (make-lazy-seq (gen (core-seq coll))))))
 
 
 (defn coll->cells [c]
