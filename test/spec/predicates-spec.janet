@@ -88,6 +88,21 @@
   ["keyword-identical?" "true"   "(keyword-identical? :a :a)"]
   ["keyword-identical? no" "false" "(keyword-identical? :a :b)"])
 
+# Tagged-value predicates moved to the overlay in Phase 4 (read the value's
+# :jolt/type via get). The constructors stay native.
+(defspec "predicates / tagged-value (Phase 4)"
+  ["atom? yes"          "true"   "(atom? (atom 1))"]
+  ["atom? no"           "false"  "(atom? 1)"]
+  ["volatile? yes"      "true"   "(volatile? (volatile! 1))"]
+  ["volatile? no"       "false"  "(volatile? (atom 1))"]
+  ["record? yes"        "true"   "(do (defrecord Rp [a]) (record? (->Rp 1)))"]
+  ["record? no map"     "false"  "(record? {:a 1})"]
+  ["record? no nil"     "false"  "(record? nil)"]
+  ["tagged-literal? yes" "true"  "(tagged-literal? (tagged-literal (quote inst) \"2020\"))"]
+  ["tagged-literal? no" "false"  "(tagged-literal? 1)"]
+  ["reader-conditional? no" "false" "(reader-conditional? 1)"]
+  ["chunked-seq? always false" "false" "(chunked-seq? (seq [1 2 3]))"])
+
 (defspec "predicates / equality & identity"
   ["= same"             "true"   "(= 1 1)"]
   ["= vectors"          "true"   "(= [1 2] [1 2])"]

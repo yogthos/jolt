@@ -1393,8 +1393,7 @@
 (defn core-uri? [x] false)
 (defn core-uuid? [x] false)
 (defn core-bytes? [x] (buffer? x))
-(defn core-tagged-literal? [x]
-  (and (table? x) (= :jolt/tagged-literal (get x :jolt/type))))
+# tagged-literal? now lives in the Clojure collection tier (tagged-value predicate).
 
 (defn core-meta [x]
   "Returns the metadata of x, or nil."
@@ -1764,7 +1763,7 @@
 (defn core-chunk-buffer [capacity] @[])
 (defn core-chunk-append [b x] (array/push b x) b)
 (defn core-chunk [b] b)
-(defn core-chunked-seq? [x] false)
+# chunked-seq? now lives in the Clojure collection tier (always false on Jolt).
 (defn core-chunk-first [s] (core-first s))
 (defn core-chunk-rest [s] (core-rest s))
 (defn core-chunk-next [s] (core-next s))
@@ -1783,8 +1782,7 @@
     (core-filter (fn [_] (< (math/random) prob)) (in rest 0))))
 (defn core-reader-conditional [form splicing?]
   @{:jolt/type :jolt/reader-conditional :form form :splicing? splicing?})
-(defn core-reader-conditional? [x]
-  (and (table? x) (= :jolt/reader-conditional (get x :jolt/type))))
+# reader-conditional? now lives in the Clojure collection tier (tagged-value predicate).
 (defn core-sorted-map-by [cmp & kvs] (apply core-sorted-map kvs))
 (defn core-sorted-set-by [cmp & xs] (apply core-sorted-set xs))
 (defn core-array-seq [arr & _] (core-seq arr))
@@ -1869,8 +1867,7 @@
     (+= i 2))
   atm)
 
-(defn core-atom? [x]
-  (and (table? x) (= :jolt/atom (x :jolt/type))))
+# atom? now lives in the Clojure collection tier (tagged-value predicate).
 
 # Futures — run the body on a real OS thread (ev/thread) for true parallelism.
 # Janet threads have separate heaps, so the thunk and the state it closes over are
@@ -2126,7 +2123,7 @@
 
 # Volatiles — typed box so deref/volatile? can recognize them.
 (defn core-volatile! [v] @{:jolt/type :jolt/volatile :val v})
-(defn core-volatile? [x] (and (table? x) (= :jolt/volatile (x :jolt/type))))
+# volatile? now lives in the Clojure collection tier (tagged-value predicate).
 (defn core-vswap! [vol f & args]
   (def new-val (apply f (vol :val) args))
   (put vol :val new-val)
@@ -2537,7 +2534,7 @@
 (defn core-special-symbol? [x]
   (and (core-symbol? x) (= true (get special-syms (x :name)))))
 
-(defn core-record? [x] (and (table? x) (not (nil? (get x :jolt/deftype)))))
+# record? now lives in the Clojure collection tier (tagged-value predicate).
 
 # Promise: single-threaded box backed by an atom (deref returns nil until set).
 (defn core-promise [] (core-atom nil))
@@ -2794,7 +2791,6 @@
     "denominator" core-denominator
     "list*" core-list*
     "special-symbol?" core-special-symbol?
-    "record?" core-record?
     "promise" core-promise
     "deliver" core-deliver
     "future-call" core-future-call
@@ -2862,7 +2858,6 @@
     "ex-info" core-ex-info
     "prn-str" core-prn-str
     "println-str" core-println-str
-    "volatile?" core-volatile?
     "force" core-force
     "realized?" core-realized?
     "delay?" core-delay?
@@ -2970,7 +2965,6 @@
     "chunk-buffer" core-chunk-buffer
     "chunk-append" core-chunk-append
     "chunk" core-chunk
-    "chunked-seq?" core-chunked-seq?
     "chunk-first" core-chunk-first
     "chunk-rest" core-chunk-rest
     "chunk-next" core-chunk-next
@@ -2980,7 +2974,6 @@
     "disj!" core-disj!
     "random-sample" core-random-sample
     "reader-conditional" core-reader-conditional
-    "reader-conditional?" core-reader-conditional?
     "sorted-map-by" core-sorted-map-by
     "sorted-set-by" core-sorted-set-by
     "array-seq" core-array-seq
@@ -3042,7 +3035,6 @@
     # Hash
     "hash" core-hash
     "atom" core-atom
-    "atom?" core-atom?
     "deref" core-deref
     "reset!" core-reset!
     "swap!" core-swap!
@@ -3097,7 +3089,6 @@
     "uri?" core-uri?
     "uuid?" core-uuid?
     "bytes?" core-bytes?
-    "tagged-literal?" core-tagged-literal?
     "meta" core-meta
     "var-get" core-var-get
     "var-set" core-var-set

@@ -253,3 +253,15 @@
           :else            nil)))
 (defn ex-cause [e]
   (let [e (ex-unwrap e)] (if (ex-info-val? e) (get e :cause) nil)))
+
+;; Tagged-value predicates. The constructors (atom/volatile!/...) stay in Janet,
+;; but every tagged value carries its kind under :jolt/type (records under
+;; :jolt/deftype), reachable via get — which is nil on non-tables — so the
+;; predicates are pure over get and move out of the seed.
+(defn atom? [x]               (= (get x :jolt/type) :jolt/atom))
+(defn volatile? [x]           (= (get x :jolt/type) :jolt/volatile))
+(defn reader-conditional? [x] (= (get x :jolt/type) :jolt/reader-conditional))
+(defn tagged-literal? [x]     (= (get x :jolt/type) :jolt/tagged-literal))
+(defn record? [x]             (some? (get x :jolt/deftype)))
+;; Jolt has no chunked seqs (Phase 5 territory), so this is always false.
+(defn chunked-seq? [x] false)
