@@ -225,3 +225,14 @@
 ;; namespace-munge: Clojure namespace name -> legal Java package name (- -> _).
 (defn namespace-munge [s]
   (apply str (map (fn [c] (if (= c \-) \_ c)) (seq (str s)))))
+
+;; reduce-kv over a map (k v) or vector (index v). Both branches go through reduce,
+;; so reduced short-circuits — and the vector path indexes correctly. (The prior
+;; Janet version saw a pvec as a table and folded over its internal keys; it also
+;; ignored reduced.) nil folds to init, matching Clojure.
+(defn reduce-kv [f init coll]
+  (cond
+    (vector? coll) (reduce (fn [acc i] (f acc i (nth coll i))) init (range (count coll)))
+    (map? coll)    (reduce (fn [acc k] (f acc k (get coll k))) init (keys coll))
+    (nil? coll)    init
+    :else (throw (str "reduce-kv not supported on: " coll))))

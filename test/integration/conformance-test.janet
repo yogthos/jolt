@@ -108,6 +108,7 @@
    ["subvec"          "[2 3]"         "(subvec [1 2 3 4 5] 1 3)"]
    ["subvec to-end"   "[3 4 5]"       "(subvec [1 2 3 4 5] 2)"]
    ["reduce-kv"       "{:a 2 :b 3}"   "(reduce-kv (fn [m k v] (assoc m k (inc v))) {} {:a 1 :b 2})"]
+   ["reduce-kv vector idx" "(quote ([0 :a] [1 :b]))" "(reduce-kv (fn [a i v] (conj a [i v])) [] [:a :b])"]
 
    ### ---- iterating maps yields entries ----
    ["map over map"      "true"  "(= #{1 2} (set (map val {:a 1 :b 2})))"]

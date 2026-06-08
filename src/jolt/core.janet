@@ -1296,13 +1296,7 @@
         (defn cstep [i] (fn [] @[(in c (% i (length c))) (cstep (+ i 1))]))
         (make-lazy-seq (cstep 0))))))
 
-(defn core-reduce-kv [f init m]
-  (var acc init)
-  (cond
-    (phm? m) (each e (phm-entries m) (set acc (f acc (in e 0) (in e 1))))
-    (or (struct? m) (table? m)) (each k (keys m) (set acc (f acc k (get m k))))
-    (indexed? m) (do (var i 0) (each x m (set acc (f acc i x)) (++ i))))
-  acc)
+# reduce-kv now lives in the Clojure collection tier (core/20-coll.clj).
 
 # pop is defined only on stacks (vectors -> last end, lists -> front); Clojure
 # throws on sets/maps/seqs/strings/scalars. (peek lives in the Clojure kernel
@@ -2765,7 +2759,6 @@
     "keep-indexed" core-keep-indexed
     "map-indexed" core-map-indexed
     "cycle" core-cycle
-    "reduce-kv" core-reduce-kv
     "pop" core-pop
     "trampoline" core-trampoline
     "format" core-format
