@@ -1048,7 +1048,7 @@
            (var cur c)
            (while (and (not (seq-done? cur)) (pred (ls-first cur)))
              (set cur (ls-rest cur)))
-           (if (seq-done? cur) nil cur)))
+           (if (seq-done? cur) nil (realize-ls cur))))
        (make-lazy-seq (dwstep coll)))
      (let [c (realize-for-iteration coll)]
        (var start 0)
@@ -1134,17 +1134,44 @@
               (each x (realize-for-iteration (f (a 1)))
                 (set acc (rf acc x)))
               acc))))
-    # collection arity: map f over colls, then concatenate. A non-seqable
-    # result counts as a single element (this leniency is what jolt's `for`
-    # expansion relies on for :let on the last binding, whose body yields a
-    # scalar rather than a seq).
-    (let [mapped (realize-for-iteration (core-apply core-map f colls))
-          seqs (map (fn [item]
-                      (if (or (tuple? item) (array? item) (pvec? item)
-                              (lazy-seq? item) (set? item))
-                        item (tuple item)))
-                    mapped)]
-      (core-apply core-concat seqs))))
+    # collection arity: direct lazy implementation. Pull one element
+    # from each input coll, apply f, then yield elements from f's result.
+    # No apply-forcing — walk input colls lazily element-by-element.
+    (do
+      (var n (length colls))
+      (var init-cs @[])
+      (var i 0)
+      (while (< i n)
+        (array/push init-cs (lazy-from (in colls i)))
+        (++ i))
+      (defn step [cs res]
+        (fn []
+          (var cursors cs) (var cur-res res) (var hit nil) (var ok false)
+          (while (not ok)
+            (if (nil? cur-res)
+              (do
+                (var args @[]) (var next-cs @[]) (var exhausted false) (var j 0)
+                (while (and (< j n) (not exhausted))
+                  (let [c (in cursors j)]
+                    (if (seq-done? c) (set exhausted true)
+                      (do
+                        (array/push args (ls-first c))
+                        (array/push next-cs (ls-rest c)))))
+                  (++ j))
+                (if exhausted (break))
+                (let [r (apply f args)]
+                  (set cursors next-cs)
+                  (set cur-res (if (or (nil? r) (tuple? r) (array? r)
+                                       (lazy-seq? r) (pvec? r) (set? r) (plist? r))
+                                 (lazy-from r)
+                                 (lazy-from (tuple r))))))
+              (if (seq-done? cur-res)
+                (set cur-res nil)
+                (let [val (ls-first cur-res) rest (ls-rest cur-res)]
+                  (set hit @[val (step cursors rest)])
+                  (set ok true)))))
+          (if ok hit nil)))
+      (make-lazy-seq (step init-cs nil)))))
 
 (defn core-reverse [coll]
   (if (nil? coll) @[]
