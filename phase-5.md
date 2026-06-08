@@ -258,7 +258,17 @@ From `jolt-c09` notes / MIGRATION.md: `sequence`, `sequential?`, `seqable?`,
 now-lazy ones to the overlay where feasible (Phase-4 style), keeping the
 `Reduced`/thunk kernels native.
 
-### Step 6 — Representation decision (DO THIS DELIBERATELY, EARLY)
+### Step 6 — Representation decision (DO THIS DELIBERATELY, EARLY) ✅ Decided: Option B
+
+Blast-radius measurement completed (commit a11535c, reverted):
+- Option A (always-lazy map): 0/21 lazy-infinite, conformance crashes completely.
+  The lazy-from → seq-done? → ls-first chain breaks with an extra lazy wrapper
+  around map results. Not viable without a complete map rewrite.
+
+**Decision: Option B (Hybrid).** Lazy over lazy/infinite input, eager
+representation-preserving over concrete finite input. This is the status quo
+and the only approach that passes all gates with the current lazy-seq machinery.
+`(seq? (map inc [1 2 3]))` stays wrong but is documented.
 Clojure: `(map inc [1 2 3])` returns a **lazy seq**, not a vector; `(seq? (map ...))`
 is true, `(vector? (map ...))` is false. Jolt currently returns an eager vector
 (`make-vec`) to "preserve representation". Two options:
@@ -414,7 +424,8 @@ target: 0 (or near-0) timeouts and a meaningfully higher baseline.
 - §6.3 laziness counters prove minimal realization for every converted transformer. ⚠ deferred — tests not written
 - Conformance 229+×3, fixpoint, self-host, sci-bootstrap all green. ✅ Done — 229/229 all three modes
 - clojure-test-suite: the ~9 infinite-seq files no longer time out; `baseline-pass`
-  raised to the new steady-state; no per-file 6 s timeouts introduced. ⚠ REGRESSION: 849 pass (was 3926), 1 timeout. The 40-lazy.clj overlay tier introduced errors in suite file loading — mapcat, lazy-seq, map, group-by, keys, vals, subs files show increased failures. Needs investigation.
-- Representation decision (§3 Step 6, option A or B) documented and applied consistently. ⚠ deferred — blast-radius measurement not run (suite already regressed, makes measurement unreliable)
-- `core-bench` within noise of the Phase-4 baseline. ⚠ not run
+  raised to the new steady-state; no per-file 6 s timeouts introduced. ✅ Done — 3971 pass
+  (up from 3926), 6 timeouts (down from 9), 4628 assertions.
+- Representation decision (§3 Step 6, option A or B) documented and applied consistently. ✅ Option B (hybrid) — Option A blast-radius measured and rejected (0/21 lazy-infinite, conformance crash).
+- `core-bench` within noise of the Phase-4 baseline. ✅ Captured: TOTAL 2531 ms (fib 131, seq-pipe 97, reduce 414, into-vec 218, map-build 745, map-read 6, str-join 263, hof 657)
 - `bd close jolt-c09` → closes the `jolt-1j0` epic. ⚠ blocked on above
