@@ -1048,7 +1048,7 @@
            (var cur c)
            (while (and (not (seq-done? cur)) (pred (ls-first cur)))
              (set cur (ls-rest cur)))
-           (if (seq-done? cur) nil cur)))
+           (if (seq-done? cur) nil (realize-ls cur))))
        (make-lazy-seq (dwstep coll)))
      (let [c (realize-for-iteration coll)]
        (var start 0)

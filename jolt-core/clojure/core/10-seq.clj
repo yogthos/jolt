@@ -23,29 +23,7 @@
       (recur (conj ret (first s)) (next s))
       (seq ret))))
 
-(defn- mapcat-step [rs cur]
-  (lazy-seq
-    (if cur
-      (let [s (seq cur)]
-        (if s
-          (cons (first s) (mapcat-step rs (rest s)))
-          (mapcat-step rs nil)))
-      (let [s (seq rs)]
-        (if s
-          (let [c (first s)
-                sc (seq c)]
-            (if sc
-              (cons (first sc) (mapcat-step (rest s) (rest sc)))
-              (mapcat-step (rest s) nil)))
-          nil)))))
-
 (defn mapcat
   ([f] (comp (map f) cat))
-  ([f coll]
-   (mapcat-step (map f coll) nil))
-  ([f c1 c2]
-   (mapcat-step (map f c1 c2) nil))
-  ([f c1 c2 c3]
-   (mapcat-step (map f c1 c2 c3) nil))
-  ([f c1 c2 c3 & colls]
-   (mapcat-step (apply map f c1 c2 c3 colls) nil)))
+  ([f & colls]
+   (apply concat (apply map f colls))))
