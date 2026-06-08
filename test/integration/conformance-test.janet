@@ -303,6 +303,10 @@
    ["transduce remove"  "[1 3 5]" "(into [] (remove even?) [1 2 3 4 5])"]
    ["transduce take-while" "[1 2]" "(into [] (take-while (fn [x] (< x 3))) [1 2 3 4 1])"]
    ["transduce map-indexed" "[[0 :a] [1 :b]]" "(into [] (map-indexed (fn [i x] [i x])) [:a :b])"]
+   ["partition-all xform"   "[[1 2] [3 4] [5]]" "(into [] (partition-all 2) [1 2 3 4 5])"]
+   ["partition-all xform comp" "[2 2 1]" "(into [] (comp (partition-all 2) (map count)) [1 2 3 4 5])"]
+   ["partition-by xform"    "[[1 1] [2 4] [5]]" "(into [] (partition-by odd?) [1 1 2 4 5])"]
+   ["partition-by xform reduced" "[[1 1] [2 4]]" "(into [] (comp (partition-by odd?) (take 2)) [1 1 2 4 5 5])"]
 
    ### ==== regex (capturing groups, backtracking, flags, lookahead) ====
    ["re-find groups"    "[\"12-34\" \"12\" \"34\"]" "(re-find #\"(\\d+)-(\\d+)\" \"x12-34y\")"]

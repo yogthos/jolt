@@ -827,6 +827,30 @@
     (var i -1)
     (fn [& a] (case (length a) 0 (rf) 1 (rf (a 0)) (do (++ i) (rf (a 0) (f i (a 1))))))))
 
+# Stateful windowing transducers. The 1-arg (completion) arity flushes a partial
+# trailing window before delegating to rf's completion; matches Clojure.
+(defn td-partition-all [n]
+  (fn [rf]
+    (var buf @[])
+    (fn [& a]
+      (case (length a)
+        0 (rf)
+        1 (let [result (if (= 0 (length buf)) (a 0)
+                         (let [v (tuple/slice (tuple ;buf))]
+                           (set buf @[])
+                           (core-unreduced (rf (a 0) v))))]
+            (rf result))
+        (do
+          (array/push buf (a 1))
+          (if (= n (length buf))
+            (let [v (tuple/slice (tuple ;buf))]
+              (set buf @[])
+              (rf (a 0) v))
+            (a 0)))))))
+
+# partition-by's transducer arity lives with its (lazy) collection arity in the
+# overlay (10-seq tier), written in Clojure with volatiles.
+
 (defn- reduce-with-reduced
   "Reduce coll with reducing fn rf and seed init, honoring `reduced`. Steps lazy
   seqs one cell at a time so a reducing fn that returns `reduced` (e.g. the
@@ -1361,7 +1385,9 @@
   (if (> (length part) 0) (array/push result (tuple/slice (tuple ;part))))
   result)
 
-(defn core-partition-all [n coll]
+(defn core-partition-all [n & rest]
+ (if (= 0 (length rest)) (td-partition-all n)
+  (let [coll (in rest 0)]
   # Option A: always lazy.
   (defn pstep [c]
     (fn []
@@ -1373,7 +1399,7 @@
             (set cur (core-rest cur))
             (++ i))
           @[(tuple/slice (tuple ;part)) (pstep cur)]))))
-  (make-lazy-seq (pstep (lazy-from coll))))
+  (make-lazy-seq (pstep (lazy-from coll))))))
 
 
 (defn core-keep-indexed [f coll]
