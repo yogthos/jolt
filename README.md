@@ -9,7 +9,7 @@ A Clojure implementation on [Janet](https://janet-lang.org). Jolt reads Clojure 
 ```bash
 git clone https://github.com/jolt-lang/jolt.git
 cd jolt
-git submodule update --init   # pulls vendor/sci
+git submodule update --init   # pulls vendor/sci and vendor/clojure-test-suite
 jpm build                     # builds build/jolt and build/jolt-deps
 ```
 
@@ -54,7 +54,7 @@ hello 42
 
 (def ctx (init))
 (eval-string ctx "(+ 1 2)")            # → 3
-(eval-string ctx "(map inc [1 2 3])")  # → [2 3 4]
+(eval-string ctx "(map inc [1 2 3])")  # → (2 3 4)   ; a lazy seq, like Clojure
 ```
 
 `(init)` returns a context with `clojure.core` loaded. Each context is isolated; use separate contexts for separate environments.
@@ -94,10 +94,11 @@ calls compile to direct Janet calls.
 For compute-heavy code the compiled path is dramatically faster than tree-walking,
 at native Janet speed.
 
-**Validated at parity.** The conformance suite passes 218/218 under *both*
-interpreter and compiler (`conformance-test.janet` runs both in CI), and the full
-clojure-test-suite under compilation matches the interpreter baseline across
-~4.6k assertions — evidence the hybrid path doesn't diverge.
+**Validated at parity.** The conformance suite passes 258/258 under *all three*
+execution paths — interpreter, compiler, and the self-hosted compiler
+(`conformance-test.janet` runs all three in CI) — and the full clojure-test-suite
+matches its baseline across ~4.6k assertions — evidence the hybrid path doesn't
+diverge.
 
 **AOT.** `aot.janet` marshals a compiled namespace to a Janet bytecode image
 (`save-ns`) and loads it back into a fresh context (`load-ns-image`), skipping
@@ -211,11 +212,12 @@ Tests are organized in three layers:
   per public API area) that collectively pin down Jolt's defined behavior. This
   is the authoritative description of what Jolt promises.
 - **`test/integration/`** — cross-cutting and regression batteries: the Clojure
-  conformance suite, SCI bootstrap/runtime loading, jank conformance, the
-  cross-dialect [clojure-test-suite](https://github.com/jank-lang/clojure-test-suite)
-  (run via a minimal `clojure.test` shim against `~/src/clojure-test-suite`, if
-  present, and baseline-guarded), compile-mode tests, the library API, and a
-  broad systematic-coverage net.
+  conformance suite (run in all three execution modes), SCI bootstrap/runtime
+  loading, jank conformance, the cross-dialect
+  [clojure-test-suite](https://github.com/jank-lang/clojure-test-suite) (a git
+  submodule at `vendor/clojure-test-suite`, run via a minimal `clojure.test` shim
+  and baseline-guarded), compile-mode tests, the library API, and a broad
+  systematic-coverage net.
 - **`test/unit/`** — white-box tests for individual components (reader,
   evaluator, types, persistent collections, regex, compiler).
 
@@ -231,11 +233,14 @@ exercises it.
 ### clojure-test-suite conformance
 
 The [clojure-test-suite](https://github.com/jank-lang/clojure-test-suite) battery
-runs ~3900 assertions green. Jolt validates its arguments like Clojure —
-arithmetic on non-numbers, comparisons against `nil`, out-of-range indices,
-malformed `conj!`/`assoc!`/`merge`, and non-seqable `first`/`seq`/`vec` all
-throw. The assertions that remain failing are accounted for by the
-platform/design differences above, not by missing behavior:
+(vendored as a git submodule) runs ~3980 assertions green. Jolt validates its
+arguments like Clojure — arithmetic on non-numbers, comparisons against `nil`,
+out-of-range indices, malformed `conj!`/`assoc!`/`merge`, non-seqable
+`first`/`seq`/`vec`, and lazy transformers (`map`/`filter`/…) realized over a
+non-seqable all throw. The lazy seq fns return seqs (not vectors), so
+`seq?`/`vector?`/`sequential?` of their results match Clojure. The assertions
+that remain failing are accounted for by the platform/design differences above,
+not by missing behavior:
 
 - **No bignum/ratio/BigDecimal** — `bigint`/`numerator`/`denominator`/`bigdec`,
   the `big-int?`/auto-promotion checks, and the `2N`/`1/2`/`1.0M` literals read
@@ -245,8 +250,6 @@ platform/design differences above, not by missing behavior:
   `float?`/`double?` cases can't distinguish them (`(str 0.0)` is `"0"`).
 - **64-bit integers / Unicode** — `bit-and` etc. on full-width 64-bit constants
   lose precision (doubles), and `subs`/`count` work on bytes, not code points.
-- **Eager seqs** — `map`/`filter`/`range` return vectors, so `seq?`/`vector?`/
-  `sequential?` of their results differ, and sorts aren't guaranteed stable.
 
 ## License
 
