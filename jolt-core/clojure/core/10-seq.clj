@@ -22,8 +22,3 @@
     (if (next s)
       (recur (conj ret (first s)) (next s))
       (seq ret))))
-
-(defn mapcat
-  ([f] (comp (map f) cat))
-  ([f & colls]
-   (apply concat (apply map f colls))))

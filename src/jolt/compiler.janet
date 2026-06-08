@@ -97,6 +97,7 @@
     "take-while" "core-take-while"
     "drop-while" "core-drop-while"
     "nth" "core-nth"
+    "mapcat" "core-mapcat"
     "list" "core-list"
     "name" "core-name"
     "subs" "core-subs"

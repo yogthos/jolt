@@ -52,8 +52,9 @@
    ["take 3 partition-all 2 range"        "(quote ((0 1) (2 3) (4 5)))" "(take 3 (partition-all 2 (range)))"]
    ["take 3 map-indexed vector range"     "(quote ([0 0] [1 1] [2 2]))" "(take 3 (map-indexed vector (range)))"]
    ["take 3 distinct cycle"               "(quote (1 2 3))"       "(take 3 (distinct (cycle [1 2 1 3 1])))"]
-   # mapcat on infinite inputs hangs (apply forces lazy result, needs Step 4).
-   # ["take 6 mapcat dup range"             "(quote (0 0 1 1 2 2))" "(take 6 (mapcat (fn [x] [x x]) (range)))"]
+   ["take 6 mapcat dup range"             "(quote (0 0 1 1 2 2))" "(take 6 (mapcat (fn [x] [x x]) (range)))"]
+   ["first rest lazy"                     "1"                     "(let [[a & r] (range)] (first r))"]
+   ["take 3 rest lazy"                    "(quote (1 2 3))"       "(let [[a & r] (range)] (take 3 r))"]
    ["take 3 take-nth 2 range"             "(quote (0 2 4))"       "(take 3 (take-nth 2 (range)))"]
    ["take 3 interpose :x range"           "(quote (0 :x 1))"       "(take 3 (interpose :x (range)))"]
    ["take 3 map vector range iterate"     "(quote ([0 100] [1 101] [2 102]))" "(take 3 (map vector (range) (iterate inc 100)))"]

@@ -549,14 +549,24 @@
           (while (< di n)
             (let [elem (in pat di)]
               (cond
-                # & rest
-                (and (struct? elem) (= :symbol (elem :jolt/type)) (= "&" (elem :name)))
-                  (do
-                    # rest binds a seq (jolt list = array), per Clojure semantics
-                    (destructure-bind ctx bindings (in pat (+ di 1))
-                      (if (and seqable? (< vi (length rv)))
-                        (array/slice (if (tuple? rv) (array/slice rv) rv) vi)
-                        @[]))
+                 # & rest
+                 (and (struct? elem) (= :symbol (elem :jolt/type)) (= "&" (elem :name)))
+                   (do
+                     # rest binds a seq (jolt list = array), per Clojure semantics.
+                     # For lazy-seqs, preserve laziness: walk vi steps via ls-rest
+                     # instead of slicing the eagerly-realized array.
+                     (destructure-bind ctx bindings (in pat (+ di 1))
+                       (if (lazy-seq? val)
+                         (do
+                           (var c val) (var i 0)
+                           (while (< i vi)
+                             (let [nxt (ls-rest c)]
+                               (if (nil? nxt) (break)
+                                 (do (set c nxt) (++ i)))))
+                           c)
+                         (if (and seqable? (< vi (length rv)))
+                           (array/slice (if (tuple? rv) (array/slice rv) rv) vi)
+                           @[])))
                     (set di (+ di 2)))
                 # :as whole
                 (= elem :as)
