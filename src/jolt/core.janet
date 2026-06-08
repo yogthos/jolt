@@ -1292,21 +1292,6 @@
           (+= i step))
         result))))
 
-(defn core-map-indexed [f & rest]
-  (if (= 0 (length rest)) (td-map-indexed f)
-    (let [coll (in rest 0)]
-      (if (lazy-seq? coll)
-        (do
-          (defn mstep [c i]
-            (fn []
-              (if (seq-done? c) nil
-                @[(f i (ls-first c)) (mstep (ls-rest c) (+ i 1))])))
-          (make-lazy-seq (mstep coll 0)))
-        (let [c (realize-for-iteration coll) result @[]]
-          (var i 0)
-          (each x c (array/push result (f i x)) (++ i))
-          (tuple/slice (tuple ;result)))))))
-
 # reduce-kv now lives in the Clojure collection tier (core/20-coll.clj).
 
 # pop is defined only on stacks (vectors -> last end, lists -> front); Clojure
@@ -1350,21 +1335,6 @@
           (array/push result i)
           (+= i step))
         (tuple/slice (tuple ;result))))))
-
-(defn core-iterate [f x]
-  "Lazy infinite sequence x, (f x), (f (f x)), ..."
-  (defn istep [v] (fn [] @[v (istep (f v))]))
-  (make-lazy-seq (istep x)))
-
-(defn core-repeatedly
-  "(repeatedly f) -> infinite lazy seq of (f) calls; (repeatedly n f) -> n calls."
-  [a & rest]
-  (if (= 0 (length rest))
-    (do (defn rstep [] (fn [] @[(a) (rstep)])) (make-lazy-seq (rstep)))
-    (let [n a f (in rest 0)]
-      (var result @[]) (var i 0)
-      (while (< i n) (array/push result (f)) (++ i))
-      result)))
 
 # ============================================================
 # Higher-order functions
@@ -2240,6 +2210,23 @@
     (fn [& a] (case (length a) 0 (rf) 1 (rf (a 0))
                 (if started (rf (rf (a 0) sep) (a 1))
                   (do (set started true) (rf (a 0) (a 1))))))))
+
+(defn core-interpose [sep & rest]
+  (if (= 0 (length rest)) (td-interpose sep)
+    (let [coll (in rest 0)]
+      (if (lazy-seq? coll)
+        (do
+          (defn istep [c need-sep]
+            (fn []
+              (if (seq-done? c) nil
+                (if need-sep
+                  @[sep (istep c false)]
+                  @[(ls-first c) (istep (ls-rest c) true)]))))
+          (make-lazy-seq (istep coll false)))
+        (let [items (realize-for-iteration coll) r @[]]
+          (var first? true)
+          (each x items (if first? (set first? false) (array/push r sep)) (array/push r x))
+          (tuple ;r))))))
 
 (defn core-empty [coll]
   (cond
