@@ -32,9 +32,15 @@
 # which several suite tests assert. Runs read 3927 consistently, occasionally 3926
 # when a timeout-prone test (of the 9 that can time out) doesn't finish; floor at
 # the consistent-minus-one 3926.
-(def baseline-pass 3971)
+# Raised 3971 -> 3981 with Option A full laziness (jolt-fng): transformers return
+# lazy seqs, lazy interleave stops timing out, and the lazy-seq nil-element +
+# non-seqable-input fixes (case/seq/reverse/empty? over nil-first lazy seqs;
+# lazy-from throws on non-seqable like Clojure) recovered + extended the suite.
+# clean files 45 -> 66 (Option A makes seq?/vector? results match Clojure across
+# many cross-dialect files). Stable across runs.
+(def baseline-pass 3981)
 # A file is "clean" when it ran with zero failures AND zero errors.
-(def baseline-clean-files 45)
+(def baseline-clean-files 66)
 # Per-file wall-clock budget (seconds). Normal files finish in well under 1s;
 # this only fires on infinite-sequence hangs.
 (def per-file-timeout 6)

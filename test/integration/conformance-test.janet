@@ -157,6 +157,15 @@
    ["partition-by odd?" "(quote ((1 1) (2) (3 3)))" "(partition-by odd? [1 1 2 3 3])"]
    ["reductions inf"  "(quote (0 1 3 6))" "(take 4 (reductions + (range)))"]
    ["tree-seq strict" "10"  "(reduce + 0 (filter (complement coll?) (tree-seq coll? seq [1 [2 [3 4]]])))"]
+   # nil/collection case-constants past the point where Option A's lazy `drop`
+   # made the case macro's (empty? (drop 2 cls)) hit a nil-first lazy seq.
+   ["case nil + default" "[:nilr :def]" "(let [f (fn [x] (case x 1 :one nil :nilr :def))] [(f nil) (f 9)])"]
+   ["case collection consts" "[:v :m :s]" "(let [f (fn [x] (case x [1 2] :v {:a 1} :m #{3} :s :def))] [(f [1 2]) (f {:a 1}) (f #{3})])"]
+   # a lazy seq whose first element is nil is non-empty (seq/empty?/reverse)
+   ["seq of nil-first"   "true"  "(boolean (seq (cons nil (list 1))))"]
+   ["reverse nil elem"   "[2 nil 1]" "(vec (reverse (list 1 nil 2)))"]
+   # lazy transformer over a non-seqable scalar throws (matches Clojure)
+   ["map non-seqable throws" "true" "(try (doall (map inc 5)) false (catch Throwable _ true))"]
    ["keep-indexed"    "(quote (:b :d))" "(keep-indexed (fn [i x] (if (odd? i) x)) [:a :b :c :d])"]
    ["map-indexed"     "(quote ([0 :a] [1 :b]))" "(map-indexed (fn [i x] [i x]) [:a :b])"]
    ["trampoline"      ":done"         "(do (defn a [n] (if (zero? n) :done (fn [] (a (dec n))))) (trampoline a 5))"]

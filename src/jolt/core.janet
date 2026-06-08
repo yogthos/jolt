@@ -196,7 +196,11 @@
       (if (phm? coll) (= 0 (coll :cnt))
         (if (pvec? coll) (= 0 (pv-count coll))
           (if (plist? coll) (pl-empty? coll)
-          (if (lazy-seq? coll) (nil? (ls-first coll))
+          # Cell-based, NOT (nil? (ls-first)): a lazy-seq whose first element is
+          # legitimately nil (e.g. a `nil` case-constant) is non-empty.
+          (if (lazy-seq? coll)
+            (let [cell (realize-ls coll)]
+              (or (nil? cell) (= :jolt/pending cell) (= 0 (length cell))))
             (if (struct? coll) (= 0 (length (keys coll)))
               (= 0 (length coll))))))))))
 
@@ -661,7 +665,10 @@
     (core-sorted-map? coll) (let [e (sorted-map-entries coll)] (if (empty? e) nil (tuple ;e)))
     (core-sorted-set? coll) (let [i (coll :items)] (if (empty? i) nil (tuple ;i)))
     (or (nil? coll) (and (or (tuple? coll) (array? coll)) (= 0 (length coll)))) nil
-    (lazy-seq? coll) (if (nil? (ls-first coll)) nil coll)
+    # Cell-based emptiness, NOT (nil? (ls-first)): a lazy-seq whose first element
+    # is legitimately nil is non-empty, so (seq (cons nil ...)) must not be nil.
+    (lazy-seq? coll) (let [cell (realize-ls coll)]
+                       (if (or (nil? cell) (= :jolt/pending cell) (= 0 (length cell))) nil coll))
     (pvec? coll) (if (= 0 (pv-count coll)) nil (tuple ;(pv->array coll)))
     (plist? coll) (if (pl-empty? coll) nil (tuple ;(pl->array coll)))
     (buffer? coll) (if (= 0 (length coll)) nil (let [a @[]] (each x coll (array/push a x)) (tuple ;a)))
@@ -988,9 +995,16 @@
   [coll]
   (if (nil? coll) nil
     (if (lazy-seq? coll) coll
-      (let [cell (coll->cells coll)]
-        (if (nil? cell) nil
-          (make-lazy-seq (fn [] cell)))))))
+      (do
+        # Reject non-seqable scalars (number/boolean/keyword, and tagged structs
+        # like char/symbol) so a lazy transformer over bad input throws when
+        # realized — matching Clojure — instead of silently yielding empty.
+        (when (or (number? coll) (boolean? coll) (keyword? coll)
+                  (and (struct? coll) (not (nil? (get coll :jolt/type)))))
+          (error (string "Don't know how to create ISeq from: " (type coll))))
+        (let [cell (coll->cells coll)]
+          (if (nil? cell) nil
+            (make-lazy-seq (fn [] cell))))))))
 
 (defn core-map [f & colls]
   (def f (as-fn f))
@@ -1245,9 +1259,10 @@
     (do
       (var result @[])
       (var cur coll)
-      (while (not (nil? (ls-first cur)))
-        (array/push result (ls-first cur))
-        (set cur (ls-rest cur)))
+      # seq-done?, not (nil? (ls-first)): a nil element must not end the walk.
+      (while (not (seq-done? cur))
+        (array/push result (core-first cur))
+        (set cur (core-rest cur)))
       (var reversed @[])
       (var i (dec (length result)))
       (while (>= i 0)
