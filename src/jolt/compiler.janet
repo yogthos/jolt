@@ -98,6 +98,7 @@
     "drop-while" "core-drop-while"
     "nth" "core-nth"
     "mapcat" "core-mapcat"
+    "apply" "core-apply"
     "trampoline" "core-trampoline"
     "list" "core-list"
     "name" "core-name"
