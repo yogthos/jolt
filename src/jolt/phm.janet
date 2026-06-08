@@ -202,6 +202,16 @@
   cnt)
 
 # ============================================================
+# Lazy combinator — primitive for building lazy sequences
+# ============================================================
+
+(defn lazy-cons
+  "Returns a LazySeq whose first element is x and whose rest is produced
+  by rest-thunk (a 0-arg function returning nil or a LazySeq)."
+  [x rest-thunk]
+  (make-lazy-seq (fn [] @[x rest-thunk])))
+
+# ============================================================
 # PersistentHashSet — backed by PersistentHashMap
 # ============================================================
 

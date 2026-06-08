@@ -630,7 +630,7 @@
     (core-sorted-map? coll) (let [e (sorted-map-entries coll)] (if (empty? e) nil (tuple ;e)))
     (core-sorted-set? coll) (let [i (coll :items)] (if (empty? i) nil (tuple ;i)))
     (or (nil? coll) (and (or (tuple? coll) (array? coll)) (= 0 (length coll)))) nil
-    (lazy-seq? coll) (ls-seq coll)
+    (lazy-seq? coll) (if (nil? (ls-first coll)) nil coll)
     (pvec? coll) (if (= 0 (pv-count coll)) nil (tuple ;(pv->array coll)))
     (plist? coll) (if (pl-empty? coll) nil (tuple ;(pl->array coll)))
     (buffer? coll) (if (= 0 (length coll)) nil (let [a @[]] (each x coll (array/push a x)) (tuple ;a)))
@@ -1040,14 +1040,23 @@
 (defn core-drop-while [pred & rest]
  (def pred (as-fn pred))
  (if (= 0 (length rest)) (td-drop-while pred)
-  (let [coll (in rest 0)
-        c (realize-for-iteration coll)]
-    (var start 0)
-    (while (and (< start (length c)) (pred (c start)))
-      (++ start))
-    (if (tuple? c)
-      (tuple/slice c start)
-      (array/slice c start)))))
+  (let [coll (in rest 0)]
+   (if (lazy-seq? coll)
+     (do
+       (defn dwstep [c]
+         (fn []
+           (var cur c)
+           (while (and (not (seq-done? cur)) (pred (ls-first cur)))
+             (set cur (ls-rest cur)))
+           (if (seq-done? cur) nil cur)))
+       (make-lazy-seq (dwstep coll)))
+     (let [c (realize-for-iteration coll)]
+       (var start 0)
+       (while (and (< start (length c)) (pred (c start)))
+         (++ start))
+       (if (tuple? c)
+         (tuple/slice c start)
+         (array/slice c start)))))))
 
 (defn coll->cells [c]
   "Convert a seqable to lazy-seq cell chain: nil or [first, rest-thunk].
@@ -1081,22 +1090,35 @@
   construction time. This is essential for self-referential lazy seqs (e.g.
   (def fib (lazy-cat [0 1] (map + (rest fib) fib)))): the later colls must not be
   forced until after the surrounding `def` has bound the var."
-  (defn step [cs]
-    (fn []
-      (if (= 0 (length cs))
-        nil
-        (let [c (in cs 0)
-              remaining (array/slice cs 1)
-              cell (coll->cells c)]
-          (if (nil? cell)
-            # current coll is empty: advance to the next one
-            ((step remaining))
-            (let [val (in cell 0)
-                  rest-fn (in cell 1)]
-              @[val (step (if (nil? rest-fn)
-                            remaining
-                            (array/insert remaining 0 rest-fn)))]))))))
-  (make-lazy-seq (step (if (tuple? colls) (array/slice colls) colls))))
+  (if (= 0 (length colls)) @[]
+    (let [colls (if (tuple? colls) (array/slice colls) colls)]
+      (defn step [cs]
+        (fn []
+          (if (= 0 (length cs))
+            nil
+            (let [c (in cs 0)
+                  remaining (array/slice cs 1)
+                  cell (coll->cells c)]
+              (if (nil? cell)
+                # current coll is empty: advance to the next one
+                ((step remaining))
+                (let [val (in cell 0)
+                      rest-fn (in cell 1)]
+                  @[val (step (if (nil? rest-fn)
+                                remaining
+                                (array/insert remaining 0 rest-fn)))]))))))
+      (make-lazy-seq (step colls)))))
+
+(defn lazy-from
+  "Coerce any seqable to a uniform lazy view without forcing.
+  Returns nil if coll is nil or empty, the LazySeq unchanged if already lazy,
+  or a new LazySeq that walks element by element."
+  [coll]
+  (if (nil? coll) nil
+    (if (lazy-seq? coll) coll
+      (let [cell (coll->cells coll)]
+        (if (nil? cell) nil
+          (make-lazy-seq (fn [] cell)))))))
 
 (defn core-mapcat
   "(mapcat f & colls) — map then concat. (mapcat f) returns a transducer."
@@ -1112,9 +1134,10 @@
               (each x (realize-for-iteration (f (a 1)))
                 (set acc (rf acc x)))
               acc))))
-    # map, then concat; a non-seqable result counts as a single element (this
-    # leniency is what jolt's `for` expansion relies on for :let on the last
-    # binding, whose body yields a scalar rather than a seq).
+    # collection arity: map f over colls, then concatenate. A non-seqable
+    # result counts as a single element (this leniency is what jolt's `for`
+    # expansion relies on for :let on the last binding, whose body yields a
+    # scalar rather than a seq).
     (let [mapped (realize-for-iteration (core-apply core-map f colls))
           seqs (map (fn [item]
                       (if (or (tuple? item) (array? item) (pvec? item)
@@ -1213,14 +1236,18 @@
   (if (lazy-seq? coll)
     (do
       (var seen @{})
-      (var result @[])
-      (var cur coll)
-      (while (not (nil? (ls-first cur)))
-        (let [x (ls-first cur)]
-          (if (nil? (seen x))
-            (do (put seen x true) (array/push result x))))
-        (set cur (ls-rest cur)))
-      result)
+      (defn dstep [c]
+        (fn []
+          (var cur c) (var found false) (var result nil)
+          (while (and (not found) (not (seq-done? cur)))
+            (let [x (ls-first cur)]
+              (set cur (ls-rest cur))
+              (when (nil? (seen x))
+                (put seen x true)
+                (set found true)
+                (set result x))))
+          (if found @[result (dstep cur)] nil)))
+      (make-lazy-seq (dstep coll)))
     (do
       (var seen @{})
       (var result @[])
@@ -1238,14 +1265,31 @@
   [n & rest]
   (let [has-step (> (length rest) 1)
         step (if has-step (first rest) n)
-        coll (realize-for-iteration (if has-step (in rest 1) (first rest)))]
-    (var result @[]) (var i 0)
-    (while (<= (+ i n) (length coll))
-      (var part @[]) (var j 0)
-      (while (< j n) (array/push part (in coll (+ i j))) (++ j))
-      (array/push result (tuple/slice (tuple ;part)))
-      (+= i step))
-    result))
+        coll (if has-step (in rest 1) (first rest))]
+    (if (lazy-seq? coll)
+      (do
+        (defn pstep [c]
+          (fn []
+            (if (seq-done? c) nil
+              (do
+                (var part @[]) (var cur c) (var i 0)
+                (while (and (< i n) (not (seq-done? cur)))
+                  (array/push part (ls-first cur))
+                  (set cur (ls-rest cur))
+                  (++ i))
+                (if (= i n)
+                  (let [next-cur (if (= step n) cur (core-drop (- step n) cur))]
+                    @[(tuple/slice (tuple ;part)) (pstep next-cur)])
+                  nil)))))
+        (make-lazy-seq (pstep coll)))
+      (let [c (realize-for-iteration coll)]
+        (var result @[]) (var i 0)
+        (while (<= (+ i n) (length c))
+          (var part @[]) (var j 0)
+          (while (< j n) (array/push part (in c (+ i j))) (++ j))
+          (array/push result (tuple/slice (tuple ;part)))
+          (+= i step))
+        result))))
 
 (defn core-partition-by [f coll]
   (def f (as-fn f))
@@ -1264,29 +1308,65 @@
   result)
 
 (defn core-partition-all [n coll]
-  (let [c (realize-for-iteration coll)]
-    (var result @[]) (var i 0)
-    (while (< i (length c))
-      (var part @[]) (var j 0)
-      (while (and (< j n) (< (+ i j) (length c)))
-        (array/push part (in c (+ i j))) (++ j))
-      (array/push result (tuple/slice (tuple ;part)))
-      (+= i n))
-    result))
+  (if (lazy-seq? coll)
+    (do
+      (defn pstep [c]
+        (fn []
+          (if (seq-done? c) nil
+            (do
+              (var part @[]) (var cur c) (var i 0)
+              (while (and (< i n) (not (seq-done? cur)))
+                (array/push part (ls-first cur))
+                (set cur (ls-rest cur))
+                (++ i))
+              @[(tuple/slice (tuple ;part)) (pstep cur)]))))
+      (make-lazy-seq (pstep coll)))
+    (let [c (realize-for-iteration coll)]
+      (var result @[]) (var i 0)
+      (while (< i (length c))
+        (var part @[]) (var j 0)
+        (while (and (< j n) (< (+ i j) (length c)))
+          (array/push part (in c (+ i j))) (++ j))
+        (array/push result (tuple/slice (tuple ;part)))
+        (+= i n))
+      result)))
 
 
 (defn core-keep-indexed [f coll]
-  (let [c (realize-for-iteration coll) result @[]]
-    (var i 0)
-    (each x c (let [v (f i x)] (when (not (nil? v)) (array/push result v))) (++ i))
-    (tuple/slice (tuple ;result))))
+  (def f (as-fn f))
+  (if (lazy-seq? coll)
+    (do
+      (defn kstep [c i]
+        (fn []
+          (var cur c) (var idx i) (var found false) (var result nil)
+          (while (and (not found) (not (seq-done? cur)))
+            (let [v (f idx (ls-first cur))]
+              (++ idx)
+              (set cur (ls-rest cur))
+              (when (not (nil? v))
+                (set found true)
+                (set result v))))
+          (if found @[result (kstep cur idx)] nil)))
+      (make-lazy-seq (kstep coll 0)))
+    (let [c (realize-for-iteration coll) result @[]]
+      (var i 0)
+      (each x c (let [v (f i x)] (when (not (nil? v)) (array/push result v))) (++ i))
+      (tuple/slice (tuple ;result)))))
 
 (defn core-map-indexed [f & rest]
   (if (= 0 (length rest)) (td-map-indexed f)
-    (let [c (realize-for-iteration (in rest 0)) result @[]]
-      (var i 0)
-      (each x c (array/push result (f i x)) (++ i))
-      (tuple/slice (tuple ;result)))))
+    (let [coll (in rest 0)]
+      (if (lazy-seq? coll)
+        (do
+          (defn mstep [c i]
+            (fn []
+              (if (seq-done? c) nil
+                @[(f i (ls-first c)) (mstep (ls-rest c) (+ i 1))])))
+          (make-lazy-seq (mstep coll 0)))
+        (let [c (realize-for-iteration coll) result @[]]
+          (var i 0)
+          (each x c (array/push result (f i x)) (++ i))
+          (tuple/slice (tuple ;result)))))))
 
 (defn core-cycle [coll]
   (let [c (realize-for-iteration coll)]
@@ -2221,9 +2301,19 @@
                   (if keep (rf (a 0) (a 1)) (a 0)))))))
 (defn core-take-nth [n & rest]
   (if (= 0 (length rest)) (td-take-nth n)
-    (let [c (realize-for-iteration (in rest 0)) r @[]]
-      (var i 0) (while (< i (length c)) (array/push r (in c i)) (+= i n))
-      (tuple/slice (tuple ;r)))))
+    (let [coll (in rest 0)]
+      (if (lazy-seq? coll)
+        (do
+          (defn tstep [c]
+            (fn []
+              (if (seq-done? c) nil
+                (let [drop-n (core-drop n c)]
+                  (if (seq-done? drop-n) @[(ls-first c) nil]
+                    @[(ls-first c) (tstep drop-n)])))))
+          (make-lazy-seq (tstep coll)))
+        (let [c (realize-for-iteration coll) r @[]]
+          (var i 0) (while (< i (length c)) (array/push r (in c i)) (+= i n))
+          (tuple/slice (tuple ;r)))))))
 
 # filterv now lives in the Clojure collection tier (core/20-coll.clj).
 
@@ -2237,10 +2327,20 @@
                   (do (set started true) (rf (a 0) (a 1))))))))
 (defn core-interpose [sep & rest]
   (if (= 0 (length rest)) (td-interpose sep)
-    (let [items (realize-for-iteration (in rest 0)) r @[]]
-      (var first? true)
-      (each x items (if first? (set first? false) (array/push r sep)) (array/push r x))
-      (tuple ;r))))
+    (let [coll (in rest 0)]
+      (if (lazy-seq? coll)
+        (do
+          (defn istep [c need-sep]
+            (fn []
+              (if (seq-done? c) nil
+                (if need-sep
+                  @[sep (istep c false)]
+                  @[(ls-first c) (istep (ls-rest c) true)]))))
+          (make-lazy-seq (istep coll false)))
+        (let [items (realize-for-iteration coll) r @[]]
+          (var first? true)
+          (each x items (if first? (set first? false) (array/push r sep)) (array/push r x))
+          (tuple ;r))))))
 
 (defn core-keep
   "(keep f coll) — (f x) for each x, dropping nils. (keep f) is a transducer."
@@ -2248,10 +2348,24 @@
   (def f (as-fn f))
   (if (= 0 (length rest))
     (td-keep f)
-    (let [r @[]]
-      (each x (realize-for-iteration (in rest 0))
-        (let [v (f x)] (when (not (nil? v)) (array/push r v))))
-      (tuple ;r))))
+    (let [coll (in rest 0)]
+      (if (lazy-seq? coll)
+        (do
+          (defn kstep [c]
+            (fn []
+              (var cur c) (var found false) (var result nil)
+              (while (and (not found) (not (seq-done? cur)))
+                (let [v (f (ls-first cur))]
+                  (set cur (ls-rest cur))
+                  (when (not (nil? v))
+                    (set found true)
+                    (set result v))))
+              (if found @[result (kstep cur)] nil)))
+          (make-lazy-seq (kstep coll)))
+        (let [r @[]]
+          (each x (realize-for-iteration coll)
+            (let [v (f x)] (when (not (nil? v)) (array/push r v))))
+          (tuple ;r))))))
 
 
 (defn core-empty [coll]
@@ -2838,6 +2952,8 @@
     "disj" core-disj
     "coll->cells" coll->cells
     "make-lazy-seq" make-lazy-seq
+    "lazy-cons" lazy-cons
+    "lazy-from" lazy-from
     "str" core-str
     "name" core-name
     "subs" core-subs
