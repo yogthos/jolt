@@ -210,38 +210,29 @@
 
 ;; trampoline: repeatedly calls f with args until a non-function result.
 (defn trampoline
-  ([f]
-   (let [ret (f)]
-     (if (ifn? ret)
-       (recur ret)
-       ret)))
+  ([f] (trampoline f (f)))
   ([f & args]
    (let [ret (apply f args)]
-     (if (ifn? ret)
+     (if (fn? ret)
        (recur ret)
        ret))))
 
 ;; rand-int: random integer in [0, n). Uses Janet math/random.
-# rand-int stays native in core.janet (Janet math/floor + math/random)
+(defn rand-int [n] (math/floor (* (math/random) n)))
 
 ;; Eager dedupe of consecutive equal elements (Jolt has no transducer arity yet).
-(defn dedupe
-  "Returns a lazy seq removing consecutive duplicates in coll."
-  [coll]
+(defn dedupe [coll]
   (let [step (fn step [s prev]
-               (make-lazy-seq
-                 (fn* []
-                   (let [s (seq s)]
-                     (if s
-                       (let [x (first s)]
-                         (if (= x prev)
-                           (coll->cells (step (rest s) prev))
-                           (coll->cells (cons x (step (rest s) x)))))
-                       nil)))))]
+               (lazy-seq
+                 (let [s (seq s)]
+                   (when s
+                     (let [x (first s)]
+                       (if (= x prev)
+                         (step (rest s) prev)
+                         (cons x (step (rest s) x))))))))]
     (let [s (seq coll)]
       (if s
-        (make-lazy-seq
-          (fn* [] (coll->cells (cons (first s) (step (rest s) (first s))))))
+        (cons (first s) (step (rest s) (first s)))
         ()))))
 
 ;; Internal helper for {:keys [...]} destructuring over a seq of k/v pairs:
