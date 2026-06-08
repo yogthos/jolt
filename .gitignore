@@ -3,6 +3,7 @@ build/
 .dirge/
 .claude/
 .lsp/
+.calva/
 test/_*.janet
 
 # Beads / Dolt files (added by bd init)
