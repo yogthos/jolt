@@ -1904,10 +1904,8 @@
   (def res (fut :res))
   (if (= :error (in res 0)) (error (in res 1)) (in res 1)))
 
-(defn core-future-done? [x]
-  (if (core-future? x) (truthy? (x :cached))
-    (error "future-done? requires a future")))
-(defn core-future-cancelled? [x] (and (core-future? x) (truthy? (x :cancelled))))
+# future-done? / future-cancelled? now live in the Clojure collection tier (pure
+# reads of :cached/:cancelled). core-future? stays — deref/future-cancel call it.
 # Janet OS threads can't be interrupted, so the worker still runs to completion
 # in the background; we can only mark the *future* cancelled (done) so deref
 # raises and realized?/future-done?/future-cancelled? reflect it. Returns false
@@ -2755,9 +2753,7 @@
     "deliver" core-deliver
     "future-call" core-future-call
     "future?" core-future?
-    "future-done?" core-future-done?
     "future-cancel" core-future-cancel
-    "future-cancelled?" core-future-cancelled?
     "tagged-literal" core-tagged-literal
     "ensure-reduced" core-ensure-reduced
     "unreduced" core-unreduced

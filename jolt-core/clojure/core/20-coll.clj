@@ -293,3 +293,11 @@
   (jolt.host/ref-put! vol :val newval) newval)
 (defn vswap! [vol f & args]
   (vreset! vol (apply f (get vol :val) args)))
+
+;; Future status predicates — pure reads of the future's :cached/:cancelled slots.
+;; future? stays native (deref/future-cancel/realized? call it); future-call and
+;; future-cancel stay native too (OS threads).
+(defn future-done? [x]
+  (if (future? x) (boolean (get x :cached)) (throw "future-done? requires a future")))
+(defn future-cancelled? [x]
+  (and (future? x) (boolean (get x :cancelled))))
