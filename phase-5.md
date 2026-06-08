@@ -258,31 +258,37 @@ From `jolt-c09` notes / MIGRATION.md: `sequence`, `sequential?`, `seqable?`,
 now-lazy ones to the overlay where feasible (Phase-4 style), keeping the
 `Reduced`/thunk kernels native.
 
-### Step 6 — Representation decision (DO THIS DELIBERATELY, EARLY) ✅ Decided: Option B
+### Step 6 — Representation decision ✅ Decided: Option A (full Clojure laziness)
 
-Blast-radius measurement completed (commit a11535c, reverted):
-- Option A (always-lazy map): 0/21 lazy-infinite, conformance crashes completely.
-  The lazy-from → seq-done? → ls-first chain breaks with an extra lazy wrapper
-  around map results. Not viable without a complete map rewrite.
+**Decision: Option A.** Lazy transformers always return a LazySeq, even over a
+concrete vector — matching Clojure: `(seq? (map inc [1 2 3]))` is **true**,
+`(vector? (map inc [1 2 3]))` is **false**.
 
-**Decision: Option B (Hybrid).** Lazy over lazy/infinite input, eager
-representation-preserving over concrete finite input. This is the status quo
-and the only approach that passes all gates with the current lazy-seq machinery.
-`(seq? (map inc [1 2 3]))` stays wrong but is documented.
-Clojure: `(map inc [1 2 3])` returns a **lazy seq**, not a vector; `(seq? (map ...))`
-is true, `(vector? (map ...))` is false. Jolt currently returns an eager vector
-(`make-vec`) to "preserve representation". Two options:
-- **(A) Full Clojure semantics:** `map`/`filter`/etc. always return a LazySeq, even
-  over a vector. Most correct; **but** flips `vector?`/`seq?`/printing on a lot of
-  existing results and may shift many conformance/suite assertions. Budget for the
-  churn.
-- **(B) Hybrid (status quo extended):** lazy over lazy/infinite input, eager
-  representation-preserving over concrete finite input. Less churn, but
-  `(seq? (map inc [1 2 3]))` stays wrong.
-Recommend (A) for correctness, but measure the blast radius first: run conformance
-+ suite with a throwaway always-lazy `map` and count newly-failing assertions
-before committing to it. Whichever you pick, **write it down here and be
-consistent** across all transformers.
+History: an earlier Option A attempt (commit a11535c, reverted) crashed
+(0/21 lazy-infinite, conformance crash) because flipping `map` to always-lazy
+without the supporting boundary fixes broke the `lazy-from → seq-done? →
+ls-first` chain. That measurement led to Option B (hybrid) and Phase 5 being
+declared complete.
+
+Option A was then re-attempted **with the boundary fixes the first attempt
+lacked**, and it works — all gates green (conformance 246×3, lazy-infinite
+40/40). The fixes that made it viable:
+- `cons` over a lazy-seq returns a LazySeq, not a raw `@[val thunk]` cell (a
+  cons-of-a-cons no longer leaks the rest-thunk as a list element).
+- `coll->cells` disambiguates cons cells (mutable arrays) from user vectors
+  whose 2nd element is a function (`[first last]`), and coerces set/map/string/
+  buffer via `core-seq`.
+- `core-nth`/`core-next`/`core-rest` walk lazy seqs via `seq-done?` (not element
+  truthiness or `length` on the lazy table), so a `false`/`nil` element isn't
+  mistaken for end-of-seq and `rest` never returns nil.
+- `~@` splice (interpreter `syntax-quote*`) and the test helper `normalize-pvecs`
+  realize lazy-seqs.
+- Transformers always route concrete input through `lazy-from` + the lazy step
+  machinery (dropping the eager `(if (jvec? coll) (make-vec …))` branch).
+
+All transformers are lazy in interpret/compile/self-host. `interleave`,
+`reductions`, and `tree-seq` use **letfn-bound** recursion to avoid the
+compile-mode self-recursive-lazy-seq overlay bug (jolt-r81).
 
 ---
 
@@ -422,10 +428,10 @@ target: 0 (or near-0) timeouts and a meaningfully higher baseline.
 
 - All §6.2 infinite-seq cases return correct values under the deadline (0 hangs). ✅ Done — 21/21
 - §6.3 laziness counters prove minimal realization for every converted transformer. ✅ Done — 16 counter tests added, all pass
-- Conformance 229+×3, fixpoint, self-host, sci-bootstrap all green. ✅ Done — 229/229 all three modes
+- Conformance 229+×3, fixpoint, self-host, sci-bootstrap all green. ✅ Done — 246/246 all three modes (Option A added cases)
 - clojure-test-suite: the ~9 infinite-seq files no longer time out; `baseline-pass`
   raised to the new steady-state; no per-file 6 s timeouts introduced. ✅ Done — 3971 pass
   (up from 3926), 6 timeouts (down from 9), 4628 assertions.
-- Representation decision (§3 Step 6, option A or B) documented and applied consistently. ✅ Option B (hybrid) — Option A blast-radius measured and rejected (0/21 lazy-infinite, conformance crash).
+- Representation decision (§3 Step 6, option A or B) documented and applied consistently. ✅ **Option A (full laziness)** — re-attempted with boundary fixes the first attempt lacked; all transformers lazy in 3 modes, conformance 246×3, lazy-infinite 40/40. (Earlier Option B was superseded.)
 - `core-bench` within noise of the Phase-4 baseline. ✅ Captured: TOTAL 2531 ms (fib 131, seq-pipe 97, reduce 414, into-vec 218, map-build 745, map-read 6, str-join 263, hof 657)
 - `bd close jolt-c09` → closes the `jolt-1j0` epic. ⚠ blocked on above
