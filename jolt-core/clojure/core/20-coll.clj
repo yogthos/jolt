@@ -209,17 +209,6 @@
 (defn rationalize [x] x)
 
 ;; trampoline: repeatedly calls f with args until a non-function result.
-(defn trampoline
-  ([f]
-   (let [ret (f)]
-     (if (ifn? ret)
-       (recur ret)
-       ret)))
-  ([f & args]
-   (let [ret (apply f args)]
-     (if (ifn? ret)
-       (recur ret)
-       ret))))
 
 ;; rand-int: random integer in [0, n). Uses Janet math/random.
 
