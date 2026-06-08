@@ -1975,46 +1975,10 @@
   (atom-notify-watches atm old-val new-val)
   new-val)
 
-(defn core-reset-vals! [atm val]
-  (let [old-val (atm :value)]
-    (atom-validate atm val)
-    (put atm :value val)
-    (atom-notify-watches atm old-val val)
-    [old-val val]))
-
-(defn core-swap-vals! [atm f & args]
-  (var old-val (atm :value))
-  (var new-val (apply f old-val args))
-  (atom-validate atm new-val)
-  (put atm :value new-val)
-  (atom-notify-watches atm old-val new-val)
-  [old-val new-val])
-
-(defn core-compare-and-set! [atm old-val new-val]
-  (if (= old-val (atm :value))
-    (do
-      (atom-validate atm new-val)
-      (put atm :value new-val)
-      (atom-notify-watches atm old-val new-val)
-      true)
-    false))
-
-(defn core-set-validator! [atm validator-fn]
-  (put atm :validator validator-fn)
-  nil)
-
-(defn core-get-validator [atm]
-  (atm :validator))
-
-(defn core-add-watch [atm key watch-fn]
-  (let [watches (atm :watches)]
-    (put watches key watch-fn)
-    atm))
-
-(defn core-remove-watch [atm key]
-  (let [watches (atm :watches)]
-    (put watches key nil)
-    atm))
+# Atom peripheral ops (swap-vals!/reset-vals!/compare-and-set!/get-validator/
+# add-watch/remove-watch/set-validator!) now live in the Clojure collection tier —
+# composed over the native atom ops + jolt.host/ref-put!. atom/swap!/reset!/deref
+# and the atom-validate/atom-notify-watches helpers stay native (compiler-critical).
 
 # ============================================================
 # Threading macros (as regular functions? No, as macros in Clojure)
@@ -3038,13 +3002,6 @@
     "deref" core-deref
     "reset!" core-reset!
     "swap!" core-swap!
-    "swap-vals!" core-swap-vals!
-    "reset-vals!" core-reset-vals!
-    "compare-and-set!" core-compare-and-set!
-    "set-validator!" core-set-validator!
-    "get-validator" core-get-validator
-    "add-watch" core-add-watch
-    "remove-watch" core-remove-watch
     "not" core-not
     "derive" core-derive
     "isa?" core-isa?

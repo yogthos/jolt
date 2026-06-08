@@ -148,8 +148,15 @@
 (defn h-syntax-quote-lower [ctx inner]
   (syntax-quote-lower ctx inner))
 
+# Runtime host primitive: set a key on a mutable reference cell (an atom, the
+# watches sub-table, ...). The minimal mutation kernel the overlay can't express
+# over core fns — putting nil removes the key (Janet table semantics). Returns the
+# table so callers can thread; overlay wrappers return the Clojure-meaningful value.
+(defn h-ref-put! [tab key val] (put tab key val) tab)
+
 (def- exports
   {"form-sym?" h-sym? "form-sym-name" h-sym-name "form-sym-ns" h-sym-ns
+   "ref-put!" h-ref-put!
    "form-sym-meta" h-sym-meta
    "form-list?" h-list? "form-vec?" h-vector? "form-map?" h-map?
    "form-set?" h-set? "form-char?" h-char? "form-literal?" h-literal?

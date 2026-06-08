@@ -265,3 +265,24 @@
 (defn record? [x]             (some? (get x :jolt/deftype)))
 ;; Jolt has no chunked seqs (Phase 5 territory), so this is always false.
 (defn chunked-seq? [x] false)
+
+;; Atom peripheral operations. atom/swap!/reset!/deref stay native — the compiler
+;; depends on them and they're hot. swap-vals!/reset-vals!/compare-and-set! compose
+;; the native ops (which already validate and notify watches); get-validator reads a
+;; slot; add-watch/remove-watch/set-validator! mutate the atom (or its watches
+;; sub-table) through the one host primitive jolt.host/ref-put! — the minimal
+;; mutation kernel the overlay can't express over core fns (a nil value removes the
+;; key). compare-and-set! compares by value, matching the prior Janet behavior.
+(defn swap-vals! [a f & args]
+  (let [old (deref a)] [old (apply swap! a f args)]))
+(defn reset-vals! [a newval]
+  (let [old (deref a)] (reset! a newval) [old newval]))
+(defn compare-and-set! [a oldval newval]
+  (if (= oldval (deref a)) (do (reset! a newval) true) false))
+(defn get-validator [a] (get a :validator))
+(defn add-watch [a key f]
+  (jolt.host/ref-put! (get a :watches) key f) a)
+(defn remove-watch [a key]
+  (jolt.host/ref-put! (get a :watches) key nil) a)
+(defn set-validator! [a f]
+  (jolt.host/ref-put! a :validator f) nil)
