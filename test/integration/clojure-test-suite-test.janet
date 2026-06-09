@@ -38,7 +38,9 @@
 # lazy-from throws on non-seqable like Clojure) recovered + extended the suite.
 # clean files 45 -> 66 (Option A makes seq?/vector? results match Clojure across
 # many cross-dialect files). Stable across runs.
-(def baseline-pass 3981)
+# Raised 3981 -> 4004 migrating 7 lazy seq fns to the Clojure overlay (40-lazy
+# tier): the canonical CLJ versions add coverage (e.g. distinct value-equality).
+(def baseline-pass 4004)
 # A file is "clean" when it ran with zero failures AND zero errors.
 (def baseline-clean-files 66)
 # Per-file wall-clock budget (seconds). Normal files finish in well under 1s, so
