@@ -373,7 +373,10 @@
       (def r (protect (eval (compiled 1) (comp/ctx-janet-env ctx))))
       (when (r 0) (r 1)))))
 
-(def- fn*-sym {:jolt/type :symbol :ns nil :name "fn*"})
+# Wrap expanders in the `fn` MACRO, not the `fn*` primitive: `fn` desugars a
+# destructured macro arglist (`[a & [b]]`, `[& {:keys [x]}]`) before lowering,
+# whereas raw fn* punts on a destructuring rest param.
+(def- fn-sym {:jolt/type :symbol :ns nil :name "fn"})
 
 (defn recompile-macros!
   "Staged-bootstrap second pass: once the self-hosted analyzer is alive, replace
@@ -398,7 +401,7 @@
                  (not (v :macro-uses-env)))
         (def [args-form body] (v :macro-src))
         (def compiled
-          (try-compile-fn ctx (array/concat @[fn*-sym args-form] body)))
+          (try-compile-fn ctx (array/concat @[fn-sym args-form] body)))
         (when compiled
           (bind-root v compiled)
           (put v :macro-compiled true)
