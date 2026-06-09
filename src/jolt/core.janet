@@ -831,24 +831,7 @@
 
 # Stateful windowing transducers. The 1-arg (completion) arity flushes a partial
 # trailing window before delegating to rf's completion; matches Clojure.
-(defn td-partition-all [n]
-  (fn [rf]
-    (var buf @[])
-    (fn [& a]
-      (case (length a)
-        0 (rf)
-        1 (let [result (if (= 0 (length buf)) (a 0)
-                         (let [v (tuple/slice (tuple ;buf))]
-                           (set buf @[])
-                           (core-unreduced (rf (a 0) v))))]
-            (rf result))
-        (do
-          (array/push buf (a 1))
-          (if (= n (length buf))
-            (let [v (tuple/slice (tuple ;buf))]
-              (set buf @[])
-              (rf (a 0) v))
-            (a 0)))))))
+# td-partition-all removed: partition-all (incl transducer arity) lives in core/40-lazy.clj.
 
 # partition-by's transducer arity lives with its (lazy) collection arity in the
 # overlay (10-seq tier), written in Clojure with volatiles.
@@ -1366,21 +1349,7 @@
 
 # partition-by now lives in the Clojure seq tier (core/10-seq.clj).
 
-(defn core-partition-all [n & rest]
- (if (= 0 (length rest)) (td-partition-all n)
-  (let [coll (in rest 0)]
-  # Option A: always lazy.
-  (defn pstep [c]
-    (fn []
-      (if (seq-done? c) nil
-        (do
-          (var part @[]) (var cur c) (var i 0)
-          (while (and (< i n) (not (seq-done? cur)))
-            (array/push part (core-first cur))
-            (set cur (core-rest cur))
-            (++ i))
-          @[(tuple/slice (tuple ;part)) (pstep cur)]))))
-  (make-lazy-seq (pstep (lazy-from coll))))))
+# partition-all now lives in the Clojure lazy tier (core/40-lazy.clj).
 
 
 # keep-indexed / map-indexed / cycle now live in the Clojure lazy tier
@@ -2762,7 +2731,6 @@
     "get-in" core-get-in
     "contains?" core-contains?
     "count" core-count
-    "partition-all" core-partition-all
     "pop" core-pop
     "trampoline" core-trampoline
     "format" core-format

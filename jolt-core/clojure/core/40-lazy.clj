@@ -100,7 +100,40 @@
   (lazy-seq (cons x (iterate f (f x)))))
 
 
-;; partition-all stays in the Janet seed for now (core-partition-all): it already
-;; has the transducer + collection arities (jolt-cru), and a CLJ port realizes a
-;; different (non-minimal) element count via take/drop than the Janet one,
-;; tripping the §6.3 laziness counters + a suite file. Ported separately.
+;; --- partition-all --- (transducer + [n coll] + [n step coll])
+;; The collection arities realize EXACTLY n per chunk via a first/rest loop and
+;; continue from the advanced cursor (not a re-drop), so they realize minimally
+;; — matching the Janet pstep the §6.3 laziness counters were written against.
+;; letfn-bound `go` (not arity-direct recursion) sidesteps the compile-mode
+;; multi-arity closure-capture bug (jolt-zxw), as keep-indexed/map-indexed do.
+(defn partition-all
+  ([n]
+   (fn [rf]
+     (let [a (volatile! [])]
+       (fn
+         ([] (rf))
+         ([result]
+          (let [result (if (zero? (count @a))
+                         result
+                         (let [v @a] (vreset! a []) (unreduced (rf result v))))]
+            (rf result)))
+         ([result input]
+          (vswap! a conj input)
+          (if (= n (count @a))
+            (let [v @a] (vreset! a []) (rf result v))
+            result))))))
+  ([n coll]
+   (letfn [(go [s]
+             (lazy-seq
+               (when (seq s)
+                 (loop [i 0 chunk [] cur s]
+                   (if (and (< i n) (seq cur))
+                     (recur (inc i) (conj chunk (first cur)) (rest cur))
+                     (cons chunk (go cur)))))))]
+     (go coll)))
+  ([n step coll]
+   (letfn [(go [s]
+             (lazy-seq
+               (when (seq s)
+                 (cons (take n s) (go (nthrest s step))))))]
+     (go coll))))
