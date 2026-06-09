@@ -71,21 +71,25 @@
 (def- special-names
   (let [t @{}]
     (each n ["quote" "syntax-quote" "unquote" "unquote-splicing" "do" "if" "def"
-             "defmacro" "fn*" "let*" "loop*" "recur" "throw" "try" "set!" "var"
+             "defmacro" "fn*" "let*" "loop*" "recur" "throw" "try" "set!"
              "locking" "eval" "instance?" "defmulti" "defmethod" "deftype" "new"
              "." "var-get" "var-set" "var?" "alter-var-root" "find-var" "intern"
              "alter-meta!" "reset-meta!" "satisfies?"
-             "protocol-dispatch" "register-method" "make-reified" "prefer-method"
+             # protocol-dispatch/register-method/make-reified are now clojure.core
+             # fns (compile as plain invokes).
+             "prefer-method"
              "remove-method" "remove-all-methods" "get-method" "methods"
              # ns-management forms dispatched by the interpreter (not core vars)
              "create-ns" "remove-ns" "find-ns" "all-ns" "the-ns" "resolve"
              "ns-resolve" "ns-aliases" "ns-imports" "ns-interns"
              "read-string" "macroexpand-1" "defonce" "ns" "in-ns" "require"
-             "import" "use" "refer" "defrecord" "defprotocol"
-             "reify" "extend-type" "extend-protocol" "gen-class"
+             "import" "use" "refer" "defrecord"
+             # defprotocol/extend-type/extend-protocol/reify now expand to plain
+             # def + protocol-dispatch/register-method/make-reified invokes.
+             "gen-class"
              # letfn stays: its let* expansion needs letrec semantics (mutual
              # recursion between the fns), which compiled sequential let* lacks.
-             "monitor-enter" "monitor-exit" "binding" "letfn"]
+             "monitor-enter" "monitor-exit" "letfn"]
       (put t n true))
     t))
 

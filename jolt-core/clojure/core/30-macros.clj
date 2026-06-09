@@ -161,12 +161,18 @@
        (def ~pname (make-protocol ~(name pname) ~methods))
        ~@(map (fn [sig]
                 `(def ~(first sig)
-                   (fn* [this# & rest#] (protocol-dispatch ~pname ~(first sig) this# rest#))))
+                   ;; protocol-dispatch is a fn (clojure.core); pass the protocol /
+                   ;; method NAMES as strings (not the symbols) so it compiles as a
+                   ;; plain invoke rather than evaluating the symbols as vars.
+                   (fn* [this# & rest#]
+                     (protocol-dispatch ~(name pname) ~(name (first sig)) this# rest#))))
               sigs))))
 
 (defmacro extend-type [tsym psym & impls]
+  ;; register-method is a fn (clojure.core); pass type/protocol/method NAMES as
+  ;; strings (not the symbols) so the call compiles as a plain invoke.
   `(do ~@(map (fn [spec]
-                `(register-method ~tsym ~psym ~(first spec)
+                `(register-method ~(name tsym) ~(name psym) ~(name (first spec))
                                   (fn* ~(nth spec 1) ~@(drop 2 spec))))
               impls)))
 
@@ -181,13 +187,13 @@
 ;; definterface is JVM-only; bind the name to an empty marker.
 (defmacro definterface [name-sym & body] `(def ~name-sym {}))
 
-;; Build a method map {kw (fn* ...)} as an embedded map literal — make-reified
-;; evaluates it (the fn* forms become fns) via build-eval-map, which yields a
-;; struct it can iterate; a (hash-map ...) call would instead yield a phm it can't.
+;; make-reified is a fn (clojure.core); the method map {kw (fn* ...)} is an
+;; ordinary map literal that evaluates to {keyword fn}, and the protocol NAME is
+;; passed as a string (not the symbol) so the call compiles as a plain invoke.
 (defmacro reify [& forms]
   (loop [items (seq forms) proto nil methods {}]
     (if (empty? items)
-      `(make-reified ~proto ~methods)
+      `(make-reified ~(name proto) ~methods)
       (let [x (first items)]
         (if (symbol? x)
           (recur (rest items) (if proto proto x) methods)
