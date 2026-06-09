@@ -40,14 +40,16 @@
    "(try (inc 1) (catch :default e e))"
    # def + calls into core
    "(def answer 42)" "(map inc [1 2 3])" "(reduce + 0 [1 2 3])"
-   "(get {:a 1} :a)" "(vec (range 5))"])
+   "(get {:a 1} :a)" "(vec (range 5))"
+   # set?/disj are plain fns now, not special forms (jolt-g3h)
+   "(set? #{1 2})" "(disj #{1 2 3} 2)"])
 
 # --- Intentional fallback (sanity sample): these SHOULD punt to the interpreter.
 # Not the frozen set (that's Task 2) — just a few to confirm the boundary holds
 # in the punt direction so the harness can't pass by compiling everything.
 (def must-punt
   ["(ns foo.bar)" "(defmacro m [x] x)" "(require (quote [clojure.string]))"
-   "(set? #{1 2})" "(letfn [(f [n] (g n)) (g [n] (f n))] (f 1))"])
+   "(set! *warn-on-reflection* true)" "(letfn [(f [n] (g n)) (g [n] (f n))] (f 1))"])
 
 (var fails @[])
 (each s must-compile

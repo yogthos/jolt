@@ -56,6 +56,12 @@
    ["empty set literal"    "true" "(empty? #{})"]
    ["set literal count"    "3"    "(count #{1 2 3})"]
    ["set literal in let"   "true" "(let [x 5] (= #{5 6} #{x (inc x)}))"]
+   # set?/disj compile as plain fns now (jolt-g3h), not special forms
+   ["set? true"   "true"      "(set? #{1 2 3})"]
+   ["set? false"  "false"     "(set? [1 2])"]
+   ["disj one"    "#{1 3}"    "(disj #{1 2 3} 2)"]
+   ["disj many"   "#{1}"      "(disj #{1 2 3} 2 3)"]
+   ["disj absent" "#{1 2}"    "(disj #{1 2} 5)"]
    ["keyword as fn" "1"   "(:a {:a 1})"]
    ["map fn over coll" "(quote (1 3))" "(map {:a 1 :b 3} [:a :b])"]
 
