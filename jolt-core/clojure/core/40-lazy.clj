@@ -104,10 +104,9 @@
 
 ;; --- partition-all --- (transducer + [n coll] + [n step coll])
 ;; The collection arities realize EXACTLY n per chunk via a first/rest loop and
-;; continue from the advanced cursor (not a re-drop), so they realize minimally
-;; — matching the Janet pstep the §6.3 laziness counters were written against.
-;; letfn-bound `go` (not arity-direct recursion) sidesteps the compile-mode
-;; multi-arity closure-capture bug (jolt-zxw), as keep-indexed/map-indexed do.
+;; continue from the advanced cursor (not a re-drop / nthrest), so they realize
+;; minimally — matching the Janet pstep the §6.3 laziness counters were written
+;; against. (A take/nthrest form is correct but over-realizes.)
 (defn partition-all
   ([n]
    (fn [rf]
