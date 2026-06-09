@@ -22,7 +22,7 @@
       (= name "set!") (= name "var") (= name "locking")
       (= name "eval")
       (= name "instance?")
-      (= name "deftype") (= name "new") (= name ".")
+      (= name "new") (= name ".")
       (= name "var-get") (= name "var-set") (= name "var?")
       (= name "alter-var-root") (= name "find-var") (= name "intern")
       (= name "alter-meta!") (= name "reset-meta!")
@@ -882,6 +882,21 @@
     (when dc (each k (keys dc) (put dc k nil))))
   mm-var)
 
+(defn make-deftype-ctor-impl
+  "Build a deftype constructor closure. The ns-qualified type tag is baked at
+  definition time (this runs during the deftype's (def …), in the type's ns), so
+  instances carry a stable tag matching what extend-type registers methods under.
+  field-kws is the [:f1 :f2 …] keyword vector; the ctor maps positional args to
+  those keys. A ctx-capturing closure (make-deftype-ctor) is the public handle."
+  [ctx type-name-sym field-kws]
+  (def type-tag (string (ctx-current-ns ctx) "." (type-name-sym :name)))
+  (def kws (d-realize field-kws))
+  (fn [& args]
+    (var inst @{:jolt/deftype type-tag})
+    (var i 0)
+    (each kw kws (put inst kw (in args i)) (++ i))
+    inst))
+
 (defn install-stateful-fns!
   "Intern ctx-capturing closures for the stateful primitives into clojure.core, so
   both the interpreter and the compiler reach them as ordinary fns. Called by
@@ -904,6 +919,7 @@
   (ns-intern core "refer-clojure" (fn [& args] (refer-clojure-impl ctx ;args)))
   (ns-intern core "defmulti-setup" (fn [name-sym dispatch & opts] (defmulti-setup ctx name-sym dispatch ;opts)))
   (ns-intern core "defmethod-setup" (fn [mm-sym dval impl] (defmethod-setup ctx mm-sym dval impl)))
+  (ns-intern core "make-deftype-ctor" (fn [name-sym field-kws] (make-deftype-ctor-impl ctx name-sym field-kws)))
   core)
 
 # Dispatch a special form by its string name.
@@ -1419,64 +1435,8 @@
                             (let [dc (get mm-var :jolt/dispatch-cache)]
                               (when dc (each k (keys dc) (put dc k nil)))))
                           mm-var)
-    "deftype" (let [raw-name (in form 1)
-                    type-name (unwrap-meta-name raw-name)
-                    fields-vec (in form 2)
-                    field-names (map 
-                      (fn [f]
-                        # Handle ^:meta and ^Type annotations — extract the actual name
-                        (let [f (unwrap-meta-name f)]
-                          (if (and (struct? f) (= :symbol (f :jolt/type)))
-                            (keyword (f :name))
-                            (error (string "Unsupported deftype field: " (string f))))))
-                      fields-vec)
-                    ns-name (ctx-current-ns ctx)
-                    type-tag (string ns-name "." (type-name :name))]
-                (defn ctor [& args]
-                  (var inst @{:jolt/deftype type-tag})
-                  (var i 0)
-                  (each fn field-names
-                    (put inst fn (args i))
-                    (++ i))
-                  inst)
-                (let [ns (ctx-find-ns ctx ns-name)
-                      ctor-name (type-name :name)
-                      arrow-name (string "->" ctor-name)]
-                  (ns-intern ns ctor-name ctor)
-                  (ns-intern ns arrow-name ctor)
-                  # Process inline protocol/interface methods (like defrecord):
-                  #   (deftype T [fs] Proto (m [this] body) Proto2 (m2 [this] body))
-                  # Emit one extend-type per protocol, wrapping each method body in a
-                  # let that binds the type's fields from the instance (first param),
-                  # matching Clojure's field-in-scope semantics.
-                  (let [body (tuple/slice form 3)
-                        field-syms (map unwrap-meta-name fields-vec)]
-                    (var bi 0)
-                    (while (< bi (length body))
-                      (def elem (in body bi))
-                      (if (and (struct? elem) (= :symbol (elem :jolt/type)))
-                        (let [proto-sym elem
-                              et @[{:jolt/type :symbol :ns nil :name "extend-type"} type-name proto-sym]]
-                          (++ bi)
-                          (while (and (< bi (length body))
-                                      (not (and (struct? (in body bi)) (= :symbol ((in body bi) :jolt/type)))))
-                            (let [spec (in body bi)
-                                  mname (in spec 0)
-                                  argv (in spec 1)
-                                  mbody (tuple/slice spec 2)
-                                  instance (in argv 0)
-                                  field-binds @[]
-                                  _ (each f field-syms
-                                      (array/push field-binds f)
-                                      (array/push field-binds @[{:jolt/type :symbol :ns nil :name "get"}
-                                                                instance (keyword (f :name))]))
-                                  wrapped @[{:jolt/type :symbol :ns nil :name "let"}
-                                            (tuple/slice (tuple ;field-binds)) ;mbody]]
-                              (array/push et @[mname argv wrapped]))
-                            (++ bi))
-                          (eval-form ctx bindings et))
-                        (++ bi))))
-                  (var-get (ns-intern ns ctor-name))))
+    # deftype is now a macro (30-macros) over make-deftype-ctor + extend-type —
+    # compiles as a plain (do …); no special-form arm.
     "new" (let [type-sym (in form 1)
                 args (map |(eval-form ctx bindings $) (tuple/slice form 2))
                 ctor (eval-form ctx bindings type-sym)]

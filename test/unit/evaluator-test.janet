@@ -122,7 +122,8 @@
 (print "  passed")
 
 (print "16: deftype...")
-(let [ctx (make-ctx)
+# deftype is an overlay macro now (Stage 2 jolt-eaa) — needs the full env (init).
+(let [ctx (init)
       _ (eval-form ctx @{} (parse-string "(deftype Point [x y])"))
       _ (eval-form ctx @{} (parse-string "(def p (Point. 10 20))"))
       p-val (eval-form ctx @{} (parse-string "p"))
