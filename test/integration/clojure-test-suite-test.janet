@@ -40,6 +40,9 @@
 # many cross-dialect files). Stable across runs.
 # Raised 3981 -> 4004 migrating 7 lazy seq fns to the Clojure overlay (40-lazy
 # tier): the canonical CLJ versions add coverage (e.g. distinct value-equality).
+# Raised 4004 -> 4034 / clean 66 -> 67 porting partition-all + repeatedly to the
+# overlay, which required fixing two leniencies (a char is not callable; take
+# validates its count) — correct beyond those fns, so the suite rose broadly.
 (def baseline-pass 4034)
 # A file is "clean" when it ran with zero failures AND zero errors.
 (def baseline-clean-files 67)
