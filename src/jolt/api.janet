@@ -15,9 +15,13 @@
 (import ./host_iface :as host)
 
 # A defmacro expander compiles to a native fn (built as (fn* args body...) and run
-# through the self-hosted pipeline) so macro expansion is compiled, zero runtime
-# cost — instead of an interpreted closure. Returns nil (interpreted fallback) when
-# the analyzer isn't built yet or the body isn't compilable.
+# through the self-hosted pipeline) so macro expansion is COMPILED code, zero runtime
+# cost — instead of an interpreted closure, mirroring Clojure (macros are ordinary
+# compiled fns). Returns nil when the analyzer isn't built yet (the early macros,
+# expanded WHILE the analyzer is being bootstrapped) or the body isn't compilable; in
+# that case defmacro keeps an interpreted closure, and backend/recompile-macros!
+# replaces it with a compiled expander once the analyzer comes alive (staged
+# bootstrap — the interpreter is a build-time crutch, gone by steady state).
 (set macro-compile-hook
   (fn [ctx args-form body]
     (backend/try-compile-fn ctx
@@ -92,7 +96,12 @@
       # half-loaded core (which would forward-ref the missing kernel fns to nil).
       (when (tier :kernel) (put env :kernel-ready? true))))
   (put env :direct-linking? user-dl)
-  (ctx-set-current-ns ctx saved))
+  (ctx-set-current-ns ctx saved)
+  # Staged bootstrap: the early macros (00-syntax) were defined while the analyzer
+  # was still being built, so their expanders are interpreted closures. Now that the
+  # full overlay + analyzer are in place, recompile those expanders to native code —
+  # by steady state no macro expansion runs interpreted (no-op in interpreter mode).
+  (backend/ensure-macros-compiled! ctx))
 
 (defn init
   "Create a new Jolt evaluation context.

@@ -12,25 +12,27 @@
 
 (defmacro comment [& body] nil)
 
-;; Single arglist (Jolt defmacro is single-arity); the optional else defaults nil
-;; via rest-destructuring.
-(defmacro if-not [test then & [else]]
-  `(if (not ~test) ~then ~else))
+;; Single arglist (Jolt defmacro is single-arity); the optional else is the head of
+;; a plain rest param — (first else) is the else form or nil. (A `& [else]`-style
+;; rest-destructure reads the same but the analyzer can't yet compile destructuring
+;; in a rest param, which would force this expander to stay interpreted — jolt-f79.)
+(defmacro if-not [test then & else]
+  `(if (not ~test) ~then ~(first else)))
 
 ;; Conditional binding macros: the name is bound ONLY in the taken branch (the
 ;; auto-gensym temp# tests the value; the else/empty branch sees the surrounding
 ;; scope). temp# is a single template-local gensym — referenced twice, same symbol.
-(defmacro if-let [bindings then & [else]]
+(defmacro if-let [bindings then & else]
   (let [form (bindings 0) tst (bindings 1)]
     `(let [temp# ~tst]
-       (if temp# (let [~form temp#] ~then) ~else))))
+       (if temp# (let [~form temp#] ~then) ~(first else)))))
 
 ;; when-let lives in 00-syntax (not here): 20-coll uses it, which loads before this tier.
 
-(defmacro if-some [bindings then & [else]]
+(defmacro if-some [bindings then & else]
   (let [form (bindings 0) tst (bindings 1)]
     `(let [temp# ~tst]
-       (if (some? temp#) (let [~form temp#] ~then) ~else))))
+       (if (some? temp#) (let [~form temp#] ~then) ~(first else)))))
 
 (defmacro when-some [bindings & body]
   (let [form (bindings 0) tst (bindings 1)]
@@ -91,8 +93,9 @@
                    (partition 2 clauses))]
     `(let [~g ~expr ~@(thread-binds g steps)] ~(if (empty? steps) g (last steps)))))
 
-(defmacro assert [x & [message]]
-  (let [msg (if message message (str "Assert failed: " (pr-str x)))]
+(defmacro assert [x & message]
+  (let [m (first message)
+        msg (if m m (str "Assert failed: " (pr-str x)))]
     `(when-not ~x (throw (ex-info ~msg {})))))
 
 (defmacro delay [& body]

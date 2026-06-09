@@ -805,6 +805,14 @@
                        ns (ctx-find-ns ctx ns-name)]
                    (def v (ns-intern ns (name-sym :name) macro-fn))
                    (put v :macro true)
+                   # Stash the expander source so backend/recompile-macros! can
+                   # compile it once the analyzer is alive (staged bootstrap): a
+                   # macro defined WHILE the analyzer is still being built gets an
+                   # interpreted closure now, a compiled expander later. uses-env
+                   # macros stay interpreted (the compiled fn* has no &env/&form).
+                   (put v :macro-src @[args-form body])
+                   (put v :macro-uses-env uses-env)
+                   (when compiled-fn (put v :macro-compiled true))
                    # A (re)defined macro invalidates any cached expansions.
                    (table/clear macro-cache)
                    (var-get v)))
