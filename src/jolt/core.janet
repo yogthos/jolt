@@ -508,7 +508,10 @@
         (if (and (number? k) (= k (math/floor k)) (>= k 0) (< k (length f)))
           (in f k)
           (error (string "Index " k " out of bounds for vector of length " (length f)))))
-    (or (struct? f) (and (table? f) (get f :jolt/deftype)))
+    # Map literal (struct with no :jolt/type marker) or a record: callable as a
+    # key lookup. A TAGGED struct (char/etc.) is NOT a fn — symbols are handled
+    # above; everything else with a :jolt/type falls through to the error.
+    (or (and (struct? f) (nil? (get f :jolt/type))) (and (table? f) (get f :jolt/deftype)))
       (let [v (get f (get args 0) :jolt/not-found)]
         (if (= v :jolt/not-found) (get args 1) v))
     (error (string "Cannot call " (type f) " as a function"))))
@@ -1091,6 +1094,9 @@
       (error "Wrong number of args passed to: reduce"))))
 
 (defn core-take [n & rest]
+ # n is a count — reject non-numbers (e.g. a char/string) like Clojure, rather
+ # than letting Janet's >= silently compare mixed types.
+ (unless (number? n) (error (string "take: n must be a number, got " (type n))))
  (if (= 0 (length rest)) (td-take n)
   (let [coll (in rest 0)]
     # Option A: lazy take (returns a seq, not a vector, even over a vector).
@@ -1401,15 +1407,7 @@
 
 # repeat / iterate now live in the Clojure lazy tier (core/40-lazy.clj).
 
-(defn core-repeatedly
-  "(repeatedly f) -> infinite lazy seq of (f) calls; (repeatedly n f) -> n calls."
-  [a & rest]
-  (if (= 0 (length rest))
-    (do (defn rstep [] (fn [] @[(a) (rstep)])) (make-lazy-seq (rstep)))
-    (let [n a f (in rest 0)]
-      (var result @[]) (var i 0)
-      (while (< i n) (array/push result (f)) (++ i))
-      result)))
+# repeatedly now lives in the Clojure lazy tier (core/40-lazy.clj).
 
 # ============================================================
 # Higher-order functions
@@ -2852,7 +2850,6 @@
     "sort-by" core-sort-by
     "partition" core-partition
     "range" core-range
-    "repeatedly" core-repeatedly
     "identity" core-identity
     "constantly" core-constantly
     "complement" core-complement

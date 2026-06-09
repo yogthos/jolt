@@ -116,7 +116,9 @@
         (if (and (number? k) (= k (math/floor k)) (>= k 0) (< k (length f)))
           (in f k)
           (error (string "Index " k " out of bounds for vector of length " (length f)))))
-    (struct? f)
+    # Map literal only (struct with no :jolt/type). A tagged struct (char/etc.)
+    # is not callable — symbols are handled above; chars fall through to the error.
+    (and (struct? f) (nil? (get f :jolt/type)))
       (let [v (get f (get args 0) :jolt/not-found)]
         (if (= v :jolt/not-found) (get args 1) v))
     (and (table? f) (get f :jolt/deftype))

@@ -85,10 +85,12 @@
         (cstep 0)))
     ()))
 
-;; repeatedly stays in the Janet seed for now (core-repeatedly): the canonical CLJ
-;; version doesn't validate args, so (first (repeatedly non-fn)) / (repeatedly \a +)
-;; don't throw like the stricter Janet version (repeatedly.cljc throw cases).
-;; Ported separately once the non-fn / non-number-count throws are matched.
+;; --- repeatedly --- ((f) throws on a non-fn; (take n …) throws on a non-number
+;; count — both now enforced in the seed (jolt-call / core-take), so the canonical
+;; CLJ form matches the repeatedly.cljc exception cases.)
+(defn repeatedly
+  ([f] (lazy-seq (cons (f) (repeatedly f))))
+  ([n f] (take n (repeatedly f))))
 
 ;; --- repeat ---
 (defn repeat
