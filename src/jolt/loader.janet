@@ -13,7 +13,7 @@
 # host-coupled set (Stage 2 jolt-eaa): forms move off this list as they gain a
 # compile path; syntax-quote already compiles via the analyzer's `handled` set.
 (defn- stateful-head? [head-name]
-  (or (= head-name "defmacro") (= head-name "ns")
+  (or (= head-name "defmacro")
       (= head-name "deftype") (= head-name "defmulti") (= head-name "defmethod")
       (= head-name "set!")
       (= head-name ".") (= head-name "new")

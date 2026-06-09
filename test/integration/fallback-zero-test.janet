@@ -47,6 +47,7 @@
    # compiles over an INTERNED var; the built-in dynamic vars aren't interned yet,
    # so it's exercised end-to-end in the state spec instead.)
    "(require (quote [clojure.string :as s]))" "(in-ns (quote foo.bar))"
+   "(ns foo.bar (:require [clojure.string :as s]))"
    "(defprotocol P (m [x]))" "(extend-type Long P (m [x] x))"
    "(reify P (m [this] 1))" "(var map)"])
 
@@ -55,7 +56,7 @@
 # (require/in-ns/protocols/binding now compile). The remaining frozen/uncompiled
 # set keeps the harness honest in the punt direction.
 (def must-punt
-  ["(ns foo.bar)" "(defmacro m [x] x)" "(deftype T [a])"
+  ["(defmacro m [x] x)" "(deftype T [a])"
    "(set! *warn-on-reflection* true)" "(letfn [(f [n] (g n)) (g [n] (f n))] (f 1))"])
 
 (var fails @[])

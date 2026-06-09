@@ -772,6 +772,50 @@
   (ctx-set-current-ns ctx ns-name)
   nil)
 
+(defn use-impl
+  "(use '[ns ...] ...) — refer ALL public vars of each used ns into the CURRENT ns.
+  A fn; quoted specs arrive evaluated. Each spec is a ns symbol or a [ns & opts]
+  vector (a pvec/tuple, not a Janet array — coerce, then take the head as the ns)."
+  [ctx & specs]
+  (def target-ns (ctx-find-ns ctx (ctx-current-ns ctx)))
+  (each s specs
+    (let [spec (if (pvec? s) (pv->array s) s)
+          ns-sym (if (indexed? spec) (in spec 0) spec)
+          src-name (sym-name-str ns-sym)]
+      (maybe-require-ns ctx src-name)
+      (let [source-ns (ctx-find-ns ctx src-name)]
+        (loop [[sym v] :pairs (source-ns :mappings)]
+          (let [nv (ns-intern target-ns sym (var-get v))]
+            (when (get v :macro) (put nv :macro true)))))))
+  nil)
+
+(defn import-impl
+  "(import 'pkg.Class ...) — register the short class name as an alias of the fully
+  qualified name in the current ns. A fn; quoted class symbols arrive evaluated."
+  [ctx & class-specs]
+  (def ns (ctx-find-ns ctx (ctx-current-ns ctx)))
+  (each class-spec class-specs
+    (let [class-name (if (and (struct? class-spec) (= :symbol (class-spec :jolt/type)))
+                       (class-spec :name) (string class-spec))
+          last-dot (do (var idx -1) (var pos 0)
+                     (while (< pos (length class-name))
+                       (when (= (class-name pos) 46) (set idx pos)) (++ pos))
+                     idx)
+          short-name (if (>= last-dot 0) (string/slice class-name (+ last-dot 1)) class-name)]
+      (ns-import ns short-name class-name)))
+  nil)
+
+(defn refer-clojure-impl
+  "(refer-clojure :exclude [a b]) — currently only :exclude is honored: unmap the
+  excluded names from the current ns. A fn; quoted args arrive evaluated."
+  [ctx & args]
+  (when (and (>= (length args) 2) (= (in args 0) :exclude))
+    (let [ns (ctx-find-ns ctx (ctx-current-ns ctx))
+          excl (in args 1)]
+      (each sym excl
+        (ns-unmap ns (if (and (struct? sym) (= :symbol (sym :jolt/type))) (sym :name) (string sym))))))
+  nil)
+
 (defn install-stateful-fns!
   "Intern ctx-capturing closures for the stateful primitives into clojure.core, so
   both the interpreter and the compiler reach them as ordinary fns. Called by
@@ -789,6 +833,9 @@
     (fn [proto-name methods-map] (make-reified-impl ctx proto-name methods-map)))
   (ns-intern core "require" (fn [& specs] (require-impl ctx ;specs)))
   (ns-intern core "in-ns" (fn [sym] (in-ns-impl ctx sym)))
+  (ns-intern core "use" (fn [& specs] (use-impl ctx ;specs)))
+  (ns-intern core "import" (fn [& specs] (import-impl ctx ;specs)))
+  (ns-intern core "refer-clojure" (fn [& args] (refer-clojure-impl ctx ;args)))
   core)
 
 # Dispatch a special form by its string name.
@@ -932,69 +979,9 @@
                    # A (re)defined macro invalidates any cached expansions.
                    (table/clear macro-cache)
                    (var-get v)))
-    "ns" (let [raw-name (in form 1)
-               name-sym (unwrap-meta-name raw-name)
-               ns-name (sym-name-str name-sym)
-               clauses (tuple/slice form 2)]
-           (ctx-set-current-ns ctx ns-name)
-           (ctx-find-ns ctx ns-name)
-            (var result nil)
-            (var i 0)
-            (let [clen (length clauses)]
-              (while (< i clen)
-                (let [clause (in clauses i)
-                      head (if (and (array? clause) (> (length clause) 0)) (first clause) nil)]
-                  (if (nil? head)
-                    (do (set result clause) (++ i))
-                    (match head
-                      :require (let [specs (tuple/slice clause 1)
-                                     slen (length specs)]
-                                 (var j 0)
-                                 (while (< j slen)
-                                   (let [s (in specs j)]
-                                     (when s (eval-require ctx s)))
-                                   (++ j))
-                                 (set i (+ i 1)))
-                      :use (let [specs (tuple/slice clause 1)
-                                 slen (length specs)]
-                             (var j 0)
-                             (while (< j slen)
-                               (let [s (in specs j)
-                                     ns-sym (if (array? s) (in s 0) s)
-                                     ns-name (sym-name-str ns-sym)
-                                     source-ns (ctx-find-ns ctx ns-name)
-                                     target-ns (ctx-find-ns ctx ns-name)]
-                                 (loop [[sym v] :pairs (source-ns :mappings)]
-                                   (ns-intern target-ns sym (var-get v))))
-                               (++ j))
-                             (set i (+ i 1)))
-                      :refer-clojure (let [spec (in clause 1)]
-                                       (when (and (array? spec) (= (first spec) :exclude))
-                                         (let [ns (ctx-find-ns ctx ns-name)]
-                                           (each sym (tuple/slice spec 1)
-                                             (ns-unmap ns (if (struct? sym) (sym :name) sym)))))
-                                       (set i (+ i 1)))
-                      :import (let [specs (tuple/slice clause 1)
-                                    slen (length specs)]
-                                (var j 0)
-                                (while (< j slen)
-                                  (let [class-spec (in specs j)
-                                        class-name (if (struct? class-spec) (class-spec :name) (string class-spec))
-                                        last-dot (do
-                                                  (var idx -1)
-                                                  (var pos 0)
-                                                  (while (< pos (length class-name))
-                                                    (if (= (class-name pos) 46) (set idx pos))
-                                                    (++ pos))
-                                                  idx)
-                                        short-name (if (>= last-dot 0)
-                                                    (string/slice class-name (+ last-dot 1))
-                                                    class-name)]
-                                    (ns-import (ctx-find-ns ctx ns-name) short-name class-name))
-                                  (++ j))
-                                (set i (+ i 1)))
-                      (do (set result clause) (++ i)))))))
-           result)
+    # ns is now a macro (clojure.core, 30-macros) expanding to in-ns + require/use/
+    # import/refer-clojure calls — all ctx-capturing fns — so it compiles. No
+    # special-form arm; an (ns ...) head falls through to the macro-expansion path.
     # require / in-ns are now ordinary clojure.core fns (install-stateful-fns!) —
     # no special-form arm; they compile + interpret as plain invokes.
     "all-ns" (all-ns ctx)

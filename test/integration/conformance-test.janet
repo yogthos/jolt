@@ -135,6 +135,8 @@
 
    ### ---- HIGH: aliased namespace calls ----
    ["require :as alias"  "\"1,2,3\"" "(do (require (quote [clojure.string :as s])) (s/join \",\" [1 2 3]))"]
+   ["ns form + alias"    "\"HI\""  "(do (ns my.a (:require [clojure.string :as s])) (s/upper-case \"hi\"))"]
+   ["ns :use refers"     "42"      "(do (ns src.u) (def helper 42) (ns dst.u (:use [src.u])) helper)"]
 
    ### ---- MED: missing core fns ----
    ["peek vec"        "3"             "(peek [1 2 3])"]

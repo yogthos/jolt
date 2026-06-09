@@ -36,6 +36,31 @@
     nil
     `(if ~(first clauses) ~(nth clauses 1) (cond ~@(drop 2 clauses)))))
 
+;; ns is sugar over the namespace-op fns (in-ns/require/use/import/refer-clojure,
+;; all ctx-capturing clojure.core fns) — matching Clojure, where require is a fn and
+;; the ns macro expands its clauses into require calls. Each spec is quoted
+;; individually and passed as data; non-list clauses (docstring, attr-map,
+;; :gen-class, …) are ignored. So ns compiles to a plain (do …) of invokes.
+;; MUST live in this first tier: the self-hosted analyzer build (triggered while
+;; 10-seq loads) processes jolt.analyzer's own (ns …) form, so ns has to exist by
+;; then. Its body resolves fn/map/reduce/cond at EXPANSION time, by which point all
+;; of 00-syntax has loaded, so using them here is fine.
+(defmacro ns [nm & clauses]
+  (let [calls (reduce
+                (fn [acc clause]
+                  (if (seq? clause)
+                    (let [head (first clause) args (rest clause)]
+                      (cond
+                        (= head :require) (conj acc `(require ~@(map (fn [s] `(quote ~s)) args)))
+                        (= head :use)     (conj acc `(use ~@(map (fn [s] `(quote ~s)) args)))
+                        (= head :import)  (conj acc `(import ~@(map (fn [s] `(quote ~s)) args)))
+                        (= head :refer-clojure)
+                          (conj acc `(refer-clojure ~@(map (fn [s] `(quote ~s)) args)))
+                        :else acc))
+                    acc))
+                [] clauses)]
+    `(do (in-ns (quote ~nm)) ~@calls)))
+
 ;; Threading: a list form threads x in as the first (->) or last (->>) arg; a bare
 ;; symbol becomes (form x). Recursive; the expand-once cache makes that free.
 (defmacro -> [x & forms]
