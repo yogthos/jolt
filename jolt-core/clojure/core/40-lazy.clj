@@ -3,17 +3,26 @@
 ;;
 ;; Each fn ported from CLJS core.cljs, stripped of chunked-seq branches.
 
-;; --- distinct ---
-(defn distinct [coll]
-  (let [step (fn step [xs seen]
-               (lazy-seq
-                 ((fn [[f :as xs] seen]
-                    (when-let [s (seq xs)]
-                      (if (contains? seen f)
-                        (recur (rest s) seen)
-                        (cons f (step (rest s) (conj seen f))))))
-                   xs seen)))]
-    (step coll #{})))
+;; --- distinct --- (transducer + lazy collection arity; value-based dedup)
+(defn distinct
+  ([]
+   (fn [rf]
+     (let [seen (volatile! #{})]
+       (fn ([] (rf)) ([result] (rf result))
+         ([result input]
+          (if (contains? @seen input)
+            result
+            (do (vswap! seen conj input) (rf result input))))))))
+  ([coll]
+   (let [step (fn step [xs seen]
+                (lazy-seq
+                  ((fn [[f :as xs] seen]
+                     (when-let [s (seq xs)]
+                       (if (contains? seen f)
+                         (recur (rest s) seen)
+                         (cons f (step (rest s) (conj seen f))))))
+                    xs seen)))]
+     (step coll #{}))))
 
 
 ;; --- keep ---
@@ -76,10 +85,10 @@
         (cstep 0)))
     ()))
 
-;; --- repeatedly ---
-(defn repeatedly
-  ([f] (lazy-seq (cons (f) (repeatedly f))))
-  ([n f] (take n (repeatedly f))))
+;; repeatedly stays in the Janet seed for now (core-repeatedly): the canonical CLJ
+;; version doesn't validate args, so (first (repeatedly non-fn)) / (repeatedly \a +)
+;; don't throw like the stricter Janet version (repeatedly.cljc throw cases).
+;; Ported separately once the non-fn / non-number-count throws are matched.
 
 ;; --- repeat ---
 (defn repeat
@@ -91,10 +100,7 @@
   (lazy-seq (cons x (iterate f (f x)))))
 
 
-;; --- partition-all ---
-(defn partition-all
-  ([n coll] (partition-all n n coll))
-  ([n step coll]
-   (lazy-seq
-    (when-let [s (seq coll)]
-      (cons (take n s) (partition-all n step (nthrest coll step)))))))
+;; partition-all stays in the Janet seed for now (core-partition-all): it already
+;; has the transducer + collection arities (jolt-cru), and a CLJ port realizes a
+;; different (non-minimal) element count via take/drop than the Janet one,
+;; tripping the §6.3 laziness counters + a suite file. Ported separately.
