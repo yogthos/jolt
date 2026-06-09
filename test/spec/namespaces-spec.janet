@@ -16,6 +16,11 @@
 
 (defspec "namespaces / ns operations"
   ["in-ns switches"     "true"     "(do (in-ns 'my.ns) (symbol? 'x))"]
+  # ns is a macro over in-ns/require/use/import (Stage 2 jolt-eaa): the form sets
+  # the current ns and processes its clauses.
+  ["ns form + alias"    "\"HI\""   "(do (ns my.app (:require [clojure.string :as s])) (s/upper-case \"hi\"))"]
+  ["ns :use refers all" "9"        "(do (ns src.lib) (def helper 9) (ns dst.app (:use [src.lib])) helper)"]
+  ["standalone use"     "7"        "(do (ns src.l2) (def k 7) (in-ns 'dst.a2) (use '[src.l2]) k)"]
   ["ns-name"            "true"     "(do (require (quote [clojure.string])) (= 'clojure.string (ns-name (find-ns 'clojure.string))))"]
   ["find-ns existing"   "true"     "(some? (find-ns 'clojure.core))"]
   ["find-ns missing"    "nil"      "(find-ns 'does.not.exist)"]

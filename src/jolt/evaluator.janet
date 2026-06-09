@@ -774,11 +774,13 @@
 
 (defn use-impl
   "(use '[ns ...] ...) — refer ALL public vars of each used ns into the CURRENT ns.
-  A fn; quoted specs arrive evaluated. Each spec is a ns symbol or [ns & opts]."
+  A fn; quoted specs arrive evaluated. Each spec is a ns symbol or a [ns & opts]
+  vector (a pvec/tuple, not a Janet array — coerce, then take the head as the ns)."
   [ctx & specs]
   (def target-ns (ctx-find-ns ctx (ctx-current-ns ctx)))
   (each s specs
-    (let [ns-sym (if (array? s) (in s 0) s)
+    (let [spec (if (pvec? s) (pv->array s) s)
+          ns-sym (if (indexed? spec) (in spec 0) spec)
           src-name (sym-name-str ns-sym)]
       (maybe-require-ns ctx src-name)
       (let [source-ns (ctx-find-ns ctx src-name)]
