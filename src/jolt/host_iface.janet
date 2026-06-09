@@ -72,7 +72,8 @@
   (let [t @{}]
     (each n ["quote" "syntax-quote" "unquote" "unquote-splicing" "do" "if" "def"
              "defmacro" "fn*" "let*" "loop*" "recur" "throw" "try" "set!"
-             "locking" "eval" "instance?" "defmulti" "defmethod" "deftype" "new"
+             # defmulti/defmethod now compile (macros over *-setup fns).
+             "locking" "eval" "instance?" "deftype" "new"
              "." "var-get" "var-set" "var?" "alter-var-root" "find-var" "intern"
              "alter-meta!" "reset-meta!" "satisfies?"
              # protocol-dispatch/register-method/make-reified are now clojure.core

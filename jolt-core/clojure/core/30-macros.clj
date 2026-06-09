@@ -12,6 +12,16 @@
 
 (defmacro comment [& body] nil)
 
+;; defmulti/defmethod are sugar over defmulti-setup/defmethod-setup (ctx-capturing
+;; clojure.core fns) so they compile as plain invokes. name/mm are passed quoted;
+;; the dispatch fn, options, and dispatch value evaluate normally, and the method
+;; body becomes a compiled (fn …).
+(defmacro defmulti [name dispatch & opts]
+  `(defmulti-setup (quote ~name) ~dispatch ~@opts))
+
+(defmacro defmethod [mm dispatch-val & fn-tail]
+  `(defmethod-setup (quote ~mm) ~dispatch-val (fn ~@fn-tail)))
+
 ;; Single arglist (Jolt defmacro is single-arity); the optional else defaults nil
 ;; via rest-destructuring.
 (defmacro if-not [test then & [else]]

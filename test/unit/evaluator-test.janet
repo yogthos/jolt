@@ -111,7 +111,9 @@
 (print "  passed")
 
 (print "15: defmulti/defmethod...")
-(let [ctx (make-ctx)]
+# defmulti/defmethod are overlay macros now (Stage 2 jolt-eaa), so this needs the
+# full env (init loads the overlay + installs the *-setup fns), not a bare make-ctx.
+(let [ctx (init)]
   (eval-form ctx @{} (parse-string "(defmulti my-dispatch (fn* [x] (x :type)))"))
   (eval-form ctx @{} (parse-string "(defmethod my-dispatch :foo [_] :got-foo)"))
   (eval-form ctx @{} (parse-string "(defmethod my-dispatch :bar [_] :got-bar)"))
