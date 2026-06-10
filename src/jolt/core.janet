@@ -56,6 +56,13 @@
 (defn sorted-entries-arr [coll]
   (let [e (coll :entries)] (if (pvec? e) (pv->array e) e)))
 
+# Lazy cell chain over an indexed (tuple/array) collection, walking by INDEX —
+# O(1) per step. Slicing the remainder per step (the old shape) made every
+# full walk over a concrete collection O(n^2).
+(defn indexed-cells [t i]
+  (if (>= i (length t)) nil
+    @[(in t i) (fn [] (indexed-cells t (+ i 1)))]))
+
 # Canonicalize a collection key/element to a value-hashable Janet struct/tuple so
 # the PHM/PHS treat value-equal maps/vectors as the same key (Janet hashes tables
 # by identity otherwise). Installed into phm via set-canonicalize-key!.
@@ -699,11 +706,18 @@
     # rest never returns nil — Clojure's rest yields () on an exhausted seq.
     (lazy-seq? coll) (let [r (ls-rest coll)] (if (nil? r) @[] r))
     (plist? coll) (pl-rest coll)
-    (pvec? coll) (let [a (pv->array coll)] (if (<= (length a) 1) @[] (array/slice a 1)))
+    # Indexed collections: an O(1) lazy view from index 1 (Clojure: rest of a
+    # vector is a seq, not a vector). Slicing per step made first/rest loops
+    # over concrete collections O(n^2) — a 20k rest-loop took two seconds.
+    (pvec? coll) (let [a (pv->array coll)]
+                   (if (<= (length a) 1) @[]
+                     (make-lazy-seq (fn [] (indexed-cells a 1)))))
     (or (nil? coll) (= 0 (length coll))) @[]
     (string? coll) (tuple ;(map make-char (string/bytes (string/slice coll 1))))
-    (tuple? coll) (tuple/slice coll 1)
-    (array/slice coll 1)))
+    (tuple? coll) (if (<= (length coll) 1) @[]
+                    (make-lazy-seq (fn [] (indexed-cells coll 1))))
+    (if (<= (length coll) 1) @[]
+      (make-lazy-seq (fn [] (indexed-cells coll 1))))))
 
 (defn core-next [coll]
   # next is rest, but nil when the rest is empty. seq-done? realizes one lazy
@@ -952,14 +966,15 @@
           (if (= :jolt/pending cell) nil cell))
         (if (tuple? c)
           # user sequential data: every element is a value, no cell-detection.
-          (if (= 0 (length c)) nil
-            @[(in c 0) (fn [] (coll->cells (tuple/slice c 1)))])
+          # indexed-cells walks by INDEX — the old (tuple/slice c 1) per cell
+          # made any walk over a concrete collection O(n^2).
+          (if (= 0 (length c)) nil (indexed-cells c 0))
         (if (array? c)
           # mutable array: a genuine cons cell, or an eager seq result.
           (if (= 0 (length c)) nil
             (if (and (= 2 (length c)) (function? (in c 1)))
               c  # already a cell [val, rest-thunk]
-              @[(in c 0) (fn [] (coll->cells (array/slice c 1)))]))
+              (indexed-cells c 0)))
           # Other concrete seqables (set/map/sorted coll/string/buffer): coerce
           # to a tuple seq via core-seq, then recurse. (lazy/indexed above.)
           (if (or (set? c) (phm? c) (buffer? c) (string? c) (core-sorted? c)
