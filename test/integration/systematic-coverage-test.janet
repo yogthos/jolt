@@ -6,7 +6,7 @@
 
 # --- Type Predicates ---
 (print "1: type predicates...")
-(let [ctx (init)]
+(let [ctx (init-cached)]
   (assert (= true (ct-eval ctx "(integer? 0)")) "integer? 0")
   (assert (= true (ct-eval ctx "(integer? 1)")) "integer? 1")
   (assert (= true (ct-eval ctx "(integer? -5)")) "integer? negative")
@@ -56,7 +56,7 @@
 
 # --- Number Predicates ---
 (print "2: number predicates...")
-(let [ctx (init)]
+(let [ctx (init-cached)]
   (assert (= true (ct-eval ctx "(zero? 0)")) "zero? 0")
   (assert (= false (ct-eval ctx "(zero? 1)")) "zero? 1")
   # zero?/pos?/neg? now reject non-numbers (Clojure-strict), like the JVM.
@@ -77,7 +77,7 @@
 
 # --- Math ---
 (print "3: math operations...")
-(let [ctx (init)]
+(let [ctx (init-cached)]
   (assert (= 0 (ct-eval ctx "(+)")) "+ 0 args")
   (assert (= 5 (ct-eval ctx "(+ 2 3)")) "+ 2 args")
   (assert (= 10 (ct-eval ctx "(+ 1 2 3 4)")) "+ varargs")
@@ -104,7 +104,7 @@
 
 # --- Comparison ---
 (print "4: comparison...")
-(let [ctx (init)]
+(let [ctx (init-cached)]
   (assert (= true (ct-eval ctx "(= 1 1)")) "= same")
   (assert (= true (ct-eval ctx "(= 1 1 1)")) "= multi same")
   (assert (= false (ct-eval ctx "(= 1 2)")) "= different")
@@ -119,7 +119,7 @@
 
 # --- Boolean logic ---
 (print "5: boolean logic...")
-(let [ctx (init)]
+(let [ctx (init-cached)]
   (assert (= true (ct-eval ctx "(and)")) "and empty")
   (assert (= true (ct-eval ctx "(and true)")) "and true")
   (assert (= nil (ct-eval ctx "(and nil)")) "and nil")
@@ -139,7 +139,7 @@
 
 # --- Collections ---
 (print "6: collections...")
-(let [ctx (init)]
+(let [ctx (init-cached)]
   (assert (= true (ct-eval ctx "(empty? nil)")) "empty? nil")
   (assert (= true (ct-eval ctx "(empty? [])")) "empty? []")
   (assert (= true (ct-eval ctx "(empty? ())")) "empty? ()")
@@ -157,7 +157,7 @@
 
 # --- Sequence Operations ---
 (print "7: sequence operations...")
-(let [ctx (init)]
+(let [ctx (init-cached)]
   (assert (= 1 (ct-eval ctx "(first [1 2 3])")) "first")
   (assert (= nil (ct-eval ctx "(first [])")) "first empty")
   (assert (= nil (ct-eval ctx "(first nil)")) "first nil")
@@ -178,7 +178,7 @@
 
 # --- Collections: conj, assoc, dissoc, get ---
 (print "8: collection mutation...")
-(let [ctx (init)]
+(let [ctx (init-cached)]
   (assert (= true (ct-eval ctx "(= [1 2 3] (conj [1 2] 3))")) "conj vector")
   (assert (= true (ct-eval ctx "(= (quote (0 1 2)) (conj (quote (1 2)) 0))")) "conj list prepend")
   (assert (= true (ct-eval ctx "(= {:a 1 :b 2} (assoc {:a 1} :b 2))")) "assoc")
@@ -194,7 +194,7 @@
 
 # --- Higher-order functions ---
 (print "9: higher-order functions...")
-(let [ctx (init)]
+(let [ctx (init-cached)]
   (assert (= 3 (ct-eval ctx "((comp inc inc) 1)")) "comp")
   (assert (= 42 (ct-eval ctx "(identity 42)")) "identity")
   (assert (= 99 (ct-eval ctx "((constantly 99) :anything)")) "constantly")
@@ -206,7 +206,7 @@
 
 # --- Destructuring ---
 (print "10: destructuring...")
-(let [ctx (init)]
+(let [ctx (init-cached)]
   (assert (= 1 (ct-eval ctx "(let [[x] [1 2 3]] x)")) "seq destructure first")
   (assert (= 2 (ct-eval ctx "(let [[_ y] [1 2 3]] y)")) "seq destructure second"))
 (print "  ok")

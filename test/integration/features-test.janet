@@ -9,14 +9,14 @@
 
 (defn check [label expected actual]
   # evaluate (= expected actual) in a fresh ctx; expects boolean true
-  (def ctx (init))
+  (def ctx (init-cached))
   (def res (protect (eval-string ctx (string "(= " expected " " actual ")"))))
   (cond
     (not= (res 0) true)
       (array/push fails [label "ERROR" (string (res 1))])
     (= (res 1) true)
       (++ pass)
-    (let [got (protect (eval-string (init) actual))]
+    (let [got (protect (eval-string (init-cached) actual))]
       (array/push fails [label "NEQ"
                          (string "want=" expected " got="
                                  (if (= (got 0) true) (string/format "%q" (got 1)) (string "ERR:" (got 1))))]))))

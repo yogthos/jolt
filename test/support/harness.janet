@@ -30,7 +30,7 @@
 (defn fresh-ctx
   "A fresh, fully-isolated interpret-mode context (cheap fork of one shared init)."
   []
-  (when (nil? base-snap) (set base-snap (snapshot (init))))
+  (when (nil? base-snap) (set base-snap (snapshot (init-cached))))
   (fork base-snap))
 
 (defn jeval

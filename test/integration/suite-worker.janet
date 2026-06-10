@@ -28,7 +28,7 @@
   # portable Clojure analyzer + Janet back end, hybrid with interpreter fallback)
   # so the whole battery validates the self-hosted compiler against the baseline.
   (def selfhost? (= "1" (os/getenv "JOLT_SELFHOST")))
-  (def ctx (init (if compile? {:compile? true} {})))
+  (def ctx (init-cached (if compile? {:compile? true} {})))
   (defn run-form [f]
     (cond
       selfhost? (selfhost/compile-and-eval ctx f)

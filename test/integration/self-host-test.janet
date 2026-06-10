@@ -10,7 +10,7 @@
 (defn ce [ctx s] (normalize-pvecs (backend/compile-and-eval ctx (parse-string s))))
 
 (print "self-host pipeline (Clojure analyzer -> IR -> Janet)...")
-(let [ctx (init)]
+(let [ctx (init-cached)]
   # primitives + control flow
   (assert (= 3 (ce ctx "(+ 1 2)")) "+")
   (assert (= 6 (ce ctx "(* 2 3)")) "*")
@@ -58,7 +58,7 @@
 # compile path. Forms the analyzer can't handle (stateful / destructuring) fall
 # back to the interpreter, with the same observable results.
 (print "self-host via eval-toplevel routing...")
-(let [ctx (init {:compile? true})]
+(let [ctx (init-cached {:compile? true})]
   (defn ev [s] (normalize-pvecs (eval-one ctx (parse-string s))))
   (assert (= 3 (ev "(+ 1 2)")) "tl +")
   (ev "(defn sq [x] (* x x))")                 # def via self-host
@@ -70,7 +70,7 @@
   # Proof the self-hosted pipeline actually ran: only backend/ensure-analyzer
   # populates jolt.analyzer. An interpret-only ctx never loads it.
   (assert (pos? (length ((ctx-find-ns ctx "jolt.analyzer") :mappings))) "analyzer loaded under :compile?"))
-(let [ctx (init {})]
+(let [ctx (init-cached {})]
   (eval-one ctx (parse-string "(+ 1 2)"))
   (assert (zero? (length ((ctx-find-ns ctx "jolt.analyzer") :mappings))) "analyzer NOT loaded when interpreting"))
 
@@ -78,7 +78,7 @@
 # load into clojure.core at init and work the same compiled or interpreted.
 (print "clojure.core overlay (Clojure-defined core fns)...")
 (each opts [{:compile? true} {}]
-  (let [ctx (init opts)]
+  (let [ctx (init-cached opts)]
     (defn ev [s] (normalize-pvecs (eval-one ctx (parse-string s))))
     (assert (= 1 (ev "(ffirst [[1 2] [3 4]])")) "ffirst")
     (assert (= [2] (ev "(nfirst [[1 2] [3 4]])")) "nfirst")

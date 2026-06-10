@@ -8,7 +8,7 @@
 (def actual   (get (dyn :args) 2))
 
 (when (and expected actual)
-  (def ctx (init {}))
+  (def ctx (init-cached {}))
   (def prog (string "(= " expected " " actual ")"))
   (def [ok val] (protect (eval-string ctx prog)))
   (if ok

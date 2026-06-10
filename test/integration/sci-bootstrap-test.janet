@@ -9,7 +9,7 @@
 # context; the portable default is #{:jolt :default}).
 (reader-features-set! ["jolt" "clj" "default"])
 
-(def ctx (init))
+(def ctx (init-cached))
 
 (printf "Loading SCI stubs...\n")
 (defn load-stubs [ctx filepath]

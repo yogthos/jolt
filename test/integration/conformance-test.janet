@@ -464,7 +464,7 @@
   # instead of its own init (~50 ms interpreted / ~900 ms compiled). Isolation is
   # preserved — a fork shares nothing mutable with its siblings. For self-host
   # mode, compile one form first so the lazily-built analyzer is in the snapshot.
-  (def base (init init-opts))
+  (def base (init-cached init-opts))
   (when selfhost? (selfhost/compile-and-eval base (parse-string "1")))
   (def snap (snapshot base))
   (def fails @[])
