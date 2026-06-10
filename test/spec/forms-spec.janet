@@ -18,8 +18,9 @@
   ["nil match"       ":nada"  "(case nil nil :nada :default)"]
   ["default"         ":def"   "(case 99 1 :one 2 :two :def)"]
   ["list of consts"  ":vowel" "(case \\a (\\a \\e \\i \\o \\u) :vowel :consonant)"]
-  ["no match no default" :throws "(case 5 1 :one)"])
-  # gap (jolt-vdo): case allows duplicate test constants — Clojure compile-errors.
+  ["no match no default" :throws "(case 5 1 :one)"]
+  ["duplicate keys"  :throws  "(case 1 1 :one 1 :dup :default)"]
+  ["duplicate in or-group" :throws "(case 2 (1 2) :a (2 3) :b :default)"])
 
 (defspec "forms / fn"
   ["named fn nil"    "nil"    "((fn* foo-bar []))"]
@@ -52,9 +53,8 @@
 
 (defspec "forms / loop"
   ["sum"             "55"     "(loop* [sum 0 cnt 10] (if (= cnt 0) sum (recur (+ cnt sum) (dec cnt))))"]
-  ["multi binding"   "[4 2]"  "(loop* [a 1 b 2 n 0] (if (< n 3) (recur (inc a) b (inc n)) [a b]))"])
-  # gap (jolt-w2v): loop bindings aren't sequential — a later init can't reference an
-  # earlier binding (Clojure's loop is like let). (loop* [a 1 b (+ a 1)] …) errors.
+  ["multi binding"   "[4 2]"  "(loop* [a 1 b 2 n 0] (if (< n 3) (recur (inc a) b (inc n)) [a b]))"]
+  ["init sees prior" "[1 2 3]" "(loop* [a 1 b (+ a 1) c (+ b 1)] [a b c])"])
 
 (defspec "forms / try"
   ["immediate throw caught" ":caught" "(try (throw :boom) (catch :default e :caught))"]
