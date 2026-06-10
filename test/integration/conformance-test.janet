@@ -132,6 +132,11 @@
    ["multimethod default" ":def" "(do (defmulti f identity) (defmethod f :default [x] :def) (f 99))"]
    ["protocol on record" "16"  "(do (defprotocol Sh (ar [s])) (defrecord Sq [side] Sh (ar [_] (* side side))) (ar (->Sq 4)))"]
    ["reify dispatch"     "42"  "(do (defprotocol P (m [_])) (m (reify P (m [_] 42))))"]
+   # deftype with INLINE protocol methods (its expansion calls extend-type, which
+   # is defined AFTER deftype in 30-macros — regression for the sq-symbol
+   # current-ns-vs-compile-ns qualification bug, jolt-3vh)
+   ["deftype inline methods" "7" "(do (defprotocol Pi (mi [x])) (deftype Ti [v] Pi (mi [x] v)) (mi (->Ti 7)))"]
+   ["deftype two protocols"  "[1 2]" "(do (defprotocol Pa (ma [x])) (defprotocol Pb (mb [x])) (deftype Tab [a b] Pa (ma [x] a) Pb (mb [x] b)) (let [t (->Tab 1 2)] [(ma t) (mb t)]))"]
 
    ### ---- HIGH: aliased namespace calls ----
    ["require :as alias"  "\"1,2,3\"" "(do (require (quote [clojure.string :as s])) (s/join \",\" [1 2 3]))"]

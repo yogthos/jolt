@@ -155,7 +155,15 @@
         (special-symbol? nm) form
         (ns-find (ctx-find-ns ctx "clojure.core") nm)
           {:jolt/type :symbol :ns "clojure.core" :name nm}
-        {:jolt/type :symbol :ns (ctx-current-ns ctx) :name nm}))
+        # Unresolved -> qualify to the namespace being COMPILED when set (the
+        # analyzer runs interpreted in jolt.analyzer, so ctx-current-ns is wrong
+        # mid-compile — the same seam resolve-var/h-current-ns use). Matters when
+        # a macro expander's template is lowered while a symbol it references is
+        # not yet defined (deftype's extend-type, defined later in the same tier):
+        # it must qualify to the macro's home ns, not jolt.analyzer.
+        {:jolt/type :symbol
+         :ns (or (get (ctx :env) :compile-ns) (ctx-current-ns ctx))
+         :name nm}))
     form))
 
 (defn- d-realize
