@@ -72,12 +72,32 @@
    "(defonce fz-once 1)" "(read-string \"[1 2]\")"
    "(macroexpand-1 (quote (when true 1)))"])
 
-# --- Intentional fallback (sanity sample): these SHOULD punt to the interpreter.
-# The remaining frozen/uncompiled set keeps the harness honest in the punt
-# direction: defmacro + set! (frozen host-coupled), and letfn (needs letrec IR).
+# --- THE FROZEN PUNT SET (Stage 2 complete) ---------------------------------
+# These are the ONLY heads that may reach the interpreter, exhaustively:
+#   defmacro          — definitional host seam (the EXPANDERS are compiled;
+#                       see backend/recompile-macros!)
+#   set!              — host var-cell mutation special
+#   letfn             — needs letrec IR (sequential let* can't express mutual
+#                       recursion); permanent-interpret unless the IR gains it
+#   eval              — compile-and-run entry (also loader stateful-head?)
+#   . / new / Foo. /  — thin host-interop heads the back end doesn't model
+#   .method
+#   gen-class, monitor-enter, monitor-exit — JVM-compat stubs
+# Growing this list is a REGRESSION: a new punt means the compiler lost
+# coverage. Shrinking it (e.g. letfn via letrec IR) is progress — move the
+# form to must-compile.
 (def must-punt
   ["(defmacro m [x] x)"
-   "(set! *warn-on-reflection* true)" "(letfn [(f [n] (g n)) (g [n] (f n))] (f 1))"])
+   "(set! *warn-on-reflection* true)"
+   "(letfn [(f [n] (g n)) (g [n] (f n))] (f 1))"
+   "(eval (quote (+ 1 2)))"
+   "(.method obj)"
+   "(.-field obj)"
+   "(new Foo 1)"
+   "(Foo. 1)"
+   "(gen-class :name X)"
+   "(monitor-enter x)"
+   "(monitor-exit x)"])
 
 (var fails @[])
 (each s must-compile
