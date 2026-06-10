@@ -809,3 +809,15 @@
                  (assoc m k (up (get m k) ks f args))
                  (assoc m k (apply f (get m k) args)))))]
     (up m ks f args)))
+
+;; --- jolt-brh: the last missing-portable vars --------------------------------
+
+;; jolt keywords have no intern table (any keyword "exists"), so find-keyword
+;; always finds — babashka makes the same call.
+(defn find-keyword
+  ([nm] (keyword nm))
+  ([ns nm] (keyword ns nm)))
+
+;; The raw Inst protocol method; jolt insts have one representation, so it is
+;; inst-ms itself.
+(defn inst-ms* [i] (inst-ms i))

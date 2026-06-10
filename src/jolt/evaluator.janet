@@ -951,6 +951,17 @@
   (ns-intern core "protocol-dispatch"
     (fn [proto-name method-name obj rest-args]
       (protocol-dispatch-impl ctx proto-name method-name obj rest-args)))
+  (ns-intern core "extenders"
+    (fn [proto]
+      # All type-tags whose registry entry implements this protocol, as symbols
+      # (closest analog to Clojure's class list); nil when none.
+      (let [pname (get (get proto :name) :name)
+            registry (get (ctx :env) :type-registry)
+            out @[]]
+        (each tag (keys registry)
+          (when (get (get registry tag) pname)
+            (array/push out {:jolt/type :symbol :ns nil :name tag})))
+        (if (empty? out) nil (tuple ;out)))))
   (ns-intern core "register-method"
     (fn [type-name proto-name method-name f]
       (register-method-impl ctx type-name proto-name method-name f)))

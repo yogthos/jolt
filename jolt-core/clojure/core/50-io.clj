@@ -19,7 +19,9 @@
   "A reader over string s (the with-in-str expansion calls this)."
   [s]
   (let [buf (atom s)]
-    {:read-line-fn
+    {:buf buf
+     :fill-fn nil
+     :read-line-fn
      (fn []
        (let [cur @buf]
          (when (pos? (count cur))
@@ -40,7 +42,13 @@
 (def ^:private stdin-buf (atom ""))
 
 (def ^:dynamic *in*
-  {:read-line-fn
+  {:buf stdin-buf
+   :fill-fn (fn []
+              (let [line (__stdin-read-line)]
+                (if (nil? line)
+                  false
+                  (do (swap! stdin-buf (fn [b] (str b line "\n"))) true))))
+   :read-line-fn
    (fn []
      (let [cur @stdin-buf]
        (if (pos? (count cur))
@@ -86,6 +94,27 @@
   [s & body]
   `(binding [*in* (__string-reader ~s)]
      ~@body))
+
+;; Like read, and also returns the exact text consumed for the form (leading
+;; whitespace included). On EOF: throws, or returns [eof-value ""] when
+;; eof-error? is false.
+(defn read+string
+  ([] (read+string *in*))
+  ([stream] (read+string stream true nil))
+  ([stream eof-error? eof-value]
+   (let [buf (get stream :buf)
+         fill (get stream :fill-fn)]
+     (loop []
+       (let [s (deref buf)
+             r (__parse-next s)]
+         (if (nil? r)
+           (if (and fill (fill))
+             (recur)
+             (if eof-error?
+               (throw (ex-info "EOF while reading" {}))
+               [eof-value ""]))
+           (do (reset! buf (nth r 1))
+               [(nth r 0) (subs s 0 (- (count s) (count (nth r 1))))])))))))
 
 (defn line-seq
   "Returns the lines of text from rdr as a lazy sequence of strings, as by
