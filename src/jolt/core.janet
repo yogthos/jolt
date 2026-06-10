@@ -581,6 +581,8 @@
 # ordered by key/element on read. Defined early so seq/count/get can dispatch.
 (defn core-sorted-map? [x] (and (table? x) (= :jolt/sorted-map (x :jolt/type))))
 (defn core-sorted-set? [x] (and (table? x) (= :jolt/sorted-set (x :jolt/type))))
+# sorted? is true for either sorted maps or sorted sets (Clojure: any Sorted coll).
+(defn core-sorted? [x] (or (core-sorted-map? x) (core-sorted-set? x)))
 (defn sm-make [m] @{:jolt/type :jolt/sorted-map :map m})
 (defn ss-make [items] @{:jolt/type :jolt/sorted-set :items items})
 (defn core-sorted-map [& kvs]
@@ -2828,7 +2830,7 @@
     "namespace" core-namespace
     "sorted-map" core-sorted-map
     "sorted-set" core-sorted-set
-    "sorted?" core-sorted-map?
+    "sorted?" core-sorted?
     "reduced" core-reduced
     "reduced?" core-reduced?
     "take-nth" core-take-nth

@@ -126,3 +126,10 @@
   ["bit-clear"          "13"     "(bit-clear 15 1)"]
   ["bit-test true"      "true"   "(bit-test 4 2)"]
   ["bigint 64-bit"      "\"9000000000\"" "(str (bigint 9000000000))"])
+
+(defspec "numbers / random (invariants — non-deterministic)"
+  ["rand-int in range"  "true" "(let [r (rand-int 5)] (and (integer? r) (>= r 0) (< r 5)))"]
+  ["rand-int zero"      "0"    "(rand-int 1)"]
+  ["rand in [0,1)"      "true" "(let [r (rand)] (and (>= r 0) (< r 1)))"]
+  ["rand-nth member"    "true" "(contains? #{:a :b :c} (rand-nth [:a :b :c]))"]
+  ["rand-nth single"    ":x"   "(rand-nth [:x])"])
