@@ -509,9 +509,13 @@
   (get (ctx :env) :current-ns))
 
 (defn ctx-set-current-ns
-  "Set the current namespace symbol."
+  "Set the current namespace symbol. Also keeps the *ns* dynamic var's root in
+  sync (the var table is cached on the env by install-stateful-fns! — one table
+  put on this hot path, no ns lookup chain)."
   [ctx ns-sym]
-  (put (ctx :env) :current-ns ns-sym))
+  (put (ctx :env) :current-ns ns-sym)
+  (when-let [v (get (ctx :env) :ns-var)]
+    (put v :root (ctx-find-ns ctx ns-sym))))
 
 (defn all-ns
   "Return a list of all namespaces in the context."

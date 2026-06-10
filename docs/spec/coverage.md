@@ -3,16 +3,16 @@
 Generated 2026-06-10 by `tools/spec_coverage.py` — do not edit by hand.
 
 Surface: **694** clojure.core vars (ClojureDocs export; 648 with
-community examples). jolt interns 552 of them.
+community examples). jolt interns 553 of them.
 
 | Status | Count | Meaning |
 |---|---|---|
 | implemented+tested | 415 | in jolt and exercised by spec/conformance |
-| implemented-untested | 137 | in jolt, no direct test — spec entries will add them |
+| implemented-untested | 138 | in jolt, no direct test — spec entries will add them |
 | resolvable-not-interned | 2 | works in code but invisible to ns introspection (conformance finding) |
 | missing-portable | 10 | portable semantics, jolt lacks it — implementation gap |
 | special-form | 15 | specified in §3, not a library var |
-| dynamic-var | 31 | classification needed: portable default vs host-dependent |
+| dynamic-var | 30 | classification needed: portable default vs host-dependent |
 | agents-taps | 22 | out of scope pending concurrency design note |
 | stm-refs | 11 | out of scope pending concurrency design note |
 | jvm-specific | 53 | catalogued, not specified |
@@ -47,7 +47,7 @@ UNVERIFIED field; that column will be added as entries land.
 | `*fn-loader*` | dynamic-var |  |
 | `*in*` | dynamic-var |  |
 | `*math-context*` | dynamic-var |  |
-| `*ns*` | dynamic-var | ✓ |
+| `*ns*` | implemented-untested | ✓ |
 | `*out*` | dynamic-var | ✓ |
 | `*print-dup*` | dynamic-var | ✓ |
 | `*print-length*` | dynamic-var | ✓ |

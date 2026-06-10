@@ -1612,6 +1612,12 @@
 # Readable rendering of a value (Clojure pr semantics): strings quoted,
 # keywords with leading ':', symbols by name, collections with their reader
 # syntax. Used by both pr-str (readable) and str (collection elements).
+# A namespace's :name may be a string or a symbol struct depending on the
+# creation path — normalize for display.
+(defn- ns-display-name [ns]
+  (def n (ns :name))
+  (if (and (struct? n) (= :symbol (get n :jolt/type))) (n :name) (string n)))
+
 (var pr-render nil)
 
 # Format a number the way Clojure prints it: infinity and NaN have named forms
@@ -1686,6 +1692,10 @@
       (and (struct? v) (= :jolt/inst (v :jolt/type)))
         (do (buffer/push-string buf "#inst \"") (buffer/push-string buf (inst->rfc3339 v))
             (buffer/push-string buf "\""))
+      (= :jolt/namespace (get v :jolt/type))
+        (do (buffer/push-string buf "#namespace[")
+            (buffer/push-string buf (ns-display-name v))
+            (buffer/push-string buf "]"))
       (and (table? v) (= :jolt/var (get v :jolt/type))) (buffer/push-string buf (var-display v))
       (core-sorted-map? v) (pr-render-pairs buf (sorted-map-entries v))
       (core-sorted-set? v) (pr-render-seq buf (v :items) "#{" "}")
@@ -1718,6 +1728,7 @@
       (if (v :ns) (string (v :ns) "/" (v :name)) (v :name))
     (and (struct? v) (= :jolt/uuid (v :jolt/type))) (v :str)
     (and (struct? v) (= :jolt/inst (v :jolt/type))) (inst->rfc3339 v)
+    (= :jolt/namespace (get v :jolt/type)) (ns-display-name v)
     (and (table? v) (= :jolt/var (get v :jolt/type))) (var-display v)
     (number? v) (fmt-number v)
     (= true v) "true"

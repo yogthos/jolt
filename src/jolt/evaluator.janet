@@ -796,9 +796,9 @@
   quoted symbol arrives evaluated."
   [ctx sym]
   (def ns-name (if (and (struct? sym) (= :symbol (sym :jolt/type))) (sym :name) (string sym)))
-  (ctx-find-ns ctx ns-name)
+  (def the-ns-obj (ctx-find-ns ctx ns-name))
   (ctx-set-current-ns ctx ns-name)
-  nil)
+  the-ns-obj)
 
 (defn use-impl
   "(use '[ns ...] ...) — refer ALL public vars of each used ns into the CURRENT ns.
@@ -953,6 +953,12 @@
   # Var/namespace lookups that need the ctx (the rest of the var fns — var-get/
   # var-set/var?/alter-var-root/alter-meta!/reset-meta! — are plain core-bindings).
   (ns-intern core "find-var" (fn [sym] (find-var ctx sym)))
+  # *ns*: the current-namespace dynamic var. Its root is kept in sync by
+  # ctx-set-current-ns via the cached var table (env :ns-var); a thread
+  # binding (binding [*ns* ...]) shadows the root through var-get as usual.
+  (def ns-var (ns-intern core "*ns*" (ctx-find-ns ctx (ctx-current-ns ctx))))
+  (put ns-var :dynamic true)
+  (put (ctx :env) :ns-var ns-var)
   (ns-intern core "intern"
     (fn [ns-name sym-name &opt val]
       (def ns (ctx-find-ns ctx (if (struct? ns-name) (ns-name :name) ns-name)))
@@ -969,7 +975,7 @@
       (keyword? x) (string x)
       nil)))
   (def ns-of (fn [x]
-    (if (and (table? x) (not (nil? (x :mappings))))
+    (if (= :jolt/namespace (get x :jolt/type))
       x
       (let [nm (ns-name-of x)]
         (if nm (get (get (ctx :env) :namespaces) nm) nil)))))
