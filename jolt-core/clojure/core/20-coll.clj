@@ -151,6 +151,35 @@
 ;; Clojure 1.9: true for ANY argument incl. nil (used as a spec predicate).
 (defn any? [x] true)
 
+;; printf: print (no newline) the formatted string to *out*.
+(defn printf [fmt & args] (print (apply format fmt args)))
+
+;; bound?: every var has a root value. (jolt vars store the root in :root;
+;; a nil-valued root reads as unbound — documented divergence.)
+(defn bound? [& vars]
+  (every? (fn [v] (some? (get v :root))) vars))
+
+;; Run f with a frame of dynamic bindings installed; restore on exit.
+(defn with-bindings* [binding-map f & args]
+  (push-thread-bindings binding-map)
+  (try
+    (apply f args)
+    (finally (pop-thread-bindings))))
+
+;; Capture the CURRENT thread bindings; the returned fn re-installs them
+;; around every call (binding conveyance — Clojure's bound-fn*).
+(defn bound-fn* [f]
+  (let [bs (get-thread-bindings)]
+    (fn [& args] (apply with-bindings* bs f args))))
+
+(defn thread-bound? [& vars]
+  (every? (fn [v] (__thread-bound? v)) vars))
+
+;; file-seq: the tree of paths under root (root included), directories walked
+;; via the host dir primitives. Paths (strings), not File objects.
+(defn file-seq [root]
+  (tree-seq __dir? __list-dir root))
+
 (defn comparator [pred]
   (fn [a b] (cond (pred a b) -1 (pred b a) 1 :else 0)))
 

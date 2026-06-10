@@ -1832,6 +1832,53 @@
 # Host time source for the `time` macro (monotonic, milliseconds).
 (defn core-current-time-ms [] (* 1000 (os/clock :monotonic)))
 
+# Host IO (host-classified in the spec): path-based slurp/spit, *out* flush.
+(defn core-slurp [path] (string (slurp path)))
+
+(defn core-spit [path content & opts]
+  (def append? (do (var a false) (var i 0)
+                   (while (< i (length opts))
+                     (when (and (= :append (in opts i)) (in opts (+ i 1))) (set a true))
+                     (+= i 2))
+                   a))
+  (def f (file/open path (if append? :a :w)))
+  (file/write f (str-render-one content))
+  (file/close f)
+  nil)
+
+(defn core-flush []
+  (def out (dyn :out))
+  (when out (file/flush out))
+  nil)
+
+# Thread-binding introspection over the frame stack (types/cur-binding-stack).
+(defn core-get-thread-bindings []
+  # Innermost frame wins: merge frames oldest-first. The result is a Janet
+  # STRUCT keyed by the var tables themselves — the exact frame representation
+  # var-get reads (identity-keyed get) — so the map can be re-pushed by
+  # with-bindings*/bound-fn* and remains lookup-able with (get m the-var).
+  (def acc @{})
+  (each frame (snapshot-bindings)
+    (each entry (realize-for-iteration frame)
+      (put acc (in entry 0) (in entry 1))))
+  (table/to-struct acc))
+
+(defn core-thread-bound?* [v]
+  (var found false)
+  (each frame (snapshot-bindings)
+    (each entry (realize-for-iteration frame)
+      (when (= (in entry 0) v) (set found true))))
+  found)
+
+# Directory primitives for file-seq (paths, not File objects — host-classified).
+(defn core-dir? [path]
+  (def st (os/stat path))
+  (and st (= :directory (st :mode))))
+
+(defn core-list-dir [path]
+  (def entries (os/dir path))
+  (map (fn [e] (string path "/" e)) (sort entries)))
+
 # Clojure compare: a total order over comparable values. nil sorts first;
 # numbers numerically; strings/keywords lexically; symbols by ns then name;
 # booleans false<true; chars by codepoint; vectors by length then elementwise;
@@ -3071,6 +3118,13 @@
     "int?" core-integer?
     "compare" core-compare
     "type" core-type
+    "slurp" core-slurp
+    "spit" core-spit
+    "flush" core-flush
+    "get-thread-bindings" core-get-thread-bindings
+    "__thread-bound?" core-thread-bound?*
+    "__dir?" core-dir?
+    "__list-dir" core-list-dir
     "parse-long" core-parse-long
     "parse-double" core-parse-double
     "parse-boolean" core-parse-boolean

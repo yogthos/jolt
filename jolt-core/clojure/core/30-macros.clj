@@ -73,6 +73,12 @@
                       [] (partition 2 bindings))]
     `(with-redefs-fn (hash-map ~@pairs) (fn [] ~@body))))
 
+(defmacro with-bindings [binding-map & body]
+  `(with-bindings* ~binding-map (fn [] ~@body)))
+
+(defmacro bound-fn [& fntail]
+  `(bound-fn* (fn ~@fntail)))
+
 (defmacro defonce [name expr]
   `(let [v# (resolve (quote ~name))]
      (if (and v# (some? (var-get v#)))

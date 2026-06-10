@@ -382,10 +382,9 @@
           (let [name (if (struct? refer-sym) (refer-sym :name) refer-sym)
                 v (ns-find source-ns name)]
             (when v
-              # Preserve macro-ness: a referred macro must stay a macro, so copy
-              # the :macro flag onto the interned var (not just its value).
-              (let [nv (ns-intern target-ns name (var-get v))]
-                (when (get v :macro) (put nv :macro true))))))))
+              # Share the SOURCE var (the Clojure model): macro-ness travels with
+              # it and source-ns redefinitions propagate to the referer.
+              (put (target-ns :mappings) name v))))))
     nil))
 
 (defn- bind-put
@@ -813,9 +812,11 @@
           src-name (sym-name-str ns-sym)]
       (maybe-require-ns ctx src-name)
       (let [source-ns (ctx-find-ns ctx src-name)]
+        # Refer maps the SOURCE VAR itself (the Clojure model): redefinitions in
+        # the source ns propagate, the :macro flag travels for free, and
+        # ns-refers can identify refers by the var's home :ns.
         (loop [[sym v] :pairs (source-ns :mappings)]
-          (let [nv (ns-intern target-ns sym (var-get v))]
-            (when (get v :macro) (put nv :macro true)))))))
+          (put (target-ns :mappings) sym v)))))
   nil)
 
 (defn import-impl
@@ -1144,13 +1145,32 @@
       nil))
   # ns-publics: {symbol -> var} (jolt has no private vars, so publics = interns).
   # Keys are symbol structs (value-hashed), matching Clojure's symbol keys.
+  (def mappings->symbol-map (fn [ns pred]
+    (var m (make-phm))
+    (loop [[nm v] :pairs (ns :mappings)]
+      (when (pred nm v)
+        (set m (phm-assoc m {:jolt/type :symbol :ns nil :name nm} v))))
+    m))
   (ns-intern core "ns-publics"
     (fn [&opt ns-d]
+      (mappings->symbol-map (ns-or-current ns-d) (fn [nm v] true))))
+  # ns-map: all mappings (interns + refers; jolt has no class imports in maps).
+  (ns-intern core "ns-map"
+    (fn [&opt ns-d]
+      (mappings->symbol-map (ns-or-current ns-d) (fn [nm v] true))))
+  # ns-refers: mappings whose var's HOME ns differs from this ns (copied in by
+  # refer/use/require :refer).
+  (ns-intern core "ns-refers"
+    (fn [&opt ns-d]
       (def ns (ns-or-current ns-d))
-      (var m (make-phm))
-      (loop [[nm v] :pairs (ns :mappings)]
-        (set m (phm-assoc m {:jolt/type :symbol :ns nil :name nm} v)))
-      m))
+      (def my-name (ns :name))
+      (mappings->symbol-map ns (fn [nm v]
+        (and (table? v) (not= (get v :ns) my-name))))))
+  (ns-intern core "ns-unmap"
+    (fn [ns-d sym]
+      (def ns (ns-or-current ns-d))
+      (put (ns :mappings) (if (struct? sym) (sym :name) (string sym)) nil)
+      nil))
   core)
 
 # Dispatch a special form by its string name.
