@@ -385,7 +385,8 @@
 # kernel tier must already be loaded (see api/load-core-overlay!).
 (defn- build-compiler! [ctx]
   (compile-load ctx "jolt.ir")
-  (compile-load ctx "jolt.analyzer"))
+  (compile-load ctx "jolt.analyzer")
+  (compile-load ctx "jolt.passes"))
 
 (defn- ensure-analyzer [ctx]
   # Don't build until the kernel tier is loaded (see api/load-core-overlay! and
@@ -435,7 +436,20 @@
   (def r (protect ((var-get av) ctx form)))
   (put (ctx :env) :compile-ns nil)
   (ctx-set-current-ns ctx saved-ns)
-  (if (r 0) (r 1) (error (r 1))))
+  (unless (r 0) (error (r 1)))
+  # IR passes (jolt.passes/run-passes — nanopass-lite, jolt-2om): pure IR->IR
+  # rewrites (constant folding, ...) between the analyzer and the back end.
+  # Resolved lazily; absent during the pre-passes bootstrap window.
+  (def pv (unless (= "1" (os/getenv "JOLT_NO_IR_PASSES"))
+            (ns-find (ctx-find-ns ctx "jolt.passes") "run-passes")))
+  (if pv
+    (let [pr (protect ((var-get pv) (r 1)))]
+      # the pass runs interpreted; a throw inside it unwinds past the
+      # interpreter's ns restores — put the compile ns back either way, or
+      # the REST of this compilation resolves in jolt.passes
+      (ctx-set-current-ns ctx saved-ns)
+      (if (pr 0) (pr 1) (r 1)))
+    (r 1)))
 
 # The analyzer's deliberate punt signal — (uncompilable why) throws the string
 # "jolt/uncompilable: <why>". Anything else escaping the compile step is an
