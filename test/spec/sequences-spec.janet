@@ -273,3 +273,20 @@
   ["splitv-at"          "[[1 2] [3 4]]"  "(splitv-at 2 [1 2 3 4])"]
   ["splitv-at first is vector" "true"    "(vector? (first (splitv-at 2 [1 2 3])))"]
   ["splitv-at past end" "[[1 2] []]"     "(splitv-at 5 [1 2])"])
+
+# Linear seq walks (flatiron review find): cell chains over concrete
+# collections walk by INDEX. Slicing the remainder per step made every full
+# walk O(n^2) — mapv over 40k elements took ten seconds, a 20k first/rest
+# loop took two. rest/next of an indexed collection is an O(1) lazy view —
+# and therefore a SEQ, as in Clojure (it was a vector-typed slice).
+(defspec "sequences / linear walks over concrete collections"
+  ["rest of vector is a seq"   "true"  "(seq? (rest [1 2 3]))"]
+  ["rest of vector not vector" "false" "(vector? (rest [1 2 3]))"]
+  ["rest values"               "(quote (2 3))" "(rest [1 2 3])"]
+  ["next of vector"            "(quote (2 3))" "(next [1 2 3])"]
+  ["next exhausts to nil"      "nil"   "(next [1])"]
+  ["rest exhausts to ()"       "()"    "(rest [1])"]
+  ["rest-loop scales (20k linear)" "20000"
+   "(loop [xs (seq (vec (range 20000))) n 0] (if xs (recur (next xs) (inc n)) n))"]
+  ["mapv scales (50k linear)"  "50000" "(count (mapv inc (vec (range 50000))))"]
+  ["nested walk"               "[2 3]" "(vec (rest (mapv inc [0 1 2])))"])
