@@ -22,14 +22,25 @@
 
 (use ../../src/jolt/api)
 
+# Every case still gets a fully-isolated context, but via api/fork (~2 ms deep
+# copy of a snapshotted ctx) instead of a fresh init (~50 ms) — the same
+# behavior, ~25x faster across the ~1500 spec cases. Built lazily so harness
+# importers that never eval (or that only use run-spec) pay it once at most.
+(var- base-snap nil)
+(defn fresh-ctx
+  "A fresh, fully-isolated interpret-mode context (cheap fork of one shared init)."
+  []
+  (when (nil? base-snap) (set base-snap (snapshot (init))))
+  (fork base-snap))
+
 (defn jeval
   "Evaluate a Clojure source string in a fresh context, normalizing persistent
   vectors/lists to Janet tuples so results compare with `deep=`/tuple literals."
   [s]
-  (normalize-pvecs (eval-string (init) s)))
+  (normalize-pvecs (eval-string (fresh-ctx) s)))
 
 (defn- show [s]
-  (let [r (protect (eval-string (init) s))]
+  (let [r (protect (eval-string (fresh-ctx) s))]
     (if (= (r 0) true)
       (string/format "%q" (normalize-pvecs (r 1)))
       (string "<error: " (r 1) ">"))))
@@ -44,11 +55,11 @@
     (def expected (in case 1))
     (def actual (in case 2))
     (if (= expected :throws)
-      (let [r (protect (eval-string (init) actual))]
+      (let [r (protect (eval-string (fresh-ctx) actual))]
         (if (= (r 0) false)
           (++ pass)
           (array/push fails [label "expected an error, got a value"])))
-      (let [r (protect (eval-string (init) (string "(= " expected " " actual ")")))]
+      (let [r (protect (eval-string (fresh-ctx) (string "(= " expected " " actual ")")))]
         (cond
           (not= (r 0) true) (array/push fails [label (string "errored: " (r 1))])
           (= (r 1) true) (++ pass)
@@ -79,5 +90,5 @@
 (defn expect-throws
   "Assert that evaluating Clojure `s` raises an error."
   [s]
-  (let [r (protect (eval-string (init) s))]
+  (let [r (protect (eval-string (fresh-ctx) s))]
     (assert (= (r 0) false) (string "expected an error for: " s))))

@@ -147,6 +147,34 @@
     (load-core-overlay! ctx)
     ctx))
 
+# --- Context snapshot/fork (cheap isolated copies) --------------------------
+#
+# init is expensive (~50 ms interpreted, ~900 ms compiled: tier loading, analyzer
+# build, macro recompilation). For workloads that need MANY isolated contexts —
+# the test harnesses build a fresh ctx per case — snapshot a fully-built ctx once
+# and fork cheap deep copies (~2 ms) from it via Janet marshal/unmarshal. A fork
+# shares nothing mutable with the original: defs, protocol extensions, hierarchy
+# changes, atom states in one fork are invisible to the others.
+#
+# The reverse-lookup dicts must be built from root-env (cfunctions and abstract
+# values from the Janet runtime marshal by reference through them) BEFORE any ctx
+# values exist in scope — module load time here, so user code can't leak into it.
+(def- image-load-dict (env-lookup root-env))
+(def- image-make-dict (invert image-load-dict))
+
+(defn snapshot
+  "Marshal a fully-built context into a buffer that fork can cheaply clone.
+  Build the ctx (init), customize it if needed, then snapshot once."
+  [ctx]
+  (marshal ctx image-make-dict))
+
+(defn fork
+  "A fresh, fully-isolated deep copy of a snapshotted context (~2 ms, vs
+  re-running init). (fork (snapshot ctx)) behaves exactly like ctx did at
+  snapshot time; mutations to a fork never affect the original or other forks."
+  [snap]
+  (unmarshal snap image-load-dict))
+
 (defn eval-one
   "Evaluate a single already-parsed form. Routing (compile when :compile? is set,
   stateful forms interpret, interpreter fallback for forms the compiler can't

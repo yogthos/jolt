@@ -108,14 +108,33 @@
       (var timeouts 0)
       (def worst @[])
 
+      # Worker pool: each file is already its own subprocess (isolation + hang
+      # containment), so concurrency only changes wall-clock. A token-channel
+      # semaphore caps the live workers; os/spawn / ev/read / os/proc-wait are
+      # event-loop aware so the fibers genuinely interleave. Totals are
+      # order-independent. Default 4 keeps per-file wall-clock deadlines honest
+      # on small CI runners; override with JOLT_SUITE_WORKERS.
+      (def nworkers
+        (min 8 (max 1 (or (scan-number (or (os/getenv "JOLT_SUITE_WORKERS") ""))
+                          (os/cpu-count) 4))))
+      (def sem (ev/chan nworkers))
+      (def done (ev/chan (length files)))
       (each path files
+        (ev/spawn
+          (ev/give sem :tok)                 # acquire (blocks when pool is full)
+          (def out (run-file path))
+          (ev/take sem)                      # release
+          (ev/give done [path out])))
+      (for _ 0 (length files)
+        (def [path out] (ev/take done))
         (def rel (string/slice path (+ 1 (length suite-dir))))
-        (when progress? (eprintf "  %s" rel) (eflush))
-        (def out (run-file path))
         (def counts (and out (parse-counts out)))
+        (when progress?
+          (eprintf "  %s%s" rel (cond (nil? out) " TIMEOUT" (nil? counts) " (no counts)" ""))
+          (eflush))
         (cond
-          (nil? out) (do (++ timeouts) (when progress? (eprint " TIMEOUT")))
-          (nil? counts) (when progress? (eprint " (no counts)"))
+          (nil? out) (++ timeouts)
+          (nil? counts) nil
           (let [[pn fn* en] counts]
             (++ ran-files)
             (+= total-pass pn)

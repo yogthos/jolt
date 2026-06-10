@@ -384,9 +384,16 @@
   (def init-opts (if selfhost? {} mode))
   (defn ev [ctx prog]
     (if selfhost? (selfhost/compile-and-eval ctx (parse-string prog)) (eval-string ctx prog)))
+  # One expensive init per mode; every case runs on a cheap isolated fork (~2 ms)
+  # instead of its own init (~50 ms interpreted / ~900 ms compiled). Isolation is
+  # preserved — a fork shares nothing mutable with its siblings. For self-host
+  # mode, compile one form first so the lazily-built analyzer is in the snapshot.
+  (def base (init init-opts))
+  (when selfhost? (selfhost/compile-and-eval base (parse-string "1")))
+  (def snap (snapshot base))
   (def fails @[])
   (each [name expected actual] cases
-    (def ctx (init init-opts))
+    (def ctx (fork snap))
     (def prog (string "(= " expected " " actual ")"))
     (def res (protect (ev ctx prog)))
     (cond
@@ -394,7 +401,7 @@
       (array/push fails [name "ERROR" (string (res 1))])
       (= (res 1) true)
       nil
-      (let [got (protect (ev (init init-opts) actual))]
+      (let [got (protect (ev (fork snap) actual))]
         (array/push fails [name "MISMATCH"
                            (string "want=" expected
                                    " got=" (if (= (got 0) true) (string/format "%q" (got 1)) (string "ERR:" (got 1))))]))))
