@@ -3,6 +3,7 @@
 # Supports in-memory bytecode caching when :compile? is enabled.
 
 (use ./reader)
+(use ./types)
 (use ./evaluator)
 (import ./backend :as backend)
 
@@ -30,6 +31,14 @@
   interpreter for forms it can't compile. Only the compile step is guarded —
   runtime errors in compiled code propagate (no double-eval, no hidden errors)."
   [ctx form]
+  # Repair point for the interpreted-fn ns swap: a body runs with current-ns
+  # rebound to its defining ns and restores it on normal return; an UNWINDING
+  # throw skips those restores (they're plain trailing calls — defer/try per
+  # call would cost a fiber per frame and blow the C stack on deep recursion).
+  # So save here, and on error put the entry ns back before re-raising — the
+  # ctx never leaks a callee's ns across top-level forms.
+  (def entry-ns (ctx-current-ns ctx))
+  (defn- run []
   (defn try-compile [] (backend/compile-and-eval ctx form))
   (if (get (ctx :env) :compile?)
     (if (array? form)
@@ -43,6 +52,11 @@
         (try-compile)
         (eval-form ctx @{} form)))
     (eval-form ctx @{} form)))
+  (def res (protect (run)))
+  (if (res 0)
+    (res 1)
+    (do (ctx-set-current-ns ctx entry-ns)
+        (error (res 1)))))
 
 (defn load-ns
   "Load a Clojure namespace from a .clj file. Per-form routing (compile-or-

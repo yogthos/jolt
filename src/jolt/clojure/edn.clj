@@ -8,20 +8,31 @@
 ;; The reader yields set literals as a FORM ({:jolt/type :jolt/set :value [...]})
 ;; rather than a constructed set, so build the actual values, recursing into
 ;; maps/vectors/lists. (Lists stay lists — EDN never evaluates them as code.)
-(defn- edn->value [x]
+(defn- edn->value [opts x]
   (cond
     ;; Reader FORMS are detected by :jolt/type tag, never by map? — strict map?
     ;; (correctly) excludes tagged structs, so the old (and (map? x) ...) guard
     ;; would skip them.
-    (= :jolt/set (get x :jolt/type)) (set (map edn->value (get x :value)))
-    ;; EDN built-in tagged elements (#uuid/#inst, plus registered readers):
-    ;; apply the data reader to the read form (no evaluation involved).
+    (= :jolt/set (get x :jolt/type)) (set (map (fn [v] (edn->value opts v)) (get x :value)))
+    ;; Tagged elements: a reader from the :readers opt wins, then the built-in
+    ;; data readers (#uuid/#inst + registered); an unknown tag falls to the
+    ;; :default opt fn (called with tag and value, as in Clojure) or throws.
     (= :jolt/tagged (get x :jolt/type))
-      (__read-tagged (get x :tag) (edn->value (get x :form)))
+      (let [tag (get x :tag)
+            v (edn->value opts (get x :form))
+            ;; the reader stores the tag as a :#name keyword; :readers maps are
+            ;; keyed by the SYMBOL (Clojure's shape) — normalize for lookup
+            tag-sym (let [n (name tag)]
+                      (symbol (if (= "#" (subs n 0 1)) (subs n 1) n)))
+            custom (get (get opts :readers) tag-sym)]
+        (cond
+          custom (custom v)
+          (get opts :default) ((get opts :default) tag v)
+          :else (__read-tagged tag v)))
     (map? x)
-      (into {} (map (fn [e] [(edn->value (key e)) (edn->value (val e))]) x))
-    (vector? x) (mapv edn->value x)
-    (seq? x) (map edn->value x)
+      (into {} (map (fn [e] [(edn->value opts (key e)) (edn->value opts (val e))]) x))
+    (vector? x) (mapv (fn [v] (edn->value opts v)) x)
+    (seq? x) (map (fn [v] (edn->value opts v)) x)
     :else x))
 
 ;; Private helper, NOT named read-string: an unqualified (read-string …) call
@@ -30,7 +41,7 @@
 (defn- read-edn [opts s]
   (if (or (nil? s) (cstr/blank? s))
     (get opts :eof nil)
-    (edn->value (clojure.core/read-string s))))
+    (edn->value opts (clojure.core/read-string s))))
 
 (defn read-string
   "Reads one object from the string s. Returns the :eof option value (default

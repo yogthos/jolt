@@ -37,3 +37,16 @@
   ["load-string evals all" "3"  "(load-string \"(def lsv 1) (+ lsv 2)\")"]
   ["eval as value"       "[2 3]" "(mapv eval [(quote (+ 1 1)) (quote (+ 1 2))])"]
   ["eval special still works" "3" "(eval (quote (+ 1 2)))"])
+
+# clojure.edn is complete (jolt-b7y / jolt-0mb): sets, #uuid/#inst, :eof,
+# and the :readers / :default opts (tag normalized from the reader's :#name
+# keyword to the symbol Clojure keys :readers with).
+(defspec "clojure.edn / opts"
+  ["set literal"     "#{1 2}" "(do (require (quote [clojure.edn :as e0])) (e0/read-string \"#{1 2}\"))"]
+  ["uuid tag"        "true"   "(do (require (quote [clojure.edn :as e0])) (uuid? (e0/read-string \"#uuid \\\"550e8400-e29b-41d4-a716-446655440000\\\"\")))"]
+  ["inst tag"        "true"   "(do (require (quote [clojure.edn :as e0])) (inst? (e0/read-string \"#inst \\\"2020-01-01T00:00:00Z\\\"\")))"]
+  [":eof on empty"   ":end"   "(do (require (quote [clojure.edn :as e0])) (e0/read-string {:eof :end} \"\"))"]
+  [":readers custom tag" "[:custom 5]" "(do (require (quote [clojure.edn :as e0])) (e0/read-string {:readers {(quote custom) (fn [v] [:custom v])}} \"#custom 5\"))"]
+  [":readers nested" "[6 8]"  "(do (require (quote [clojure.edn :as e0])) (e0/read-string {:readers {(quote w) (fn [v] (* 2 v))}} \"[#w 3 #w 4]\"))"]
+  [":default fn"     "[:dflt 7]" "(do (require (quote [clojure.edn :as e0])) (e0/read-string {:default (fn [t v] [:dflt v])} \"#unknown 7\"))"]
+  ["unknown tag throws" :throws "(do (require (quote [clojure.edn :as e0])) (e0/read-string \"#nope 1\"))"])

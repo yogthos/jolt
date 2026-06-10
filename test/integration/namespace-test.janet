@@ -96,3 +96,20 @@
 (print "  passed")
 
 (print "\nAll namespace tests passed!")
+
+# An UNCAUGHT throw inside an interpreted fn body must restore the caller's
+# current-ns (the body runs with current-ns rebound to the defining ns; the
+# restore is a defer now). Pre-fix, the ctx was left stuck in the defining ns
+# and every later alias-qualified lookup failed — the sci-bootstrap and
+# clojure.edn "Unable to resolve alias/..." cascades.
+(print "ns restored after uncaught throw...")
+(let [ctx (fresh-ctx)]
+  (api/eval-string ctx "(in-ns (quote otherns))")
+  (api/eval-string ctx "(clojure.core/refer-clojure)")
+  (api/eval-string ctx "(defn boom [] (throw (ex-info \"x\" {})))")
+  (api/eval-string ctx "(in-ns (quote user))")
+  (assert (not ((protect (api/eval-string ctx "(otherns/boom)")) 0)) "boom throws")
+  (assert (= "user" (api/eval-string ctx "(str *ns*)")) "*ns* restored after uncaught throw")
+  (api/eval-string ctx "(require (quote [clojure.string :as s9]))")
+  (assert (= "A" (api/eval-string ctx "(s9/upper-case \"a\")")) "aliases still resolve"))
+(print "  ok")

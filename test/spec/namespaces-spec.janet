@@ -42,3 +42,14 @@
    "(do (require (quote clojure.string)) (alias (quote st2) (quote clojure.string)) (ns-unalias (quote user) (quote st2)) (nil? (get (ns-aliases (quote user)) (quote st2))))"]
   ["ns-publics has var" "true"  "(do (def npv 1) (some? (get (ns-publics (quote user)) (quote npv))))"]
   ["newline returns nil" "nil"  "(newline)"])
+
+# A throw inside an interpreted fn body (or macro expander) must restore the
+# caller's current-ns: the body runs with current-ns rebound to the fn's
+# DEFINING ns, and an unwind that skipped the restore left the ctx stuck
+# there — every later alias-qualified lookup in the REPL ns then failed
+# ("Unable to resolve symbol: alias/...", seen via sci + clojure.edn).
+(defspec "namespaces / error inside a fn must not leak its defining ns"
+  ["alias survives a throwing stdlib call" "\"A\""
+   "(do (require (quote [clojure.string :as s9])) (try (s9/join nil nil nil) (catch Exception e nil)) (s9/upper-case \"a\"))"]
+  ["*ns* restored after throw" "\"user\""
+   "(do (require (quote [clojure.walk :as w9])) (try (w9/postwalk nil nil nil) (catch Exception e nil)) (str *ns*))"])

@@ -1341,6 +1341,10 @@
                    # Use defining namespace for symbol resolution
                    (def saved-ns (ctx-current-ns ctx))
                    (ctx-set-current-ns ctx defining-ns)
+                   # Plain trailing restore (NOT defer/try — those build a fiber per
+                   # call and blow the C stack on deep interpreted recursion). An
+                   # unwinding throw is repaired once at the TOP-LEVEL boundary
+                   # (loader/eval-toplevel restores the ns on error).
                    (var result nil)
                    (each bf body
                      (set result (eval-form ctx new-bindings bf)))
@@ -1417,6 +1421,10 @@
                           # Use defining namespace for symbol resolution
                           (def saved-ns (ctx-current-ns ctx))
                           (ctx-set-current-ns ctx defining-ns)
+                          # Plain trailing restore (NOT defer/try — those build a fiber per
+                          # call and blow the C stack on deep interpreted recursion). An
+                          # unwinding throw is repaired once at the TOP-LEVEL boundary
+                          # (loader/eval-toplevel restores the ns on error).
                           (var result nil)
                           (each body-form body
                             (set result (eval-form ctx fn-bindings body-form)))
@@ -1456,6 +1464,10 @@
                  # Use defining namespace for symbol resolution
                  (def saved-ns (ctx-current-ns ctx))
                  (ctx-set-current-ns ctx defining-ns)
+                 # Plain trailing restore (NOT defer/try — those build a fiber per
+                 # call and blow the C stack on deep interpreted recursion). An
+                 # unwinding throw is repaired once at the TOP-LEVEL boundary
+                 # (loader/eval-toplevel restores the ns on error).
                  (var result nil)
                  (each body-form body
                    (set result (eval-form ctx fn-bindings body-form)))
