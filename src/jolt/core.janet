@@ -144,7 +144,7 @@
             (do
               (array/push items (in cell 0))
               (let [rt (in cell 1)]
-                (if (nil? rt) (set go false) (set cur (make-lazy-seq rt))))))))
+                (if (nil? rt) (set go false) (set cur (ls-rest-cached cur rt))))))))
       items)
     c))
 
@@ -256,7 +256,7 @@
             (set go false)
             (if (pred (in cell 0))
               (let [rt (in cell 1)]
-                (if (nil? rt) (set go false) (set cur (make-lazy-seq rt))))
+                (if (nil? rt) (set go false) (set cur (ls-rest-cached cur rt))))
               (set result false)))))
       result)
     (do
@@ -870,7 +870,7 @@
               (if (core-reduced? acc)
                 (do (set acc (acc :val)) (set go false))
                 (let [rt (in cell 1)]
-                  (if (nil? rt) (set go false) (set cur (make-lazy-seq rt))))))))))
+                  (if (nil? rt) (set go false) (set cur (ls-rest-cached cur rt))))))))))
     (do
       (var stop false)
       (each x (if (set? coll) (phs-seq coll) (realize-for-iteration coll))
@@ -1098,7 +1098,7 @@
                 (f)
                 (let [rt (in cell 1)]
                   (if (nil? rt) (in cell 0)
-                    (reduce-with-reduced f (in cell 0) (make-lazy-seq rt))))))
+                    (reduce-with-reduced f (in cell 0) (ls-rest-cached coll rt))))))
             (let [c (if (set? coll) (phs-seq coll) (realize-for-iteration coll))]
               (if (= 0 (length c)) (f)
                 (reduce-with-reduced f (in c 0) (array/slice c 1))))))

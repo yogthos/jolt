@@ -208,11 +208,25 @@
   (let [cell (realize-ls ls)]
     (if (or (nil? cell) (= :jolt/pending cell) (= 0 (length cell))) nil (in cell 0))))
 
+# The memoized rest wrapper for a node whose cell yielded rest-thunk rt.
+# EVERY walk must go through this (not a fresh make-lazy-seq) or independent
+# walks re-run the shared thunks and side effects duplicate.
+(defn ls-rest-cached [ls rt]
+  (or (get ls :rest-ls)
+      (let [w (make-lazy-seq rt)]
+        (put ls :rest-ls w)
+        w)))
+
 (defn ls-rest [ls]
   (let [cell (realize-ls ls)]
     (if (or (nil? cell) (= 0 (length cell))) nil
       (let [rt (in cell 1)]
-        (if (nil? rt) nil (make-lazy-seq rt))))))
+        (if (nil? rt) nil
+          # Memoized wrapper (see ls-rest-cached): a fresh table per call gave
+          # every independent walk its own realization state, so the shared
+          # rest-thunks re-ran — duplicating side effects (a doall'd seq of
+          # futures re-spawned them on the deref walk, serializing pmap).
+          (ls-rest-cached ls rt))))))
 
 (defn ls-seq [ls]
   (var result @[])
@@ -221,8 +235,7 @@
     (let [cell (realize-ls cur)]
       (if (nil? cell) (break))
       (array/push result (in cell 0))
-      (let [rt (in cell 1)]
-        (set cur (if (nil? rt) nil (make-lazy-seq rt))))))
+      (set cur (ls-rest cur))))
   (if (= 0 (length result)) nil result))
 
 (defn ls-count [ls]
@@ -232,8 +245,7 @@
     (let [cell (realize-ls cur)]
       (if (nil? cell) (break))
       (++ cnt)
-      (let [rt (in cell 1)]
-        (set cur (if (nil? rt) nil (make-lazy-seq rt))))))
+      (set cur (ls-rest cur))))
   cnt)
 
 # ============================================================

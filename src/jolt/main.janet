@@ -84,7 +84,7 @@
               (write-value (in cell 0) buf)
               (++ i)
               (let [rt (in cell 1)]
-                (if (nil? rt) (set go false) (set cur (make-lazy-seq rt))))))))
+                (if (nil? rt) (set go false) (set cur (ls-rest-cached cur rt))))))))
       (when (and go (>= i 1000)) (push-str buf " ..."))
       (push-str buf ")"))
 

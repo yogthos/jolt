@@ -175,3 +175,17 @@
    (lazy-seq
      (when-let [s (seq coll)]
        (cons (first s) (take-nth n (drop n s)))))))
+
+;; --- pmap family (jolt-oeu): parallel map over real-thread futures ----------
+;; Each element's work runs on its own OS thread with SNAPSHOT semantics
+;; (futures marshal captured state — pure fns only, mutations don't propagate
+;; back). All futures are spawned up front (doall), then derefed in order:
+;; coarse-grained work only, as with Clojure's pmap.
+
+(defn pmap
+  ([f coll]
+   (map deref (doall (map (fn [x] (future (f x))) coll))))
+  ([f coll & colls]
+   (pmap (fn [xs] (apply f xs)) (apply map vector coll colls))))
+
+(defn pcalls [& fns] (pmap (fn [f] (f)) fns))

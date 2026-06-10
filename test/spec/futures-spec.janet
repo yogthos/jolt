@@ -49,3 +49,16 @@
   # The future's own return value still reflects the swap on its copy.
   ["future sees its own mutation"
    "1" "(let [a (atom 0)] (deref (future (swap! a inc))))"])
+
+# pmap/pcalls/pvalues over the real-thread futures: spawn-all-then-deref, so
+# independent work overlaps; snapshot semantics (pure fns only). The wall-time
+# row uses generous margins (4 x 150ms in parallel vs 600ms serial).
+(defspec "clojure.core / pmap family"
+  ["pmap values in order"  "[2 3 4]"  "(vec (pmap inc [1 2 3]))"]
+  ["pmap multi-coll"       "[5 7 9]"  "(vec (pmap + [1 2 3] [4 5 6]))"]
+  ["pmap empty"            "()"       "(pmap inc [])"]
+  ["pmap is parallel"      "true"
+   "(do (deref (future :warmup)) (let [t0 (System/currentTimeMillis)] (dorun (pmap (fn [_] (Thread/sleep 200)) [1 2 3 4])) (< (- (System/currentTimeMillis) t0) 700)))"]
+  ["pcalls"                "[1 2]"    "(vec (pcalls (fn [] 1) (fn [] 2)))"]
+  ["pvalues"               "[3 7]"    "(vec (pvalues (+ 1 2) (+ 3 4)))"]
+  ["snapshot semantics"    "0"        "(let [a (atom 0)] (dorun (pmap (fn [_] (swap! a inc)) [1 2])) (deref a))"])
