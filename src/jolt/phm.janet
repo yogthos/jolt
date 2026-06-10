@@ -1,7 +1,12 @@
 # PersistentHashMap implementation for Jolt
-# Bucket-based hash map with copy-on-write semantics.
+# Bucket-based hash map with copy-on-write semantics. The bucket array GROWS
+# (doubling, rehash) when the load factor passes 2 entries/bucket, so lookups
+# stay O(1)-ish at any size — with a fixed 8 buckets, a 100-entry map was a
+# ~12-entry linear scan per get (the jolt-s3y map-read regression). The bucket
+# count is derived from (length (m :buckets)), so marshaled images from before
+# this change keep working.
 
-(def- bucket-count 8)
+(def- initial-buckets 8)
 
 (defn phm? [x]
   (and (table? x)
@@ -27,10 +32,12 @@
   scalars). Used by callers that index the same canonicalized tables phm uses
   (e.g. transient maps/sets)."
   [k] (ck k))
-(defn- key= [a b] (= (ck a) (ck b)))
+# Identity/scalar equality first — the common case — before paying for
+# canonicalization of collection keys.
+(defn- key= [a b] (or (= a b) (= (ck a) (ck b))))
 
-(defn phm-hash-key [k]
-  (if (nil? k) 0 (mod (hash (ck k)) bucket-count)))
+(defn- hash-idx [m k]
+  (if (nil? k) 0 (mod (hash (ck k)) (length (m :buckets)))))
 
 (defn- phm-bucket-find [bucket k]
   (var i 0) (var n (length bucket)) (var found nil)
@@ -71,42 +78,70 @@
 
 (defn phm-get [m k &opt default]
   (default default nil)
-  (let [bucket (get (m :buckets) (phm-hash-key k))]
-    # presence-check, not nil-of-value: a key mapped to nil is still present,
-    # so return nil (not the default) when the key exists with a nil value.
-    (if (and bucket (phm-bucket-contains? bucket k))
-      (phm-bucket-find bucket k)
+  (let [bucket (get (m :buckets) (hash-idx m k))]
+    # Single pass with a presence flag (not nil-of-value): a key mapped to nil
+    # is still present, so return nil (not the default) when it exists.
+    (if bucket
+      (do
+        (var i 0) (var n (length bucket)) (var result default)
+        (while (< i n)
+          (if (key= k (in bucket i)) (do (set result (in bucket (+ i 1))) (break)))
+          (+= i 2))
+        result)
       default)))
 
+# Rehash every entry of `buckets` into a fresh array of `nb` buckets.
+(defn- rehash [buckets nb]
+  (def out (array/new-filled nb nil))
+  (each bucket buckets
+    (when bucket
+      (var i 0) (var n (length bucket))
+      (while (< i n)
+        (let [k (in bucket i)
+              idx (if (nil? k) 0 (mod (hash (ck k)) nb))]
+          (when (nil? (in out idx)) (put out idx @[]))
+          (array/push (in out idx) k)
+          (array/push (in out idx) (in bucket (+ i 1))))
+        (+= i 2))))
+  out)
+
 (defn phm-assoc [m k v]
-  (let [cnt (m :cnt) idx (phm-hash-key k)
+  (let [cnt (m :cnt) idx (hash-idx m k)
         old-bucket (get (m :buckets) idx)
         had-key (if old-bucket (phm-bucket-contains? old-bucket k) false)
         new-bucket (phm-bucket-assoc (if old-bucket old-bucket @[]) k v)
         new-cnt (if had-key cnt (+ cnt 1))
-        new-buckets (array/new bucket-count)]
+        nbuckets (length (m :buckets))
+        new-buckets (array/new nbuckets)]
     (var bi 0)
-    (while (< bi bucket-count)
+    (while (< bi nbuckets)
       (put new-buckets bi (if (= bi idx) new-bucket (get (m :buckets) bi))) (++ bi))
+    # Grow past load factor 2 (doubling) so buckets stay short. Done on the
+    # copy, so persistence is untouched.
+    (def grown (if (> new-cnt (* 2 nbuckets))
+                 (rehash new-buckets (* 2 nbuckets))
+                 new-buckets))
     @{:jolt/deftype "jolt.lang.persistent-hash-map.PersistentHashMap"
-      :cnt new-cnt :buckets new-buckets :_meta (m :_meta)}))
+      :cnt new-cnt :buckets grown :_meta (m :_meta)}))
 
 (defn phm-dissoc [m k]
-  (let [idx (phm-hash-key k) old-bucket (get (m :buckets) idx)]
+  (let [idx (hash-idx m k) old-bucket (get (m :buckets) idx)]
     (if old-bucket
       (let [new-bucket (phm-bucket-dissoc old-bucket k)]
         (if (= new-bucket old-bucket) m
-          (let [new-cnt (- (m :cnt) 1) new-buckets (array/new bucket-count)]
+          (let [new-cnt (- (m :cnt) 1)
+                nbuckets (length (m :buckets))
+                new-buckets (array/new nbuckets)]
             (var bi 0)
-            (while (< bi bucket-count)
+            (while (< bi nbuckets)
               (put new-buckets bi (if (= bi idx) new-bucket (get (m :buckets) bi))) (++ bi))
             @{:jolt/deftype "jolt.lang.persistent-hash-map.PersistentHashMap"
               :cnt new-cnt :buckets new-buckets :_meta (m :_meta)})))
       m)))
 
 (defn phm-entries [m]
-  (var result @[]) (var bi 0)
-  (while (< bi bucket-count)
+  (var result @[]) (var bi 0) (def nb (length (m :buckets)))
+  (while (< bi nb)
     (let [bucket (get (m :buckets) bi)]
       (when bucket
         (var i 0) (var n (length bucket))
@@ -115,8 +150,8 @@
   result)
 
 (defn phm-to-struct [m]
-  (var result @{}) (var bi 0)
-  (while (< bi bucket-count)
+  (var result @{}) (var bi 0) (def nb (length (m :buckets)))
+  (while (< bi nb)
     (let [bucket (get (m :buckets) bi)]
       (when bucket
         (var i 0) (var n (length bucket))
@@ -127,13 +162,13 @@
 (defn phm-count [m] (m :cnt))
 
 (defn phm-contains? [m k]
-  (let [bucket (get (m :buckets) (phm-hash-key k))]
+  (let [bucket (get (m :buckets) (hash-idx m k))]
     (if bucket (phm-bucket-contains? bucket k) false)))
 
 (defn make-phm [&opt kvs]
   (default kvs nil)
   (var m @{:jolt/deftype "jolt.lang.persistent-hash-map.PersistentHashMap"
-           :cnt 0 :buckets (array/new bucket-count) :_meta nil})
+           :cnt 0 :buckets (array/new-filled initial-buckets nil) :_meta nil})
   (when kvs
     (var i 0) (var n (length kvs))
     (while (< i n) (set m (phm-assoc m (kvs i) (kvs (+ i 1)))) (+= i 2)))
