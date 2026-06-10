@@ -123,18 +123,23 @@
   (let [[form2 _] (parse-next rest-str)]
     (assert (deep= [3 4] form2) "second form is vector")))
 
-# Reader conditional — resolves :clj branch at read time
-(assert (= 1 (parse-string "#?(:clj 1 :cljs 2)"))
-        "#?(:clj) picks :clj branch")
+# Reader conditional — feature set is #{:jolt :default} (spec 02-reader S18,
+# RFC 0002); matching is by clause order. reader-features-set! lets a loading
+# context opt a clj-targeted library into :clj compat (restored below).
+(assert (= 3 (parse-string "#?(:clj 1 :jolt 3 :cljs 2)"))
+        "#?(...) picks :jolt branch")
 (assert (= nil (parse-string "#?(:cljs 999)"))
-        "#?(:cljs) returns nil on CLJ")
-(assert (= 42 (parse-string "#?(:clj 42)"))
-        "#?(:clj) with single branch")
-(assert (deep= (sym "clj-only") (parse-string "#?(:clj clj-only :cljs cljs-only)"))
-        "#?(:clj) picks :clj symbol")
-# Nested inside a list — :clj branch is evaluated at read time
-(assert (deep= @[(sym "+") 1 3] (parse-string "(+ 1 #?(:clj 3 :cljs 4))"))
-        "#? inside list picks :clj")
+        "unmatched conditional reads as nothing")
+(assert (= 7 (parse-string "#?(:clj 1 :default 7)"))
+        ":default reached when :clj not in feature set")
+(assert (= 5 (parse-string "#?(:default 5 :jolt 6)"))
+        "clause order wins, not key priority")
+(assert (deep= @[(sym "+") 1 3] (parse-string "(+ 1 #?(:jolt 3 :cljs 4))"))
+        "#? inside list picks :jolt")
+(let [prev (reader-features-set! ["jolt" "clj" "default"])]
+  (assert (= 1 (parse-string "#?(:clj 1 :cljs 2)"))
+          "clj-compat opt-in picks :clj")
+  (reader-features-set! (keys prev)))
 
 # Characters — the reader now produces char values {:jolt/type :jolt/char :ch N}
 (let [form (parse-string "\\newline")]

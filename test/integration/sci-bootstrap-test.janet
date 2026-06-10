@@ -2,6 +2,12 @@
 (use ../../src/jolt/types)
 (use ../../src/jolt/reader)
 (use ../../src/jolt/api)
+(use ../../src/jolt/reader)
+# SCI is a clj/cljs-targeted library: its .cljc sources select implementation
+# via #?(:clj ...) and have no :jolt branches — load it under clj-compat
+# features (spec 02-reader S18: feature sets are a property of the loading
+# context; the portable default is #{:jolt :default}).
+(reader-features-set! ["jolt" "clj" "default"])
 
 (def ctx (init))
 
