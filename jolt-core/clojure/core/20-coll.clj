@@ -634,17 +634,18 @@
 ;; --- Phase 2 leaf batch 2 (jolt-ded): canonical Clojure ports ----------------
 ;; key/val/find first — merge-with and memoize below use them.
 
-;; An entry is any 2-element vector in jolt ((seq m) yields tuples, find
-;; builds a pvec — both count as entries; Clojure's stricter MapEntry-only
-;; key/val has no analog here).
-(defn- map-entryish? [e] (and (vector? e) (= 2 (count e))))
-(defn key [e] (if (map-entryish? e) (nth e 0) (throw (ex-info "key requires a map entry" {}))))
-(defn val [e] (if (map-entryish? e) (nth e 1) (throw (ex-info "val requires a map entry" {}))))
+;; Strict, as in Clojure: an entry is what (seq m) yields (a host tuple), NOT
+;; a plain vector — (key [1 2]) throws.
+(defn key [e] (if (map-entry? e) (nth e 0) (throw (ex-info "key requires a map entry" {}))))
+(defn val [e] (if (map-entry? e) (nth e 1) (throw (ex-info "val requires a map entry" {}))))
 
 ;; find was previously missing from jolt entirely. Presence (contains?), not
-;; value, decides — so (find {:a nil} :a) is [:a nil]. Works on vectors by index.
+;; value, decides — so (find {:a nil} :a) is [:a nil]. Works on vectors by
+;; index. The result must be a REAL entry (key/val are strict), so it is
+;; minted as the first entry of a one-entry map — nil values survive (the
+;; map builder switches to a phm when nil is involved).
 (defn find [m k]
-  (when (contains? m k) [k (get m k)]))
+  (when (contains? m k) (first {k (get m k)})))
 
 (defn some? [x] (not (nil? x)))
 (defn true? [x] (= true x))

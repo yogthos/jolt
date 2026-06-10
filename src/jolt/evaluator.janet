@@ -1272,8 +1272,20 @@
                 v (ns-intern ns (name-sym :name))
                 # (def name docstring value): docstring is form 2, value form 3
                 has-doc (and (> (length form) 3) (string? (in form 2)))
-                val (eval-form ctx bindings (in form (if has-doc 3 2)))]
+                val-form (in form (if has-doc 3 2))
+                val (eval-form ctx bindings val-form)]
             (bind-root v val)
+            # Staged bootstrap (jolt-4j3): pre/at-kernel overlay defns load
+            # interpreted; stash the fn source so backend/recompile-defns! can
+            # compile them once the analyzer is alive — the defn analog of
+            # :macro-src. Only set while api/load-core-overlay! loads the early
+            # tiers (the flag scopes it away from user code).
+            (when (and (get (ctx :env) :stash-defn-src?)
+                       (function? val)
+                       (array? val-form) (> (length val-form) 0)
+                       (or (sym-name? (first val-form) "fn")
+                           (sym-name? (first val-form) "fn*")))
+              (put v :defn-src val-form))
             (let [extra (if has-doc (merge name-meta {:doc (in form 2)}) name-meta)]
               (when (not (empty? extra))
                 (put v :meta (merge (or (get v :meta) {}) extra))))

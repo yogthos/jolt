@@ -70,9 +70,17 @@
   # Proof the self-hosted pipeline actually ran: only backend/ensure-analyzer
   # populates jolt.analyzer. An interpret-only ctx never loads it.
   (assert (pos? (length ((ctx-find-ns ctx "jolt.analyzer") :mappings))) "analyzer loaded under :compile?"))
+# Interpret mode now loads the analyzer too — for compiled macro expansion
+# (ensure-macros-compiled!, every mode). The fully-interpreted oracle is the
+# :compile-macros? false ctx, which must never touch the analyzer.
 (let [ctx (init-cached {})]
   (eval-one ctx (parse-string "(+ 1 2)"))
-  (assert (zero? (length ((ctx-find-ns ctx "jolt.analyzer") :mappings))) "analyzer NOT loaded when interpreting"))
+  (assert (pos? (length ((ctx-find-ns ctx "jolt.analyzer") :mappings)))
+          "analyzer loaded when interpreting (compiled expanders)"))
+(let [ctx (init-cached {:compile-macros? false})]
+  (eval-one ctx (parse-string "(+ 1 2)"))
+  (assert (zero? (length ((ctx-find-ns ctx "jolt.analyzer") :mappings)))
+          "analyzer NOT loaded in the interpreted-macro oracle"))
 
 # clojure.core overlay: fns moved from core.janet to jolt-core/clojure/core.clj
 # load into clojure.core at init and work the same compiled or interpreted.

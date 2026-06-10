@@ -4,10 +4,45 @@
 ;; them is compiled — including the kernel tier, the self-hosted analyzer, and the
 ;; seq/coll tiers.
 ;;
-;; CONSTRAINT: a macro here may use ONLY special forms (if/do/let*/fn*/not) and
-;; core-renames SEED primitives (first/next/rest/nth/count/empty?/...). It must
-;; NOT use kernel-tier fns (second/peek/subvec/...) or anything defined later —
-;; those don't exist yet when this tier loads.
+;; CONSTRAINT: code here may use ONLY special forms (if/do/let*/fn*/not) and
+;; SEED primitives (first/next/rest/nth/count/seq/...), plus earlier defs in
+;; THIS file. It must NOT use kernel-tier fns (second/peek/subvec/...) or
+;; anything defined later — those don't exist yet when this tier loads. Raw
+;; fn*/let* (no destructuring) and no when/cond/and/or above their defmacros.
+;;
+;; This tier's defns load interpreted and are recompiled by the staged pass
+;; (backend/recompile-defns!) once the analyzer is alive — same lifecycle as
+;; the defmacro expanders.
+
+;; empty?/keys/vals live HERE (not 20-coll) because the expanders below call
+;; them at expansion time, which first happens during the kernel-tier compile.
+;; empty? keeps O(1) dispatch for counted things; only the lazy/list fallback
+;; goes through seq's cell check.
+(def empty?
+  (fn* empty? [coll]
+    (if (nil? coll)
+      true
+      (if (vector? coll)
+        (zero? (count coll))
+        (if (map? coll)
+          (zero? (count coll))
+          (if (set? coll)
+            (zero? (count coll))
+            (if (string? coll)
+              (zero? (count coll))
+              (nil? (seq coll)))))))))
+
+;; Canonical: the seq of entries/elements, projected. (keys {}) is nil; sorted
+;; maps iterate in comparator order ((seq sm) is the value's own :seq op).
+(def keys
+  (fn* keys [m]
+    (let* [s (seq m)]
+      (if s (map (fn* [e] (nth e 0)) s) nil))))
+
+(def vals
+  (fn* vals [m]
+    (let* [s (seq m)]
+      (if s (map (fn* [e] (nth e 1)) s) nil))))
 
 (defmacro when [test & body]
   `(if ~test (do ~@body)))

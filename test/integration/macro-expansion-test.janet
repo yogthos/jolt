@@ -75,3 +75,17 @@
 (os/setenv "JOLT_INTERPRET_MACROS" nil)
 
 (print "compiled macro expansion passed!")
+
+# 6. Early overlay DEFNS get the same staged-recompile treatment (jolt-4j3):
+#    00-syntax fns (destructure, and the expander-called keys/vals/empty?) load
+#    interpreted pre-kernel, then compile in the same end-of-init pass.
+(each nm ["destructure" "empty?" "keys" "vals"]
+  (def v (macro-var ictx nm))
+  (assert v (string nm " var exists"))
+  (assert (get v :defn-compiled)
+          (string nm " early defn is compiled (interpret mode)")))
+(def cctx2 (init {:compile? true}))
+(assert (get (macro-var cctx2 "destructure") :defn-compiled)
+        "early defn compiled in compile mode too")
+(assert (not (get (macro-var octx "destructure") :defn-compiled))
+        "oracle mode keeps early defns interpreted")
