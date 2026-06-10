@@ -90,6 +90,33 @@
 
 # Tagged-value predicates moved to the overlay in Phase 4 (read the value's
 # :jolt/type via get). The constructors stay native.
+# map?/coll? are STRICT (jolt-6s2 cleanup): tagged structs (symbols, chars,
+# uuids) are values, not collections; sorted maps/sets and records ARE
+# collections (and sorted-map/record are map?), matching Clojure.
+(defspec "predicates / map? & coll? strictness"
+  ["map? symbol"        "false"  "(map? (quote sym))"]
+  ["map? char"          "false"  "(map? \\a)"]
+  ["map? uuid"          "false"  "(map? (random-uuid))"]
+  ["map? literal"       "true"   "(map? {:a 1})"]
+  ["map? hash-map"      "true"   "(map? (hash-map :a 1))"]
+  ["map? sorted-map"    "true"   "(map? (sorted-map :a 1))"]
+  ["map? record"        "true"   "(do (defrecord Mr [a]) (map? (->Mr 1)))"]
+  ["map? sorted-set"    "false"  "(map? (sorted-set 1))"]
+  ["map? vector"        "false"  "(map? [1])"]
+  ["coll? symbol"       "false"  "(coll? (quote sym))"]
+  ["coll? char"         "false"  "(coll? \\a)"]
+  ["coll? uuid"         "false"  "(coll? (random-uuid))"]
+  ["coll? keyword"      "false"  "(coll? :k)"]
+  ["coll? string"       "false"  "(coll? \"s\")"]
+  ["coll? map literal"  "true"   "(coll? {:a 1})"]
+  ["coll? sorted-map"   "true"   "(coll? (sorted-map :a 1))"]
+  ["coll? sorted-set"   "true"   "(coll? (sorted-set 1))"]
+  ["coll? record"       "true"   "(do (defrecord Cr [a]) (coll? (->Cr 1)))"]
+  ["coll? vector"       "true"   "(coll? [1])"]
+  ["coll? list"         "true"   "(coll? (list 1))"]
+  ["coll? set"          "true"   "(coll? #{1})"]
+  ["coll? lazy seq"     "true"   "(coll? (map inc [1]))"])
+
 (defspec "predicates / tagged-value (Phase 4)"
   ["atom? yes"          "true"   "(atom? (atom 1))"]
   ["atom? no"           "false"  "(atom? 1)"]

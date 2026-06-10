@@ -167,11 +167,27 @@
 (defn core-keyword? [x] (keyword? x))
 (defn core-symbol? [x] (and (struct? x) (= :symbol (x :jolt/type))))
 (defn core-vector? [x] (jvec? x))
-(defn core-map? [x] (or (phm? x) (struct? x) (if (and (table? x) (get x :jolt/deftype)) true false)))
+# map? is STRICT: a plain struct map literal, a phm, a sorted map, or a record.
+# Tagged structs (symbols/chars/uuids — anything with :jolt/type) are VALUES,
+# not maps. (sorted-map? is defined later, so the table check is inlined.)
+(defn core-map? [x]
+  (or (phm? x)
+      (and (struct? x) (nil? (get x :jolt/type)))
+      (and (table? x)
+           (or (not (nil? (get x :jolt/deftype)))
+               (= :jolt/sorted-map (get x :jolt/type))))))
 # seq? is true only for actual sequences (lists, lazy-seqs) — NOT vectors, which
 # are not ISeq in Clojure. (A Janet array represents a Clojure list/seq result.)
 (defn core-seq? [x] (or (array? x) (plist? x) (lazy-seq? x)))
-(defn core-coll? [x] (or (array? x) (tuple? x) (pvec? x) (plist? x) (struct? x) (phm? x) (set? x) (lazy-seq? x)))
+# coll? mirrors map?'s strictness for structs/tables, and includes the sorted
+# collections and records (IPersistentCollection in Clojure).
+(defn core-coll? [x]
+  (or (array? x) (tuple? x) (pvec? x) (plist? x) (phm? x) (set? x) (lazy-seq? x)
+      (and (struct? x) (nil? (get x :jolt/type)))
+      (and (table? x)
+           (or (not (nil? (get x :jolt/deftype)))
+               (= :jolt/sorted-map (get x :jolt/type))
+               (= :jolt/sorted-set (get x :jolt/type))))))
 
 (defn core-true? [x] (= true x))
 (defn core-false? [x] (= false x))
