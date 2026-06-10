@@ -15,7 +15,7 @@
     (printf "FAIL [%s] got %q want %q" label got want)))
 
 (each mode [{:compile? true} {} {:aot-core? false}]
-  (def ctx (init mode))
+  (def ctx (init-cached mode))
   (eval-string ctx "(defprotocol P (m [x]))")
   (eval-string ctx "(extend-protocol P Number (m [x] (* x 2)))")
   (check (string mode " host dispatch") (eval-string ctx "(m 5)") 10)
@@ -31,7 +31,7 @@
 # Multimethod hierarchy-fallback cache (jolt-g8w): the isa? walk result for a
 # dispatch value is cached; defmethod/remove-method must invalidate it.
 (each mode [{:compile? true} {} {:aot-core? false}]
-  (def ctx (init mode))
+  (def ctx (init-cached mode))
   (eval-string ctx "(derive ::circle ::shape)")
   (eval-string ctx "(derive ::square ::shape)")
   (eval-string ctx "(defmulti area identity)")

@@ -12,7 +12,7 @@
 (use ../../src/jolt/reader)
 (import ../../src/jolt/backend :as backend)
 
-(def ctx (init))
+(def ctx (init-cached))
 
 # 1. A deliberate punt (letfn needs letrec IR) falls back and evaluates correctly.
 (assert (= 3 (backend/compile-and-eval ctx (parse-string "(letfn [(f [n] (+ n 1))] (f 2))")))

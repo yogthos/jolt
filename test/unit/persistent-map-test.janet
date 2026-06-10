@@ -13,7 +13,7 @@
 # 1. Basic hash-map construction and access
 # ============================================================
 (print "1: hash-map construction...")
-(let [ctx (init)]
+(let [ctx (init-cached)]
   (def m1 (ct-eval ctx "(hash-map :a 1)"))
   (assert (not (nil? m1)) "hash-map returns non-nil")
   (assert (= true (ct-eval ctx "(map? (hash-map :a 1))")) "map? returns true for PHM")
@@ -29,7 +29,7 @@
 # 2. assoc and dissoc
 # ============================================================
 (print "2: assoc/dissoc...")
-(let [ctx (init)]
+(let [ctx (init-cached)]
   (assert (= true (ct-eval ctx "(= (assoc (hash-map :a 1) :b 2) (hash-map :a 1 :b 2))")) "assoc add")
   (assert (= true (ct-eval ctx "(= (assoc (hash-map :a 1) :a 99) (hash-map :a 99))")) "assoc replace")
   (assert (= true (ct-eval ctx "(= (dissoc (hash-map :a 1 :b 2) :a) (hash-map :b 2))")) "dissoc")
@@ -41,7 +41,7 @@
 # 3. keys, vals, merge
 # ============================================================
 (print "3: keys/vals/merge...")
-(let [ctx (init)]
+(let [ctx (init-cached)]
   (assert (= 2 (ct-eval ctx "(count (keys (hash-map :a 1 :b 2)))")) "keys count")
   (assert (= 2 (ct-eval ctx "(count (vals (hash-map :a 1 :b 2)))")) "vals count")
   (assert (= true (ct-eval ctx "(= (merge (hash-map :a 1) (hash-map :b 2)) (hash-map :a 1 :b 2))")) "merge"))
@@ -52,7 +52,7 @@
 # 4. Empty and seq
 # ============================================================
 (print "4: empty? and seq...")
-(let [ctx (init)]
+(let [ctx (init-cached)]
   (assert (= true (ct-eval ctx "(empty? (hash-map))")) "empty? true")
   (assert (= false (ct-eval ctx "(empty? (hash-map :a 1))")) "empty? false")
   (assert (= 1 (ct-eval ctx "(count (seq (hash-map :a 1)))")) "seq count"))
@@ -62,7 +62,7 @@
 # 5. Larger maps
 # ============================================================
 (print "5: larger maps...")
-(let [ctx (init)]
+(let [ctx (init-cached)]
   (eval-string ctx "
     (def big-map
       (reduce (fn [m i] (assoc m (keyword (str \"k\" i)) i))

@@ -14,7 +14,7 @@
 # Helper: parse and eval
 # init, not bare make-ctx: with the implicit Janet root-env fallback removed
 # (Stage 3), a context without clojure.core interned can't resolve inc/+/etc.
-(def- shared-ctx (init))
+(def- shared-ctx (init-cached))
 (defn eval-str [s]
   (eval-form shared-ctx @{} (parse-string s)))
 
@@ -103,13 +103,13 @@
 (print "13: locking...")
 # locking/instance? are overlay macros now (Stage 2 tier 6c) — they need the
 # full env (init loads the overlay), not a bare make-ctx.
-(let [ctx (init)]
+(let [ctx (init-cached)]
   (assert (= 42 (eval-string ctx "(locking :lock 42)")) "locking returns body result"))
 (print "  passed")
 
 (print "14: instance?...")
 # instance? checks type
-(let [ctx (init)]
+(let [ctx (init-cached)]
   (assert (= true (eval-string ctx "(instance? Number 42)")) "instance? Number matches number")
   (assert (= false (eval-string ctx "(instance? Number \"hello\")")) "instance? Number doesn't match string"))
 (print "  passed")
@@ -117,7 +117,7 @@
 (print "15: defmulti/defmethod...")
 # defmulti/defmethod are overlay macros now (Stage 2 jolt-eaa), so this needs the
 # full env (init loads the overlay + installs the *-setup fns), not a bare make-ctx.
-(let [ctx (init)]
+(let [ctx (init-cached)]
   (eval-form ctx @{} (parse-string "(defmulti my-dispatch (fn* [x] (x :type)))"))
   (eval-form ctx @{} (parse-string "(defmethod my-dispatch :foo [_] :got-foo)"))
   (eval-form ctx @{} (parse-string "(defmethod my-dispatch :bar [_] :got-bar)"))
@@ -126,8 +126,8 @@
 (print "  passed")
 
 (print "16: deftype...")
-# deftype is an overlay macro now (Stage 2 jolt-eaa) — needs the full env (init).
-(let [ctx (init)
+# deftype is an overlay macro now (Stage 2 jolt-eaa) — needs the full env (init-cached).
+(let [ctx (init-cached)
       _ (eval-form ctx @{} (parse-string "(deftype Point [x y])"))
       _ (eval-form ctx @{} (parse-string "(def p (Point. 10 20))"))
       p-val (eval-form ctx @{} (parse-string "p"))
@@ -143,7 +143,7 @@
 (print "17: defmacro...")
 # define a macro using defmacro special form
 # init loads clojure.core so `list` is available
-(let [ctx (init)
+(let [ctx (init-cached)
       _ (eval-form ctx @{} (parse-string "(defmacro my-when [test body] (list 'if test body nil))"))
       result (eval-form ctx @{} (parse-string "(my-when true 2)"))]
   (assert (= 2 result) "defmacro defines callable macro"))

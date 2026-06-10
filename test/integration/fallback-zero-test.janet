@@ -18,7 +18,7 @@
 (use ../../src/jolt/api)
 (use ../../src/jolt/reader)
 
-(def ctx (init))
+(def ctx (init-cached))
 
 (defn- analyzes? [s]
   # true if the analyzer produced IR (compiled), false if it punted/uncompilable.

@@ -31,7 +31,7 @@
 # Run from project root so paths resolve
 (def root (if (has-value? (dyn :syspath) 0) (first (dyn :syspath)) "."))
 
-(def ctx (init))
+(def ctx (init-cached))
 
 (load-stubs ctx (string root "/src/jolt/clojure/sci/lang_stubs.clj"))
 (load-stubs ctx (string root "/src/jolt/clojure/sci/io_stubs.clj"))

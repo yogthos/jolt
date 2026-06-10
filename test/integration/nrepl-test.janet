@@ -25,7 +25,7 @@
       (do (ev/sleep 0.1) (++ tries)))))
 (assert ready "nREPL server did not start")
 
-(def ctx (init))
+(def ctx (init-cached))
 (ctx-set-current-ns ctx "user")
 (load-string ctx "(require '[jolt.nrepl])")
 (load-string ctx (string "(def c (jolt.nrepl/connect {:port " port "}))"))

@@ -3,7 +3,7 @@
 (print "Eval Tests")
 
 (print "1: eval literal...")
-(let [ctx (init)]
+(let [ctx (init-cached)]
   (assert (= 42 (ct-eval ctx "(eval 42)")) "eval literal")
   (assert (= 3 (ct-eval ctx "(eval '(+ 1 2))")) "eval quoted form")
   (assert (= 3 (ct-eval ctx "(eval (eval '(+ 1 2)))")) "eval nested")

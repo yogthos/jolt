@@ -42,7 +42,7 @@
     (def fails @[])
     (each f files
       # A pass-test passes when no assertion throws (assert now errors on failure).
-      (def res (protect (load-string (init) (slurp f))))
+      (def res (protect (load-string (init-cached) (slurp f))))
       (if (= (res 0) true)
         (++ pass)
         (array/push fails (string/slice f (+ 1 (length jank-dir))))))

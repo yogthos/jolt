@@ -3,7 +3,7 @@
 (defn ct-eval [ctx s] (normalize-pvecs (eval-string ctx s)))
 
 (print "Phase 6: comprehensive compile-mode tests...")
-(let [ctx (init {:compile? true})]
+(let [ctx (init-cached {:compile? true})]
 
   (print "  collections...")
   (assert (= :a (ct-eval ctx "(nth [:a :b :c :d] 0)")) "nth")
@@ -126,13 +126,13 @@
 # Context isolation: a def in one compiled context is invisible in another. With
 # var-indirection each context has its own var cells, so b's `secret` is a
 # distinct, unbound var (nil) rather than a's 7.
-(let [a (init {:compile? true}) b (init {:compile? true})]
+(let [a (init-cached {:compile? true}) b (init-cached {:compile? true})]
   (eval-string a "(def secret 7)")
   (assert (= 7 (ct-eval a "secret")) "def visible in its own ctx")
   (assert (nil? (ct-eval b "secret")) "def isolated to its ctx"))
 
 # Redefinition is visible to already-compiled callers (var-indirection).
-(let [c (init {:compile? true})]
+(let [c (init-cached {:compile? true})]
   (eval-string c "(defn g [] 1)")
   (eval-string c "(defn calls-g [] (g))")
   (eval-string c "(defn g [] 2)")

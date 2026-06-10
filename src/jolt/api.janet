@@ -194,6 +194,86 @@
   [snap]
   (unmarshal snap image-load-dict))
 
+# --- Disk-cached init (AOT context image) ------------------------------------
+#
+# init in compile mode is ~2.4 s (tier loading, analyzer self-compile, macro
+# recompilation) — paid by every PROCESS that builds a ctx from source, e.g.
+# each `jpm test` file. init-cached pays it once: the built ctx is snapshotted
+# to an image file and later processes unmarshal it (~tens of ms). Marshaling
+# is against root-env (same dicts as snapshot/fork), so core cfunctions ride by
+# name and everything jolt-level rides by value — a loaded image needs nothing
+# from the baking process. The cache key fingerprints everything a fresh build
+# would read: the embedded .clj stdlib (which includes jolt-core — the
+# analyzer, IR, and core tiers), the .janet seed sources next to this module,
+# the janet version, and the init opts. Any change rebuilds; a corrupt or
+# unreadable image silently rebuilds. JOLT_NO_IMAGE_CACHE=1 disables.
+
+# Captured at module load: in source mode this is .../src/jolt/api.janet, so
+# the seed sources can be fingerprinted; nil or stale in a built binary, where
+# the baked-at-build-time ctx makes init-cached pointless anyway.
+(def- api-module-file (dyn :current-file))
+
+(defn- src-dir []
+  (when api-module-file
+    (let [idxs (string/find-all "/" api-module-file)]
+      (when (not (empty? idxs))
+        (string/slice api-module-file 0 (last idxs))))))
+
+(defn- source-fingerprint
+  "Hash + total length of every source a fresh init depends on. Two numbers, so
+  a 32-bit hash collision alone can't alias two different source trees."
+  []
+  (def buf @"")
+  (each k (sorted (keys stdlib-embed/sources))
+    (buffer/push buf k "\x00" (get stdlib-embed/sources k) "\x00"))
+  (def dir (src-dir))
+  (when dir
+    (each f (sorted (os/dir dir))
+      (when (string/has-suffix? ".janet" f)
+        (buffer/push buf f "\x00" (slurp (string dir "/" f)) "\x00"))))
+  [(hash (string buf)) (length buf)])
+
+(defn- image-cache-path [opts]
+  (def dir (or (os/getenv "JOLT_IMAGE_CACHE_DIR")
+               (os/getenv "TMPDIR")
+               "/tmp"))
+  (def [h len] (source-fingerprint))
+  # Opts land in the key via their printed form; an opt that prints unstably
+  # (e.g. a closure in :namespaces) just degrades to a cache miss, never to a
+  # wrong hit. Runtime knobs that shape the ctx outside opts ride along too.
+  (def key (string/format "%q|%q|%q|%q|%q|%q"
+                          (string janet/version "-" janet/build)
+                          opts
+                          (os/getenv "JOLT_PATH")
+                          (os/getenv "JOLT_MUTABLE")
+                          (os/getenv "JOLT_AOT_CORE")
+                          (os/getenv "JOLT_FEATURES")))
+  (string dir "/jolt-ctx-" (band h 0x7FFFFFFF) "-" len "-" (band (hash key) 0x7FFFFFFF) ".jimg"))
+
+(defn init-cached
+  "init, but disk-cached: the first call builds the context and writes a
+  bytecode image; later calls (any process, same sources) load the image
+  instead of rebuilding. Same opts as init. JOLT_NO_IMAGE_CACHE=1 disables;
+  JOLT_IMAGE_CACHE_DIR overrides the cache directory (default TMPDIR)."
+  [&opt opts]
+  (default opts {})
+  (if (or (= "1" (os/getenv "JOLT_NO_IMAGE_CACHE")) (nil? (src-dir)))
+    (init opts)
+    (let [path (image-cache-path opts)
+          loaded (when (os/stat path)
+                   (let [r (protect (fork (slurp path)))]
+                     # unmarshal of a corrupt image can also "succeed" with a
+                     # non-ctx value, so check the shape, not just the throw.
+                     (when (and (r 0) (ctx? (r 1)))
+                       (r 1))))]
+      (or loaded
+          (let [ctx (init opts)
+                tmp (string path "." (os/getpid) ".tmp")]
+            # Atomic publish so concurrent cold starts never see a torn image.
+            (when (protect (spit tmp (snapshot ctx)))
+              (protect (os/rename tmp path)))
+            ctx)))))
+
 (defn eval-one
   "Evaluate a single already-parsed form. Routing (compile when :compile? is set,
   stateful forms interpret, interpreter fallback for forms the compiler can't

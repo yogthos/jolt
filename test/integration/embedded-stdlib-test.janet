@@ -6,7 +6,7 @@
 (use ../../src/jolt/api)
 (use ../../src/jolt/types)
 
-(def ctx (init))
+(def ctx (init-cached))
 (ctx-set-current-ns ctx "user")
 (put (ctx :env) :source-paths @[])   # no FS roots — embedded fallback only
 
