@@ -142,8 +142,6 @@
    :seq      (fn [sm] (seq (sfield sm :entries)))
    :rseq     (fn [sm] (seq (vec (reverse (sfield sm :entries)))))
    :first    (fn [sm] (first (sfield sm :entries)))
-   :keys     (fn [sm] (seq (mapv first (sfield sm :entries))))
-   :vals     (fn [sm] (seq (mapv second (sfield sm :entries))))
    :get      sm-get
    :contains (fn [sm k] (not (neg? (find-idx sm first k))))
    :assoc    sm-assoc-many

@@ -75,7 +75,9 @@
    ["LAZY take-while"     "6"  "(do (def c (atom 0)) (dorun (take-while (fn [x] (swap! c inc) (< x 5)) (range))) @c)"]
    ["LAZY drop-while"     "6"  "(do (def c (atom 0)) (dorun (take 3 (drop-while (fn [x] (swap! c inc) (< x 5)) (range)))) @c)"]
    ["LAZY distinct"       "4"  "(do (def c (atom 0)) (dorun (take 3 (distinct (map (fn [x] (swap! c inc) x) (cycle [1 2 1 3 1]))))) @c)"]
-   ["LAZY take-nth"       "7"  "(do (def c (atom 0)) (dorun (take 3 (take-nth 2 (map (fn [x] (swap! c inc) x) (range))))) @c)"]
+   # 5, was 7: the canonical lazy take-nth (40-lazy, jolt-ded batch 3) realizes
+   # only the elements the taken outputs and their drops touch.
+   ["LAZY take-nth"       "5"  "(do (def c (atom 0)) (dorun (take 3 (take-nth 2 (map (fn [x] (swap! c inc) x) (range))))) @c)"]
    ["LAZY map-indexed"    "3"  "(do (def c (atom 0)) (dorun (take 3 (map-indexed (fn [i x] (swap! c inc) [i x]) (range)))) @c)"]
    ["LAZY keep"           "6"  "(do (def c (atom 0)) (dorun (take 3 (keep (fn [x] (swap! c inc) (if (odd? x) x nil)) (range)))) @c)"]
    ["LAZY keep-indexed"   "6"  "(do (def c (atom 0)) (dorun (take 3 (keep-indexed (fn [i x] (swap! c inc) (if (odd? i) x)) (range)))) @c)"]

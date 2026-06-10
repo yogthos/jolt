@@ -87,6 +87,12 @@
   # Gate the analyzer build until the kernel tier loads (see ensure-analyzer):
   # present-and-false here means pre-kernel compiles fall back to the interpreter.
   (put env :kernel-ready? false)
+  # Pre/at-kernel defns load interpreted in some mode (00-syntax always; the
+  # kernel tier too in interpret mode); stash their fn sources so the staged
+  # recompile pass (backend/recompile-defns!) can compile them once the
+  # analyzer is alive. Cleared after the kernel tier so later tiers and user
+  # code don't stash.
+  (put env :stash-defn-src? true)
   (each tier core-tiers
     (when-let [src (get stdlib-embed/sources (tier :ns))]
       (put env :direct-linking? core-dl)
@@ -98,7 +104,9 @@
       # pre-kernel tier that triggers a compile (e.g. a defn in 00-syntax) instead
       # falls back to the interpreter rather than building the analyzer against a
       # half-loaded core (which would forward-ref the missing kernel fns to nil).
-      (when (tier :kernel) (put env :kernel-ready? true))))
+      (when (tier :kernel)
+        (put env :kernel-ready? true)
+        (put env :stash-defn-src? false))))
   (put env :direct-linking? user-dl)
   (ctx-set-current-ns ctx saved)
   # Stage 3 interpreted bootstrap: the analyzer was loaded INTERPRETED (no

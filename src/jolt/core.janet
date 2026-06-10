@@ -233,20 +233,8 @@
        (= x (math/floor x))))
 (defn core-list? [x] (or (plist? x) (and (array? x) (not (get x :jolt/type)))))
 
-(defn core-empty? [coll]
-  (if (nil? coll) true
-    (if (core-sorted? coll) (= 0 (length (sorted-entries-arr coll)))
-    (if (set? coll) (= 0 (coll :cnt))
-      (if (phm? coll) (= 0 (coll :cnt))
-        (if (pvec? coll) (= 0 (pv-count coll))
-          (if (plist? coll) (pl-empty? coll)
-          # Cell-based, NOT (nil? (ls-first)): a lazy-seq whose first element is
-          # legitimately nil (e.g. a `nil` case-constant) is non-empty.
-          (if (lazy-seq? coll)
-            (let [cell (realize-ls coll)]
-              (or (nil? cell) (= :jolt/pending cell) (= 0 (length cell))))
-            (if (struct? coll) (= 0 (length (keys coll)))
-              (= 0 (length coll)))))))))))
+# empty? now lives in the syntax tier (core/00-syntax.clj): the expanders
+# call it, so it must exist before the kernel tier compiles.
 
 (defn core-every? [pred coll]
   # Short-circuit on the first false — and pull lazily so an infinite seq with an
@@ -463,6 +451,13 @@
         (do (var result coll) (each x xs (set result (pl-cons x result))) result))
       (if (set? coll)
         (apply phs-conj coll xs)
+        # conj onto a seq prepends (Clojure: a Cons cell). Without this branch a
+        # lazy-seq fell into the MAP fallback below — clojure.data/diff relies on
+        # (conj seq x) via set/union over (keys m), which is now a lazy seq.
+        (if (lazy-seq? coll)
+          (do (var result coll)
+            (each x xs (set result (pl-cons x (realize-for-iteration result))))
+            result)
         (if (phm? coll)
           (do
             (var result coll)
@@ -474,18 +469,28 @@
                 # conj a map -> merge its entries
                 (each e (map-entries-of x)
                   (set result (phm-assoc result (in e 0) (in e 1))))
-                (set result (phm-assoc result (vnth x 0) (vnth x 1)))))
+                # a [k v] entry: exactly a 2-element vector (Clojure throws
+                # otherwise — and merge inherits this strictness through conj)
+                (and (or (pvec? x) (tuple? x) (array? x)) (= 2 (vcount x)))
+                (set result (phm-assoc result (vnth x 0) (vnth x 1)))
+                (error "Vector arg to map conj must be a pair")))
             result)
           (do
             (var result coll)
             (each x xs
               (cond
+                # conj nil onto a map is a no-op (Clojure)
                 (nil? x) nil
                 (map-value? x)
+                # conj a map -> merge its entries
                 (each e (map-entries-of x)
                   (set result (map-assoc1 result (in e 0) (in e 1))))
-                (set result (map-assoc1 result (vnth x 0) (vnth x 1)))))
-            result))))))))))))
+                # a [k v] entry: exactly a 2-element vector (Clojure throws
+                # otherwise — and merge inherits this strictness through conj)
+                (and (or (pvec? x) (tuple? x) (array? x)) (= 2 (vcount x)))
+                (set result (map-assoc1 result (vnth x 0) (vnth x 1)))
+                (error "Vector arg to map conj must be a pair")))
+            result)))))))))))))
 
 (defn core-assoc [m & kvs]
   (when (odd? (length kvs))
@@ -730,11 +735,12 @@
     (pvec? coll) (if (= 0 (pv-count coll)) nil (tuple ;(pv->array coll)))
     (plist? coll) (if (pl-empty? coll) nil (tuple ;(pl->array coll)))
     (buffer? coll) (if (= 0 (length coll)) nil (let [a @[]] (each x coll (array/push a x)) (tuple ;a)))
-    (set? coll) (phs-seq coll)
-    (phm? coll) (tuple ;(phm-entries coll))
+    # empty maps/sets seq to nil, as in Clojure ((seq {}) is nil, not ())
+    (set? coll) (if (= 0 (coll :cnt)) nil (phs-seq coll))
+    (phm? coll) (if (= 0 (coll :cnt)) nil (tuple ;(phm-entries coll)))
     (tuple? coll) (tuple/slice coll)
     (string? coll) (if (= 0 (length coll)) nil (tuple ;(map make-char (string/bytes coll))))
-    (struct? coll) (tuple ;(map (fn [k] (tuple k (get coll k))) (keys coll)))
+    (struct? coll) (if (= 0 (length coll)) nil (tuple ;(map (fn [k] (tuple k (get coll k))) (keys coll))))
     (array? coll) (tuple ;coll)
     (and (table? coll) (get coll :jolt/deftype)) coll
     # scalars/functions aren't seqable
@@ -771,14 +777,10 @@
 
 # merge-with now lives in the Clojure collection tier (core/20-coll.clj).
 
-(defn core-keys [m]
-  # phm-entries (not phm-to-struct) so keys mapped to nil values are not dropped.
-  (if (core-sorted-map? m) ((sorted-op m :keys) m)
-  (if (phm? m) (tuple ;(map |(in $ 0) (phm-entries m))) (tuple ;(keys m)))))
+# keys / vals now live in the syntax tier (core/00-syntax.clj) — canonical
+# projections of (seq m), so sorted maps come back in comparator order.
 
-(defn core-vals [m]
-  (if (core-sorted-map? m) ((sorted-op m :vals) m)
-  (if (phm? m) (tuple ;(map |(in $ 1) (phm-entries m))) (tuple ;(map |(m $) (keys m))))))
+
 
 # select-keys now lives in the Clojure collection tier (core/20-coll.clj).
 
@@ -2264,7 +2266,9 @@
 (defn core-copy-var [sym & args] nil)
 (defn core-macrofy [sym fn & more] fn)
 (defn core-new-var [sym & args] nil)
-(defn core-avoid-method-too-large [& args] @{})
+# sci stub: pass the registry map through (it was @{} — a raw host table that
+# strict map-conj rightly rejects; identity also keeps sci's registry intact).
+(defn core-avoid-method-too-large [& args] (if (> (length args) 0) (in args 0) {}))
 
 # declare macro — accepts symbols, does nothing (forward declaration)
 
@@ -2681,7 +2685,6 @@
     "odd?" core-odd?
     "integer?" core-integer?
     "list?" core-list?
-    "empty?" core-empty?
     "every?" core-every?
     "+" core-+
     "-" core-sub
@@ -2726,8 +2729,6 @@
     "__sqmap" core-sqmap
     "__sqset" core-sqset
     "into" core-into
-    "keys" core-keys
-    "vals" core-vals
     "with-meta" core-with-meta
     "map" core-map
     "filter" core-filter

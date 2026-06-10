@@ -509,6 +509,27 @@
           (++ n)))))
   n)
 
+(defn recompile-defns!
+  "Staged-bootstrap pass for early DEFNS (jolt-4j3) — the defn analog of
+  recompile-macros!. Pre/at-kernel overlay defns (00-syntax's destructure,
+  empty?/keys/vals, and the kernel tier in interpret mode) load as interpreted
+  closures; the evaluator stashes their fn source on the var (:defn-src).
+  Once the analyzer is alive, compile that source and swap the var's ROOT —
+  callers go through the var, so they pick up the compiled fn. Skips vars
+  already done; a body the analyzer can't compile stays interpreted."
+  [ctx]
+  (def mappings ((ctx-find-ns ctx "clojure.core") :mappings))
+  (var n 0)
+  (each nm (keys mappings)
+    (def v (get mappings nm))
+    (when (and (table? v) (get v :defn-src) (not (get v :defn-compiled)))
+      (def compiled (try-compile-fn ctx (get v :defn-src)))
+      (when compiled
+        (put v :root compiled)
+        (put v :defn-compiled true)
+        (++ n))))
+  n)
+
 (defn ensure-macros-compiled!
   "Called once the overlay is fully loaded (api/load-core-overlay!): ensure the
   analyzer is built, then run the staged macro-recompile pass so the early
@@ -522,4 +543,8 @@
   [ctx]
   (when (get (ctx :env) :compile-macros?)
     (ensure-analyzer ctx)
-    (when (analyzer-built? ctx) (recompile-macros! ctx))))
+    (when (analyzer-built? ctx)
+      # defns first: the expanders call them, and a recompiled expander that
+      # ran before the defn pass still resolves through the var either way.
+      (recompile-defns! ctx)
+      (recompile-macros! ctx))))

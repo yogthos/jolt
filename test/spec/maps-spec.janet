@@ -155,3 +155,25 @@
   ["update-vals empty"  "{}"      "(update-vals {} inc)"]
   ["update-vals nil"    "{}"      "(update-vals nil inc)"]
   ["update-vals keeps keys" "[:a :b]" "(sort (keys (update-vals {:a 1 :b 2} inc)))"])
+
+# keys/vals/empty? are 00-syntax overlay fns now (jolt-4j3) — expander-called,
+# so they live in the first tier and get the staged defn recompile.
+(defspec "maps / keys-vals-empty? as overlay fns"
+  ["keys"            "(quote (:a))"   "(keys {:a 1})"]
+  ["keys empty map"  "nil"            "(keys {})"]
+  ["keys nil"        "nil"            "(keys nil)"]
+  ["vals"            "(quote (1))"    "(vals {:a 1})"]
+  ["vals empty"      "nil"            "(vals {})"]
+  ["keys sorted order" "[1 2 3]"      "(vec (keys (sorted-map 2 :b 1 :a 3 :c)))"]
+  ["vals sorted order" "[:a :b :c]"   "(vec (vals (sorted-map 2 :b 1 :a 3 :c)))"]
+  ["keys/vals zip"   "{:a 1 :b 2}"    "(zipmap (keys {:a 1 :b 2}) (vals {:a 1 :b 2}))"]
+  ["empty? map"      "true"           "(empty? {})"]
+  ["empty? vec"      "[true false]"   "[(empty? []) (empty? [1])]"]
+  ["empty? list"     "[true false]"   "[(empty? ()) (empty? (list 1))]"]
+  ["empty? string"   "[true false]"   "[(empty? \"\") (empty? \"a\")]"]
+  ["empty? nil"      "true"           "(empty? nil)"]
+  ["empty? set"      "[true false]"   "[(empty? #{}) (empty? #{1})]"]
+  ["empty? lazy"     "[true false]"   "[(empty? (filter pos? [-1])) (empty? (map inc [1]))]"]
+  ["empty? lazy nil elem" "false"     "(empty? (cons nil nil))"]
+  ["empty? sorted"   "[true false]"   "[(empty? (sorted-map)) (empty? (sorted-set 1))]"]
+  ["empty? number throws" :throws     "(empty? 5)"])
