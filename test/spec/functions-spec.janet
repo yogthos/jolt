@@ -134,3 +134,31 @@
   ["take-nth lazy"       "(quote (0 3 6))" "(take 3 (take-nth 3 (range)))"]
   ["take-nth xform"      "[1 3 5]"   "(vec (sequence (take-nth 2) [1 2 3 4 5 6]))"]
   ["take-nth into"       "[1 4]"     "(into [] (take-nth 3) [1 2 3 4 5])"])
+
+# Phase 2 leaf batch 4 (jolt-ded): sort-by (canonical: compare-defaulted, over
+# the host sort seam), rand-int (canonical truncation via int), pure
+# Fisher-Yates shuffle, random-uuid over parse-uuid, char tables as
+# char-keyed Clojure maps. rand and sort stay: they ARE the host seams.
+(defspec "clojure.core / leaf batch 4"
+  ["sort-by keyfn"        "[[1 :b] [2 :a]]" "(sort-by first [[2 :a] [1 :b]])"]
+  ["sort-by string keys"  "(quote (\"a\" \"bb\" \"ccc\"))" "(sort-by count [\"ccc\" \"a\" \"bb\"])"]
+  ["sort-by comparator"   "[3 2 1]"   "(sort-by identity > [1 3 2])"]
+  ["sort-by 3way cmp"     "[3 2 1]"   "(sort-by identity (fn [a b] (- b a)) [1 3 2])"]
+  ["sort-by mixed nil"    "[nil 1 2]" "(sort-by identity [2 nil 1])"]
+  ["sort-by empty"        "()"        "(sort-by first [])"]
+  ["sort-by nil coll"     "()"        "(sort-by first nil)"]
+  ["rand-int range"       "true"      "(every? (fn [_] (let [r (rand-int 5)] (and (int? r) (<= 0 r 4)))) (range 50))"]
+  ["rand-int zero"        "0"         "(rand-int 1)"]
+  ["shuffle is permutation" "true"    "(= (sort (shuffle [5 3 1 4 2])) [1 2 3 4 5])"]
+  ["shuffle returns vector" "true"    "(vector? (shuffle [1 2 3]))"]
+  ["shuffle empty"        "[]"        "(shuffle [])"]
+  ["shuffle non-coll throws" :throws  "(shuffle 5)"]
+  ["random-uuid is uuid"  "true"      "(uuid? (random-uuid))"]
+  ["random-uuid v4 shape" "true"      "(boolean (re-matches #\"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\" (str (random-uuid))))"]
+  ["random-uuid distinct" "true"      "(not= (random-uuid) (random-uuid))"]
+  ["char-escape newline"  "\"\\\\n\"" "(char-escape-string \\newline)"]
+  ["char-escape quote"    "true"      "(= 2 (count (char-escape-string \\\")))"]
+  ["char-escape none"     "nil"       "(char-escape-string \\a)"]
+  ["char-name space"      "\"space\"" "(char-name-string \\space)"]
+  ["char-name newline"    "\"newline\"" "(char-name-string \\newline)"]
+  ["char-name none"       "nil"       "(char-name-string \\a)"])

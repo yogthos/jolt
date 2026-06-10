@@ -297,7 +297,8 @@
 
 
 (defn core-rand [& n] (let [r (math/random)] (if (empty? n) r (* r (in n 0)))))
-(defn core-rand-int [n] (math/floor (* (math/random) n)))
+# rand-int / shuffle / random-uuid now live in the Clojure collection tier
+# over the rand host seam (canonical: rand-int truncates toward zero).
 
 # ============================================================
 # Comparison
@@ -1287,19 +1288,8 @@
 
 # (sort-by keyfn coll) or (sort-by keyfn comparator coll). The comparator (when
 # given) compares the KEYS and may return a boolean or a Clojure-style number.
-(defn core-sort-by [keyfn & rest]
-  (def keyfn (as-fn keyfn))
-  (let [has-cmp (> (length rest) 1)
-        coll (if has-cmp (in rest 1) (first rest))]
-    (if (nil? coll) (tuple)
-      (let [c (realize-for-iteration coll)
-            arr (if (tuple? c) (array/slice c) (array/slice c))]
-        (if has-cmp
-          (let [cmp (first rest)]
-            (sort arr (fn [x y] (let [r (cmp (keyfn x) (keyfn y))]
-                                  (if (number? r) (< r 0) (truthy? r))))))
-          (sort-by keyfn arr))
-        (tuple/slice (tuple ;arr))))))
+# sort-by now lives in the Clojure collection tier — canonical: compare-
+# defaulted (nil sorts first), comparator over KEYS, via the host sort seam.
 
 # distinct now lives in the Clojure lazy tier (core/40-lazy.clj).
 # group-by / frequencies now live in the Clojure collection tier
@@ -2349,16 +2339,7 @@
     (core-sorted? coll) ((sorted-op coll :rseq) coll)
     (error (string "rseq requires a vector or sorted collection, got " (type coll)))))
 
-(defn core-shuffle [coll]
-  (when (not (core-coll? coll)) (error (string "shuffle requires a collection, got " (type coll))))
-  (let [c (array/slice (realize-for-iteration coll))]
-    (var i (- (length c) 1))
-    (while (> i 0)
-      (let [j (math/floor (* (math/random) (+ i 1)))
-            tmp (in c i)]
-        (put c i (in c j)) (put c j tmp))
-      (-- i))
-    (tuple/slice (tuple ;c))))
+
 
 # some-fn now lives in the Clojure collection tier (core/20-coll.clj).
 
@@ -2439,10 +2420,9 @@
   {10 "\\n" 9 "\\t" 13 "\\r" 12 "\\f" 8 "\\b" 34 "\\\"" 92 "\\\\"})
 (def- char-names
   {10 "newline" 9 "tab" 13 "return" 12 "formfeed" 8 "backspace" 32 "space"})
-(defn core-char-escape-string [c]
-  (get char-escapes (if (core-char? c) (char-code c) c)))
-(defn core-char-name-string [c]
-  (get char-names (if (core-char? c) (char-code c) c)))
+# char-escape-string / char-name-string now live in the Clojure collection
+# tier as char-keyed maps. The CODE-keyed tables below stay: pr-render uses them.
+
 
 # subseq / rsubseq over sorted collections
 # subseq / rsubseq now live in the Clojure sorted tier (core/25-sorted.clj),
@@ -2632,15 +2612,7 @@
 
 (defn core-prefers [mm-var] (or (get mm-var :jolt/prefers) {}))
 
-(defn core-random-uuid
-  "A random version-4 UUID value: zero-padded hex groups (8-4-4-4-12), version
-  nibble 4, variant nibble 8-b (RFC 4122)."
-  []
-  (defn hx4 [] (string/format "%04x" (math/floor (* (math/random) 0x10000))))
-  (defn hx3 [] (string/format "%03x" (math/floor (* (math/random) 0x1000))))
-  (def variant (string/format "%x" (+ 8 (math/floor (* (math/random) 4)))))
-  (make-uuid (string (hx4) (hx4) "-" (hx4) "-4" (hx3)
-                     "-" variant (hx3) "-" (hx4) (hx4) (hx4))))
+
 
 (defn- hex-digit? [c]
   (or (and (>= c 48) (<= c 57))      # 0-9
@@ -2703,7 +2675,6 @@
     "rem" core-rem
     "quot" core-quot
     "rand" core-rand
-    "rand-int" core-rand-int
     "=" core-=
     "not=" core-not=
     "<" core-<
@@ -2774,7 +2745,6 @@
     "hash-ordered-coll" core-hash-ordered-coll
     "hash-unordered-coll" core-hash-unordered-coll
     "prefers" core-prefers
-    "random-uuid" core-random-uuid
     "gensym" gensym
     "int?" core-integer?
     "compare" core-compare
@@ -2803,7 +2773,6 @@
     "reduced" core-reduced
     "reduced?" core-reduced?
     "rseq" core-rseq
-    "shuffle" core-shuffle
     "ifn?" core-ifn?
     "ex-info" core-ex-info
     "__with-out-str" core-with-out-str
@@ -2816,7 +2785,6 @@
     "concat" core-concat
     "nth" core-nth
     "sort" core-sort
-    "sort-by" core-sort-by
     "partition" core-partition
     "range" core-range
     "identity" core-identity
@@ -2929,8 +2897,6 @@
     "construct-proxy" core-construct-proxy
     "init-proxy" core-init-proxy
     "get-proxy-class" core-get-proxy-class
-    "char-escape-string" core-char-escape-string
-    "char-name-string" core-char-name-string
     # Bit operations
     "bit-and" core-bit-and
     "bit-or" core-bit-or

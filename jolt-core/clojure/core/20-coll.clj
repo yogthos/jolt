@@ -342,6 +342,54 @@
 (defn println-str [& xs] (__with-out-str (fn* [] (apply println xs))))
 (defn prn-str [& xs] (__with-out-str (fn* [] (apply prn xs))))
 
+;; --- Phase 2 leaf batch 4 (jolt-ded): over the rand / sort host seams --------
+
+;; Canonical truncation toward zero via int (the kernel fn floored, which is
+;; wrong for a negative n).
+(defn rand-int [n] (int (rand n)))
+
+;; Pure-functional Fisher-Yates over vector assoc; returns a vector, as in
+;; Clojure. Collections only — a string is seqable but not shuffleable, as on
+;; the JVM (Collections/shuffle wants a Collection).
+(defn shuffle [coll]
+  (when-not (coll? coll)
+    (throw (ex-info (str "shuffle requires a collection, got: " coll) {})))
+  (loop [v (vec coll) i (dec (count v))]
+    (if (pos? i)
+      (let [j (rand-int (inc i))
+            t (nth v i)]
+        (recur (assoc (assoc v i (nth v j)) j t) (dec i)))
+      v)))
+
+;; Canonical sort-by: the default comparator is compare (so nil sorts first,
+;; like Clojure — the kernel fn used host ordering, which put nil last); the
+;; comparator compares KEYS and may be 3-way or a boolean predicate (the host
+;; sort seam normalizes).
+(defn sort-by
+  ([keyfn coll] (sort-by keyfn compare coll))
+  ([keyfn comp coll]
+   (sort (fn [x y] (comp (keyfn x) (keyfn y))) coll)))
+
+;; Version-4 UUID (RFC 4122): zero-padded hex groups 8-4-4-4-12, version
+;; nibble 4, variant 8-b — built over rand-int and validated by parse-uuid.
+(defn random-uuid []
+  (let [hx4 (fn [] (format "%04x" (rand-int 0x10000)))
+        hx3 (fn [] (format "%03x" (rand-int 0x1000)))]
+    (parse-uuid (str (hx4) (hx4) "-" (hx4) "-4" (hx3)
+                     "-" (format "%x" (+ 8 (rand-int 4))) (hx3)
+                     "-" (hx4) (hx4) (hx4)))))
+
+;; The char escape/name tables, as char-keyed maps (Clojure's shape).
+(def ^:private char-escape-strings
+  {\newline "\\n" \tab "\\t" \return "\\r" \formfeed "\\f"
+   \backspace "\\b" \" "\\\"" \\ "\\\\"})
+(defn char-escape-string [c] (get char-escape-strings c))
+
+(def ^:private char-name-strings
+  {\newline "newline" \tab "tab" \return "return" \formfeed "formfeed"
+   \backspace "backspace" \space "space"})
+(defn char-name-string [c] (get char-name-strings c))
+
 ;; Random selection over the host rand primitives.
 (defn rand-nth [coll]
   (let [v (vec coll)] (nth v (rand-int (count v)))))
