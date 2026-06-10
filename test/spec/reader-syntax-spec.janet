@@ -45,8 +45,14 @@
   ["anon fn %&"         "[2 3]"     "(#(vec %&) 2 3)"]
   ["discard #_"         "[1 3]"     "[1 #_2 3]"]
   ["regex literal"      "true"      "(= \"abc\" (re-find #\"abc\" \"xabcx\"))"]
-  ["reader conditional" "1"         "#?(:clj 1 :cljs 2 :default 3)"]
-  ["reader cond splice" "[1 2 3]"   "[#?@(:clj [1 2 3] :cljs [4 5])]"]
+  # Feature set is #{:jolt :default} (spec 02-reader S18; RFC 0002) — :clj
+  # branches are NOT taken; matching is by clause order.
+  ["reader conditional" "3"         "#?(:clj 1 :cljs 2 :default 3)"]
+  ["reader cond :jolt"  "4"         "#?(:clj 1 :jolt 4 :default 3)"]
+  ["reader cond clause order" "5"   "#?(:default 5 :jolt 6)"]
+  ["reader cond no match" "[]"      "[#?(:clj 1 :cljs 2)]"]
+  ["reader cond splice" "[1 2 3]"   "[#?@(:jolt [1 2 3] :cljs [4 5])]"]
+  ["reader cond splice no match" "[]" "[#?@(:clj [1 2 3] :cljs [4 5])]"]
   ["inst literal reads" "true"      "(some? #inst \"2020-01-01T00:00:00Z\")"]
   ["uuid literal"       "\"550e8400-e29b-41d4-a716-446655440000\"" "(str #uuid \"550e8400-e29b-41d4-a716-446655440000\")"]
   ["tagged literal var" "true"      "(var? #'+)"]

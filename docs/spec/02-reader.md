@@ -127,9 +127,14 @@ checks → UNVERIFIED (rows to add).
   platform satisfies, else nothing. `:default` matches any platform.
   `#?@(…)` splices a sequential form into the surrounding context.
 - Feature keys are implementation-defined; each implementation MUST document
-  its feature set. ⚠ jolt currently satisfies `:clj` (inheriting JVM branches
-  in `.cljc` files) — under review; the portable convention is
-  *own-key + `:default`*.
+  its feature set, and SHOULD follow the portable convention *own dialect key
+  + `:default`*. Matching MUST be by **clause order** — the first clause whose
+  key the platform satisfies wins (`#?(:default 5 :clj 6)` is `5` everywhere)
+  — not by key priority. Implementations SHOULD provide a per-loading-context
+  compatibility override for foreign-dialect libraries. (jolt:
+  `#{:jolt :default}`, opt-in via `reader-features-set!`/`JOLT_FEATURES`;
+  decision + A/B data in RFC 0002 — inheriting `:clj` cost 146 suite
+  assertions and 38 errors.)
 - Reader conditionals MUST be an error outside `.cljc`-style reading unless
   the implementation documents otherwise.
 

@@ -387,6 +387,34 @@
       (array/push arg-names rest-sym))
     [@[(sym "fn*") (tuple ;arg-names) replaced] new-pos]))
 
+# The reader-conditional feature set (spec 02-reader S18): jolt is its own
+# dialect, so the portable convention applies — the dialect key plus :default.
+# Matching is by CLAUSE order (the first clause whose key is in the feature
+# set wins), exactly like Clojure — NOT key-priority. JOLT_FEATURES overrides
+# (comma-separated, e.g. "jolt,clj,default") for compat experiments and A/B
+# measurement; :default is always honored.
+# Mutable so a loading context can opt a clj-targeted foreign library into
+# :clj compatibility (e.g. SCI) — see reader-features-set!. jolt itself and
+# the conformance surface read under the portable set.
+(var reader-features nil)
+
+(defn reader-features-set!
+  "Replace the active reader-conditional feature set (a list of keyword-name
+  strings or keywords). :default is always honored. Returns the previous set
+  so callers can restore."
+  [names]
+  (def prev reader-features)
+  (def t @{})
+  (each n names (put t (if (keyword? n) n (keyword n)) true))
+  (put t :default true)
+  (set reader-features t)
+  prev)
+
+(reader-features-set!
+  (let [env (os/getenv "JOLT_FEATURES")]
+    (if env (filter |(> (length $) 0) (string/split "," env))
+      ["jolt" "default"])))
+
 (defn read-reader-conditional [s pos]
   # pos is at #, next char is ? or ?@
   (def splice? (and (< (+ pos 2) (length s)) (= (s (+ pos 2)) 64))) # @ = 64
@@ -394,23 +422,16 @@
   (let [[form new-pos] (read-form s form-start)]
     (if (array? form)
       (do
+        # First clause (in clause order) whose feature key is in the set.
+        # `matched` is tracked separately: a matched clause may be nil.
         (var result nil)
+        (var matched false)
         (var i 0)
-        (while (< i (length form))
-          (if (= (in form i) :clj)
-            (do
-              (set result (in form (+ i 1)))
-              (set i (length form)))
-            (++ i)))
-        # Fallback to :default if :clj not matched
-        (when (nil? result)
-          (set i 0)
-          (while (< i (length form))
-            (if (= (in form i) :default)
-              (do
-                (set result (in form (+ i 1)))
-                (set i (length form)))
-              (++ i))))
+        (while (and (not matched) (< i (length form)))
+          (when (get reader-features (in form i))
+            (set result (in form (+ i 1)))
+            (set matched true))
+          (+= i 2))
         (if splice?
           # #?@ splicing: resolve :clj branch, wrap for splice
           (let [items (if (nil? result)
