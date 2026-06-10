@@ -380,8 +380,8 @@
 # disj can branch on them. A sorted-map is {:jolt/type :jolt/sorted-map :map STRUCT};
 # a sorted-set is {:jolt/type :jolt/sorted-set :items SORTED-ARRAY}. Keys/elements
 # are assumed Comparable scalars (the premise of a sorted coll); ops return a fresh
-# wrapper (persistent — source unchanged). by-comparator ctors are still TODO (no
-# stored comparator yet).
+# wrapper (persistent — source unchanged). A wrapper may carry an optional :cmp
+# (set by the by-comparator constructors) that all derived colls propagate.
 (defn core-sorted-map? [x] (and (table? x) (= :jolt/sorted-map (x :jolt/type))))
 (defn core-sorted-set? [x] (and (table? x) (= :jolt/sorted-set (x :jolt/type))))
 (defn core-sorted? [x] (or (core-sorted-map? x) (core-sorted-set? x)))
