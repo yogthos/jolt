@@ -11,14 +11,14 @@
 # marshal *against* it: core fns are referenced by name, and only the user's
 # bytecode plus its var cells are actually serialized.
 
-(use ./compiler)   # jolt-runtime-env
+(import ./backend :as backend)  # backend/jolt-runtime-env
 (use ./types)
 
 # Forward dict (key -> value) for unmarshal; reverse (value -> key) for marshal.
 # Built from the runtime env, which chains to the Janet boot env, so both core fns
 # and Janet builtins resolve by name.
-(defn- fwd-dict [] (env-lookup jolt-runtime-env))
-(defn- rev-dict [] (invert (env-lookup jolt-runtime-env)))
+(defn- fwd-dict [] (env-lookup backend/jolt-runtime-env))
+(defn- rev-dict [] (invert (env-lookup backend/jolt-runtime-env)))
 
 (defn marshal-ns
   "Marshal namespace `ns-name`'s var mappings to a byte buffer. The whole mappings

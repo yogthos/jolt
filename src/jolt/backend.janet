@@ -10,7 +10,6 @@
 
 (use ./types)
 (use ./core)
-(import ./compiler :as comp)
 (use ./evaluator)
 (import ./reader :as r)
 (import ./phm :as phm)
@@ -24,6 +23,42 @@
 # field as nil). Structs (the common case) pass through untouched. Applied at the
 # few points where a node first reaches the emitter, so the rest of the back end
 # keeps using plain (node :key) access and the portable front end never sees this.
+# --- Runtime kernel (absorbed from the retired bootstrap compiler) ----------
+
+# The Janet env compiled code evaluates in. Captured at module load: backend's
+# env chains types/core/evaluator/reader/phm, so emitted symbols (let/fn/in/
+# var-get/tuple-slice/...) and jolt runtime helpers resolve by name.
+(def jolt-runtime-env (curenv))
+
+(defn ctx-janet-env
+  "Lazily create/cache a per-context Janet environment for compiled code: a child
+  of the runtime env (so core fns resolve) that holds this context's user defs.
+  For a nil context (one-off compile/eval) returns a fresh child env."
+  [ctx]
+  (if (and ctx (table? (get ctx :env)))
+    (or (get (ctx :env) :janet-rt)
+        (let [e (make-env jolt-runtime-env)]
+          (put (ctx :env) :janet-rt e)
+          e))
+    (make-env jolt-runtime-env)))
+
+(defn build-map-literal
+  "Build a map value from evaluated k v k v ... args. A phm (not a Janet struct)
+  when a key is a collection (value hashing) or a key/value is nil (structs drop
+  nil; phm preserves it, matching Clojure)."
+  [& kvs]
+  (var need-phm false)
+  (var ki 0)
+  (while (< ki (length kvs))
+    (let [kk (in kvs ki) vv (in kvs (+ ki 1))]
+      (when (or (table? kk) (array? kk) (nil? kk) (nil? vv)) (set need-phm true)))
+    (+= ki 2))
+  (if need-phm
+    (do (var m (phm/make-phm)) (var j 0)
+        (while (< j (length kvs)) (set m (phm/phm-assoc m (in kvs j) (in kvs (+ j 1)))) (+= j 2))
+        m)
+    (struct ;kvs)))
+
 (defn- norm-node [n]
   (if (phm/phm? n) (phm/phm-to-struct n) n))
 
@@ -228,7 +263,7 @@
   (tuple make-vec (tuple/slice (array/concat @['tuple] items))))
 
 (defn- emit-map [ctx node]
-  (def args @[comp/build-map-literal])
+  (def args @[build-map-literal])
   (each pair (vview (node :pairs))
     (def p (vview pair))
     (array/push args (emit ctx (in p 0)))
@@ -291,7 +326,13 @@
 # kernel tier (the structural fns the analyzer itself calls) get built. The
 # analyzer uses unqualified referred names (jolt.host form-* + IR ctors), so the
 # bootstrap's plain :var path compiles it; stateful forms fall back to interp.
-(defn bootstrap-load-source [ctx target-ns src]
+(defn bootstrap-load-source
+  "Stage-1 builder: load a source string into target-ns INTERPRETED. Runs before
+  the self-hosted analyzer exists (it builds jolt.ir/jolt.analyzer and the kernel
+  tier); self-compile-compiler! then re-runs those sources through the live
+  analyzer so the steady-state compiler is compiled by itself — the retired
+  bootstrap compiler's job, done by the interpreter + one fixpoint turn."
+  [ctx target-ns src]
   (def saved (ctx-current-ns ctx))
   (ctx-set-current-ns ctx target-ns)
   (var s src)
@@ -300,11 +341,7 @@
     (set s (in parsed 1))
     (def f (in parsed 0))
     (when (not (nil? f))
-      # Guard BOTH compile and the Janet-compile-of-emitted step: a form whose
-      # emitted Janet is invalid (e.g. a bad splice) falls back to interpreted
-      # definition rather than killing the whole load.
-      (def r (protect (comp/eval-compiled (comp/compile-ast f ctx) ctx)))
-      (unless (r 0) (eval-form ctx @{} f))))
+      (eval-form ctx @{} f)))
   (ctx-set-current-ns ctx saved))
 
 # Compile-load an embedded jolt-core namespace by name (source from the stdlib map).
@@ -374,8 +411,14 @@
 # "jolt/uncompilable: <why>". Anything else escaping the compile step is an
 # unexpected compiler error, not a punt.
 (defn- uncompilable-error? [err]
-  (and (or (string? err) (buffer? err))
-       (string/has-prefix? "jolt/uncompilable" (string err))))
+  # The punt may arrive as a plain string (compiled analyzer) or wrapped in the
+  # interpreter's exception struct {:jolt/type :jolt/exception :value s}
+  # (interpreted analyzer — the stage-3 bootstrap path).
+  (def msg (if (and (struct? err) (= :jolt/exception (get err :jolt/type)))
+             (get err :value)
+             err))
+  (and (or (string? msg) (buffer? msg))
+       (string/has-prefix? "jolt/uncompilable" (string msg))))
 
 (defn compile-and-eval
   "Self-hosted compile path: analyze (portable Clojure) -> IR -> Janet -> eval.
@@ -387,10 +430,35 @@
   [ctx form]
   (def compiled (protect (emit-ir ctx (analyze-form ctx form))))
   (if (compiled 0)
-    (eval (compiled 1) (comp/ctx-janet-env ctx))
+    (eval (compiled 1) (ctx-janet-env ctx))
     (if (uncompilable-error? (compiled 1))
       (eval-form ctx @{} form)
       (error (compiled 1)))))
+
+(defn self-compile-compiler!
+  "Stage 3 (interpreted bootstrap): once the overlay + interpreted analyzer are
+  alive, run the kernel tier, jolt.ir, and jolt.analyzer back through the
+  SELF-HOSTED pipeline — the analyzer compiles itself (and the kernel fns it
+  uses), so by steady state the compiler runs compiled with no bootstrap
+  compiler involved. Forms a punt can't compile stay interpreted (the
+  deliberate channel)."
+  [ctx]
+  (def saved (ctx-current-ns ctx))
+  (each [ns-name target] [["clojure.core.00-kernel" "clojure.core"]
+                          ["jolt.ir" "jolt.ir"]
+                          ["jolt.analyzer" "jolt.analyzer"]]
+    (def src (get (get (ctx :env) :embedded-sources @{}) ns-name))
+    (when src
+      (ctx-set-current-ns ctx target)
+      (var s src)
+      (while (> (length (string/trim s)) 0)
+        (def parsed (r/parse-next s))
+        (set s (in parsed 1))
+        (def f (in parsed 0))
+        (when (not (nil? f))
+          (def r (protect (compile-and-eval ctx f)))
+          (unless (r 0) (eval-form ctx @{} f))))))
+  (ctx-set-current-ns ctx saved))
 
 (defn analyzer-built? [ctx]
   (> (length ((ctx-find-ns ctx "jolt.analyzer") :mappings)) 0))
@@ -403,7 +471,7 @@
   (when (analyzer-built? ctx)
     (def compiled (protect (emit-ir ctx (analyze-form ctx fn-form))))
     (when (compiled 0)
-      (def r (protect (eval (compiled 1) (comp/ctx-janet-env ctx))))
+      (def r (protect (eval (compiled 1) (ctx-janet-env ctx))))
       (when (r 0) (r 1)))))
 
 # Wrap expanders in the `fn` MACRO, not the `fn*` primitive: `fn` desugars a

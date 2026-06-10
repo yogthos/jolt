@@ -7,7 +7,6 @@
 (use ./reader)
 (use ./evaluator)
 (use ./core)
-(use ./compiler)
 (use ./loader)
 (use ./async)
 (import ./backend :as backend)
@@ -100,6 +99,11 @@
       (when (tier :kernel) (put env :kernel-ready? true))))
   (put env :direct-linking? user-dl)
   (ctx-set-current-ns ctx saved)
+  # Stage 3 interpreted bootstrap: the analyzer was loaded INTERPRETED (no
+  # bootstrap compiler); have it compile itself + the kernel tier before the
+  # macro pass, so steady-state compilation runs compiled.
+  (when compile?
+    (backend/self-compile-compiler! ctx))
   # Staged bootstrap: the early macros (00-syntax) were defined while the analyzer
   # was still being built, so their expanders are interpreted closures. Now that the
   # full overlay + analyzer are in place, recompile those expanders to native code —
@@ -226,16 +230,3 @@
       (set result (eval-one ctx form))))
   result)
 
-(defn compile-string
-  "Compile a Clojure source string to Janet source.
-  Returns the Janet source string."
-  [s]
-  (let [form (parse-string s)]
-    (compile-form form)))
-
-(defn compile-file
-  "Compile a .clj file to Janet source and optionally eval it.
-  When ctx has :compile? enabled, also evaluates the compiled forms.
-  Returns the namespace name."
-  [ctx filepath]
-  (load-ns ctx filepath))
