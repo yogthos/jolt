@@ -14,7 +14,7 @@ jpm build                     # builds build/jolt and build/jolt-deps
 ```
 
 Requires `jpm` and a recent Janet (CI-tested against 1.41). See
-[doc/building-and-deps.md](doc/building-and-deps.md) for build details, the
+[docs/building-and-deps.md](docs/building-and-deps.md) for build details, the
 `jpm clean` caveat, how namespaces are resolved (`JOLT_PATH`), and pulling
 Clojure libraries from a `deps.edn` with the `jolt-deps` tool.
 
@@ -226,7 +226,7 @@ are `["label" expected actual]`, compared with Jolt's own `=`) plus
 `expect=`/`expect-throws` for unit tests.
 
 The syntactic half of the contract — the surface syntax the reader accepts — is
-specified as an EBNF grammar in [`doc/grammar.ebnf`](doc/grammar.ebnf), with
+specified as an EBNF grammar in [`docs/grammar.ebnf`](docs/grammar.ebnf), with
 Jolt-vs-Clojure deviations noted inline. `test/spec/reader-syntax-spec.janet`
 exercises it.
 

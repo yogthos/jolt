@@ -2,7 +2,7 @@
 # git libraries and check that their namespaces load and a sample call works.
 #
 # Network-gated: set JOLT_CONFORMANCE=1 to run (it clones from GitHub). Skipped by
-# default so CI stays offline. Findings are summarized in doc/tools-deps.md.
+# default so CI stays offline. Findings are summarized in docs/tools-deps.md.
 
 (use ../../src/jolt/api)
 (use ../../src/jolt/types)
