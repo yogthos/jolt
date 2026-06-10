@@ -53,18 +53,74 @@ bd close <id>         # Complete work
 
 ## Build & Test
 
-_Add your build and test commands here_
+```bash
+jpm build              # build/jolt + build/jolt-deps (ctx baked at build time)
+jpm test               # FULL gate — recursive over test/ (spec, unit, integration, bench)
+janet test/spec/<f>.janet            # one spec file
+janet test/integration/conformance-test.janet   # 3-mode conformance (interpret/compile/self-host)
+janet test/bench/core-bench.janet    # bench — compare back-to-back vs main, never absolute
+```
+
+**Run the gate with a REAL exit code.** `jpm test | grep ...` reports grep's
+exit, not jpm's — this once shipped masked spec failures. Correct form:
 
 ```bash
-# Example:
-# npm install
-# npm test
+jpm test > /tmp/gate.out 2>&1; echo "EXIT: $?"
+grep -E "non-zero exit|All tests" /tmp/gate.out
 ```
+
+The literal `All tests passed.` line must be present. CI (.github/workflows/
+tests.yml) runs the same gate on every push/PR.
+
+`jpm build` output goes STALE silently — `rm -rf build && jpm clean` before
+trusting the binary, or test from source (authoritative).
 
 ## Architecture Overview
 
-_Add a brief overview of your project architecture_
+Clojure on Janet. A shrinking Janet seed (`src/jolt/*.janet`: reader, value
+layer, vars/ns, evaluator, the self-hosted pipeline's back end) hosts a
+Clojure overlay (`jolt-core/`): the analyzer/IR (`jolt-core/jolt/`) and
+`clojure.core` in dependency-ordered tiers (`jolt-core/clojure/core/NN-*.clj`,
+loaded in order: 00-syntax, 00-kernel (bootstrap-compiled), 10-seq, 20-coll,
+25-sorted, 30-macros, 40-lazy, 50-io). Compile is the default path (analyzer
+-> IR -> Janet bytecode, hybrid with interpreter fallback); `JOLT_INTERPRET=1`
+forces the tree-walking interpreter, `JOLT_INTERPRET_MACROS=1` additionally
+keeps macro expanders interpreted (the pure oracle). `api/init-cached` serves
+a disk-cached ctx image (~5ms vs ~2.4s); the cache key fingerprints sources +
+env knobs — add any NEW ctx-shaping env var to `image-cache-path` in
+api.janet or tests will see stale language behavior.
+
+Issue tracking and design notes live in beads (`bd prime`, `bd memories`).
 
 ## Conventions & Patterns
 
-_Add your project-specific conventions here_
+Porting seed fns to the overlay (the jolt-tzo shrink ladder) — traps that have
+each bitten at least once:
+
+- **Verify leaf-ness first**: grep ALL `src/jolt/*.janet` for the `core-X`
+  name (defn + core-bindings entry only), and check that tiers loading
+  EARLIER than the target tier don't call it. Nothing the analyzer/ir use may
+  move below the kernel tier.
+- **Delete the seed defn + binding in the same change.** A leftover stub
+  breaks direct-linked self-recursion: the overlay fn's recursive call binds
+  to the STUB's root at compile time (line-seq once truncated after one
+  element this way).
+- **A tier may only use macros from tiers that load before it.** Compile mode
+  expands macros at tier LOAD; the interpreter expands lazily — so an
+  if-let (30-macros) inside a 20-coll fn passes every interpreted test and
+  breaks compiled init.
+- **Never read your own wrapper's fields with `get`** in attached-ops values
+  (sorted colls): `get` on the wrapper IS the dispatched lookup and recurses
+  forever. Use `jolt.host/ref-get`.
+- **Map literals with `:jolt/type` as a key** parse as tagged reader forms —
+  don't tag overlay value maps in source.
+- **Expander-called fns live in 00-syntax** (empty?/keys/vals): expansion
+  first happens during the kernel-tier compile, before later tiers exist.
+  Early defns and expanders are interpreted during init and recompiled by the
+  staged passes (recompile-defns!/recompile-macros!) once the analyzer is
+  alive.
+- **Fix latent bugs to match Clojure** rather than preserving them, with a
+  regression spec row. Canonical Clojure definitions are preferred verbatim.
+- **Gate every batch**: conformance x3 modes, suite >= baseline
+  (clojure-test-suite-test.janet — raise the baseline when it rises), full
+  jpm test with a real exit code, bench back-to-back vs main.

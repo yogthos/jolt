@@ -10,20 +10,30 @@
 
 (def port "17888")
 
-# Watchdog: never let a hang stall CI — bail out after 30s.
-(ev/spawn (ev/sleep 30) (eprint "nrepl-test: watchdog fired (possible hang)") (os/exit 1))
+# Watchdog: never let a hang stall CI — bail out after 90s.
+(ev/spawn (ev/sleep 90) (eprint "nrepl-test: watchdog fired (possible hang)") (os/exit 1))
 
-(print "Starting jolt.nrepl server subprocess on port " port " ...")
-(def proc (os/spawn ["janet" "src/jolt/main.janet" "nrepl" port] :p {:out :pipe :err :pipe}))
+# Prefer the built executable (its ctx is baked at build time, ~20ms start);
+# source mode pays the full compile-mode init, which on a slow CI runner can
+# outrun a short poll window.
+(def server-cmd
+  (if (os/stat "build/jolt")
+    ["build/jolt" "nrepl" port]
+    ["janet" "src/jolt/main.janet" "nrepl" port]))
+(print "Starting jolt.nrepl server subprocess on port " port " (" (first server-cmd) ") ...")
+(def proc (os/spawn server-cmd :p {:out :pipe :err :pipe}))
 
-# Wait until the server accepts connections (poll up to ~5s).
+# Wait until the server accepts connections (poll up to ~60s — CI headroom).
 (var ready false)
 (var tries 0)
-(while (and (not ready) (< tries 50))
+(while (and (not ready) (< tries 600))
   (let [r (protect (net/connect "127.0.0.1" port))]
     (if (r 0) (do (:close (r 1)) (set ready true))
       (do (ev/sleep 0.1) (++ tries)))))
-(assert ready "nREPL server did not start")
+(unless ready
+  # Surface the server's stderr so a CI failure is diagnosable.
+  (eprint "server stderr: " (string (ev/read (proc :err) :all)))
+  (assert false "nREPL server did not start"))
 
 (def ctx (init-cached))
 (ctx-set-current-ns ctx "user")
