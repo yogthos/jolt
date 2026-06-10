@@ -72,4 +72,21 @@
   (assert (= 42 (ct-eval ctx "(get big-map :k42)")) "get k42"))
 (print "  passed")
 
+(print "6: bucket resize (jolt-s3y)...")
+(let [ctx (init-cached)]
+  # Crossing the load-factor boundary several times: every key still found,
+  # nil values preserved, collection keys still canonical, dissoc intact.
+  (eval-string ctx "
+    (def m (reduce (fn [m i] (assoc m i (* 10 i))) (hash-map) (range 500)))")
+  (assert (= 500 (ct-eval ctx "(count m)")) "count survives rehash")
+  (assert (= true (ct-eval ctx "(every? (fn [i] (= (* 10 i) (get m i))) (range 500))"))
+          "every key found after rehash")
+  (assert (= true (ct-eval ctx "(let [m2 (assoc m :nilv nil)] (and (contains? m2 :nilv) (nil? (get m2 :nilv :miss))))"))
+          "nil value present after rehash")
+  (assert (= :hit (ct-eval ctx "(get (assoc m [1 2] :hit) [1 2])"))
+          "collection key canonical after rehash")
+  (assert (= 499 (ct-eval ctx "(count (dissoc m 0))")) "dissoc after rehash")
+  (assert (= 500 (ct-eval ctx "(count m)")) "persistence: source unchanged"))
+(print "  passed")
+
 (print "\nAll PersistentHashMap tests passed!")

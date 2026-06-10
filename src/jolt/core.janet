@@ -625,7 +625,7 @@
       :vector (and (number? key) (>= key 0) (< key (length (coll :arr))))
       (not (nil? (get (coll :tbl) (canon-key key)))))
   (if (set? coll) (phs-contains? coll key)
-    (if (phm? coll) (let [b (get (coll :buckets) (phm-hash-key key))] (if b (phm-bucket-contains? b key) false))
+    (if (phm? coll) (phm-contains? coll key)
       (if (pvec? coll) (and (number? key) (>= key 0) (< key (pv-count coll)))
       (if (struct? coll) (not (nil? (coll key)))
         (if (table? coll) (not (nil? (coll key)))
