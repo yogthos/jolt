@@ -145,6 +145,21 @@
     # clojure.core and compiled by the self-hosted pipeline (or interpreted when
     # :compile? is off). Phase 4 kernel-shrink seam — see that file.
     (load-core-overlay! ctx)
+    # load-string and eval as VALUES need the loader's compile-or-interpret
+    # routing, which lives above the evaluator — intern them here. (The eval
+    # special form still handles direct calls; this covers value position,
+    # e.g. (map eval forms).)
+    (let [core (ctx-find-ns ctx "clojure.core")]
+      (ns-intern core "load-string"
+        (fn [s]
+          (var cur s)
+          (var result nil)
+          (while (> (length (string/trim cur)) 0)
+            (def [form rest-src] (parse-next cur))
+            (set cur rest-src)
+            (when (not (nil? form)) (set result (eval-toplevel ctx form))))
+          result))
+      (ns-intern core "eval" (fn [form] (eval-toplevel ctx form))))
     ctx))
 
 # --- Context snapshot/fork (cheap isolated copies) --------------------------

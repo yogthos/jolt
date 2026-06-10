@@ -3,14 +3,14 @@
 Generated 2026-06-10 by `tools/spec_coverage.py` — do not edit by hand.
 
 Surface: **694** clojure.core vars (ClojureDocs export; 648 with
-community examples). jolt interns 535 of them.
+community examples). jolt interns 552 of them.
 
 | Status | Count | Meaning |
 |---|---|---|
-| implemented+tested | 397 | in jolt and exercised by spec/conformance |
-| implemented-untested | 138 | in jolt, no direct test — spec entries will add them |
+| implemented+tested | 415 | in jolt and exercised by spec/conformance |
+| implemented-untested | 137 | in jolt, no direct test — spec entries will add them |
 | resolvable-not-interned | 2 | works in code but invisible to ns introspection (conformance finding) |
-| missing-portable | 27 | portable semantics, jolt lacks it — implementation gap |
+| missing-portable | 10 | portable semantics, jolt lacks it — implementation gap |
 | special-form | 15 | specified in §3, not a library var |
 | dynamic-var | 31 | classification needed: portable default vs host-dependent |
 | agents-taps | 22 | out of scope pending concurrency design note |
@@ -114,7 +114,7 @@ UNVERIFIED field; that column will be added as entries land.
 | `any?` | implemented+tested | ✓ |
 | `apply` | implemented+tested | ✓ |
 | `areduce` | jvm-specific | ✓ |
-| `array-map` | implemented-untested | ✓ |
+| `array-map` | implemented+tested | ✓ |
 | `as->` | implemented+tested | ✓ |
 | `aset` | implemented+tested | ✓ |
 | `aset-boolean` | implemented-untested | ✓ |
@@ -155,9 +155,9 @@ UNVERIFIED field; that column will be added as entries land.
 | `boolean-array` | implemented-untested | ✓ |
 | `boolean?` | implemented+tested | ✓ |
 | `booleans` | implemented-untested | ✓ |
-| `bound-fn` | missing-portable | ✓ |
-| `bound-fn*` | missing-portable | ✓ |
-| `bound?` | missing-portable | ✓ |
+| `bound-fn` | implemented-untested | ✓ |
+| `bound-fn*` | implemented+tested | ✓ |
+| `bound?` | implemented+tested | ✓ |
 | `bounded-count` | implemented+tested | ✓ |
 | `butlast` | implemented+tested | ✓ |
 | `byte` | implemented-untested | ✓ |
@@ -267,7 +267,7 @@ UNVERIFIED field; that column will be added as entries land.
 | `enumeration-seq` | implemented-untested | ✓ |
 | `error-handler` | agents-taps | ✓ |
 | `error-mode` | agents-taps | ✓ |
-| `eval` | missing-portable | ✓ |
+| `eval` | implemented+tested | ✓ |
 | `even?` | implemented+tested | ✓ |
 | `every-pred` | implemented+tested | ✓ |
 | `every?` | implemented+tested | ✓ |
@@ -282,7 +282,7 @@ UNVERIFIED field; that column will be added as entries land.
 | `extends?` | implemented-untested | ✓ |
 | `false?` | implemented+tested | ✓ |
 | `ffirst` | implemented+tested | ✓ |
-| `file-seq` | missing-portable | ✓ |
+| `file-seq` | implemented+tested | ✓ |
 | `filter` | implemented+tested | ✓ |
 | `filterv` | implemented+tested | ✓ |
 | `finally` | special-form | ✓ |
@@ -298,7 +298,7 @@ UNVERIFIED field; that column will be added as entries land.
 | `float-array` | implemented-untested | ✓ |
 | `float?` | implemented+tested | ✓ |
 | `floats` | implemented-untested | ✓ |
-| `flush` | missing-portable | ✓ |
+| `flush` | implemented+tested | ✓ |
 | `fn` | implemented+tested | ✓ |
 | `fn?` | implemented+tested | ✓ |
 | `fnext` | implemented+tested | ✓ |
@@ -320,7 +320,7 @@ UNVERIFIED field; that column will be added as entries land.
 | `get-in` | implemented+tested | ✓ |
 | `get-method` | implemented+tested | ✓ |
 | `get-proxy-class` | implemented-untested | ✓ |
-| `get-thread-bindings` | missing-portable | ✓ |
+| `get-thread-bindings` | implemented+tested | ✓ |
 | `get-validator` | implemented+tested | ✓ |
 | `group-by` | implemented+tested | ✓ |
 | `halt-when` | implemented-untested | ✓ |
@@ -383,7 +383,7 @@ UNVERIFIED field; that column will be added as entries land.
 | `load` | jvm-specific | ✓ |
 | `load-file` | jvm-specific | ✓ |
 | `load-reader` | jvm-specific | ✓ |
-| `load-string` | missing-portable | ✓ |
+| `load-string` | implemented+tested | ✓ |
 | `loaded-libs` | jvm-specific | ✓ |
 | `locking` | implemented+tested | ✓ |
 | `long` | implemented-untested | ✓ |
@@ -437,13 +437,13 @@ UNVERIFIED field; that column will be added as entries land.
 | `ns-aliases` | implemented+tested | ✓ |
 | `ns-imports` | implemented-untested | ✓ |
 | `ns-interns` | implemented-untested | ✓ |
-| `ns-map` | missing-portable | ✓ |
+| `ns-map` | implemented+tested | ✓ |
 | `ns-name` | implemented+tested | ✓ |
 | `ns-publics` | implemented+tested | ✓ |
-| `ns-refers` | missing-portable | ✓ |
+| `ns-refers` | implemented+tested | ✓ |
 | `ns-resolve` | implemented+tested | ✓ |
 | `ns-unalias` | implemented+tested | ✓ |
-| `ns-unmap` | missing-portable | ✓ |
+| `ns-unmap` | implemented+tested | ✓ |
 | `nth` | implemented+tested | ✓ |
 | `nthnext` | implemented+tested | ✓ |
 | `nthrest` | implemented+tested | ✓ |
@@ -484,7 +484,7 @@ UNVERIFIED field; that column will be added as entries land.
 | `print-method` | implemented-untested | ✓ |
 | `print-simple` | jvm-specific | ✓ |
 | `print-str` | implemented+tested | ✓ |
-| `printf` | missing-portable | ✓ |
+| `printf` | implemented+tested | ✓ |
 | `println` | implemented+tested | ✓ |
 | `println-str` | implemented+tested | ✓ |
 | `prn` | implemented+tested | ✓ |
@@ -536,7 +536,7 @@ UNVERIFIED field; that column will be added as entries land.
 | `ref-max-history` | stm-refs |  |
 | `ref-min-history` | stm-refs | ✓ |
 | `ref-set` | stm-refs | ✓ |
-| `refer` | implemented-untested | ✓ |
+| `refer` | implemented+tested | ✓ |
 | `refer-clojure` | implemented-untested | ✓ |
 | `reify` | implemented+tested | ✓ |
 | `release-pending-sends` | agents-taps | ✓ |
@@ -594,7 +594,7 @@ UNVERIFIED field; that column will be added as entries land.
 | `simple-ident?` | implemented+tested | ✓ |
 | `simple-keyword?` | implemented+tested | ✓ |
 | `simple-symbol?` | implemented+tested | ✓ |
-| `slurp` | missing-portable | ✓ |
+| `slurp` | implemented+tested | ✓ |
 | `some` | implemented+tested | ✓ |
 | `some->` | implemented+tested | ✓ |
 | `some->>` | implemented+tested | ✓ |
@@ -608,7 +608,7 @@ UNVERIFIED field; that column will be added as entries land.
 | `sorted-set-by` | implemented+tested | ✓ |
 | `sorted?` | implemented+tested | ✓ |
 | `special-symbol?` | implemented-untested | ✓ |
-| `spit` | missing-portable | ✓ |
+| `spit` | implemented+tested | ✓ |
 | `split-at` | implemented+tested | ✓ |
 | `split-with` | implemented+tested | ✓ |
 | `splitv-at` | implemented+tested |  |
@@ -638,7 +638,7 @@ UNVERIFIED field; that column will be added as entries land.
 | `tap>` | agents-taps | ✓ |
 | `test` | implemented-untested | ✓ |
 | `the-ns` | implemented+tested | ✓ |
-| `thread-bound?` | missing-portable | ✓ |
+| `thread-bound?` | implemented+tested | ✓ |
 | `throw` | special-form | ✓ |
 | `time` | implemented+tested | ✓ |
 | `to-array` | implemented-untested | ✓ |
@@ -705,8 +705,8 @@ UNVERIFIED field; that column will be added as entries land.
 | `when-not` | implemented+tested | ✓ |
 | `when-some` | implemented+tested | ✓ |
 | `while` | implemented+tested | ✓ |
-| `with-bindings` | missing-portable | ✓ |
-| `with-bindings*` | missing-portable | ✓ |
+| `with-bindings` | implemented+tested | ✓ |
+| `with-bindings*` | implemented+tested | ✓ |
 | `with-in-str` | missing-portable | ✓ |
 | `with-loading-context` | jvm-specific |  |
 | `with-local-vars` | missing-portable | ✓ |
