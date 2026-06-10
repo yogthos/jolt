@@ -73,6 +73,29 @@
                       [] (partition 2 bindings))]
     `(with-redefs-fn (hash-map ~@pairs) (fn [] ~@body))))
 
+;; Fresh free-standing var cells bound as locals; read/write with
+;; var-get/var-set. The cells come from the host seam __local-var.
+(defmacro with-local-vars [bindings & body]
+  (let [binds (reduce (fn [acc p] (conj (conj acc (first p)) `(__local-var ~(second p))))
+                      [] (partition 2 bindings))]
+    `(let [~@binds] ~@body)))
+
+;; Canonical recursive expansion; closing goes through the host seam __close
+;; (a map-like value's :close fn or a host file — no .close interop here).
+(defmacro with-open [bindings & body]
+  (if (zero? (count bindings))
+    `(do ~@body)
+    `(let [~(first bindings) ~(second bindings)]
+       (try
+         (with-open ~(vec (drop 2 bindings)) ~@body)
+         (finally (__close ~(first bindings)))))))
+
+;; jolt numbers are doubles — there is no BigDecimal math context, so the
+;; precision (and optional :rounding mode) is accepted and ignored.
+(defmacro with-precision [precision & exprs]
+  (let [body (if (= :rounding (first exprs)) (drop 2 exprs) exprs)]
+    `(do ~@body)))
+
 (defmacro with-bindings [binding-map & body]
   `(with-bindings* ~binding-map (fn [] ~@body)))
 

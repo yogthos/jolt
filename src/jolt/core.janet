@@ -2256,6 +2256,17 @@
 (defn core-copy-var [sym & args] nil)
 (defn core-macrofy [sym fn & more] fn)
 (defn core-new-var [sym & args] nil)
+# A free-standing var cell (not interned anywhere): with-local-vars binds
+# these as locals; var-get/var-set work on any cell.
+(defn core-local-var [&opt val]
+  @{:jolt/type :jolt/var :name "local" :ns nil :root val :gen 0})
+# with-open's close seam: a map-like value closes via its :close fn, a host
+# file via file/close. No .close interop on the Janet host.
+(defn core-close-resource [x]
+  (cond
+    (and (or (table? x) (struct? x)) (function? (get x :close))) ((get x :close))
+    (= :core/file (type x)) (file/close x)
+    (error (string "with-open: don't know how to close " (type x)))))
 # sci stub: pass the registry map through (it was @{} — a raw host table that
 # strict map-conj rightly rejects; identity also keeps sci's registry intact).
 (defn core-avoid-method-too-large [& args] (if (> (length args) 0) (in args 0) {}))
@@ -2949,6 +2960,8 @@
     "copy-var" core-copy-var
     "macrofy" core-macrofy
     "new-var" core-new-var
+    "__local-var" core-local-var
+    "__close" core-close-resource
     "avoid-method-too-large" core-avoid-method-too-large
     "inst?" core-inst?
     "inst-ms" core-inst-ms
