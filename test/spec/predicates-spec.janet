@@ -113,3 +113,20 @@
   ["not= differs"       "true"   "(not= [1 2] [1 3])"]
   ["identical? same kw" "true"   "(identical? :a :a)"]
   ["compare strings"    "-1"     "(compare \"a\" \"b\")"])
+
+(defspec "predicates / seqable, reduced & emptiness"
+  ["seqable? vector"   "true"   "(seqable? [1])"]
+  ["seqable? map"      "true"   "(seqable? {:a 1})"]
+  ["seqable? string"   "true"   "(seqable? \"s\")"]
+  ["seqable? nil"      "true"   "(seqable? nil)"]
+  ["seqable? number"   "false"  "(seqable? 5)"]
+  ["integer? int"      "true"   "(integer? 5)"]
+  ["integer? fraction" "false"  "(integer? 5.5)"]
+  ["reduced? wrapped"  "true"   "(reduced? (reduced 1))"]
+  ["reduced? plain"    "false"  "(reduced? 1)"]
+  ["deref reduced"     "9"      "(deref (reduced 9))"]
+  ["unreduced wrapped" "9"      "(unreduced (reduced 9))"]
+  ["unreduced plain"   "9"      "(unreduced 9)"]
+  ["not-empty full"    "[1]"    "(not-empty [1])"]
+  ["not-empty empty"   "nil"    "(not-empty [])"]
+  ["not-empty string"  "nil"    "(not-empty \"\")"])
