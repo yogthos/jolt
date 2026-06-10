@@ -177,7 +177,7 @@
 
 (defn core-nil? [x] (nil? x))
 (defn core-not [x] (if x false true))
-(defn core-some? [x] (not (nil? x)))
+# some? / true? / false? now live in the Clojure collection tier.
 (defn core-string? [x] (string? x))
 (defn core-number? [x] (number? x))
 (defn core-fn? [x] (or (function? x) (cfunction? x)))
@@ -206,8 +206,8 @@
                (= :jolt/sorted-map (get x :jolt/type))
                (= :jolt/sorted-set (get x :jolt/type))))))
 
-(defn core-true? [x] (= true x))
-(defn core-false? [x] (= false x))
+
+
 (defn core-identical? [a b] (= a b))
 
 # Strictness helpers: like Clojure, numeric ops reject non-numbers, and the
@@ -304,8 +304,9 @@
   (let [m (core-rem n d)]
     (if (or (= m 0) (= (> n 0) (> d 0))) m (+ m d)))))
 
-(defn core-max [& args] (each x args (need-num x "max")) (apply max args))
-(defn core-min [& args] (each x args (need-num x "min")) (apply min args))
+# max / min now live in the Clojure collection tier (canonical pairwise
+# >/<, so non-numbers throw and NaN behaves as on the JVM).
+
 
 (defn core-rand [& n] (let [r (math/random)] (if (empty? n) r (* r (in n 0)))))
 (defn core-rand-int [n] (math/floor (* (math/random) n)))
@@ -466,7 +467,10 @@
           (do
             (var result coll)
             (each x xs
-              (if (map-value? x)
+              (cond
+                # conj nil onto a map is a no-op (Clojure)
+                (nil? x) nil
+                (map-value? x)
                 # conj a map -> merge its entries
                 (each e (map-entries-of x)
                   (set result (phm-assoc result (in e 0) (in e 1))))
@@ -475,7 +479,9 @@
           (do
             (var result coll)
             (each x xs
-              (if (map-value? x)
+              (cond
+                (nil? x) nil
+                (map-value? x)
                 (each e (map-entries-of x)
                   (set result (map-assoc1 result (in e 0) (in e 1))))
                 (set result (map-assoc1 result (vnth x 0) (vnth x 1)))))
@@ -604,20 +610,7 @@
                        (realize-for-iteration t))]
         (jolt-call f ;fixed ;tail)))))
 
-(defn core-get-in [m ks &opt default]
-  (default default nil)
-  (def ks (vview ks))
-  # Walk with a fresh sentinel so a PRESENT key whose value is nil is distinguished
-  # from a missing key: only a genuinely-absent step falls back to default.
-  (def absent @{})
-  (var current m)
-  (var i 0)
-  (var missing false)
-  (while (< i (length ks))
-    (let [nxt (core-get current (ks i) absent)]
-      (if (= nxt absent) (do (set missing true) (break)) (set current nxt)))
-    (++ i))
-  (if missing default current))
+# get-in now lives in the Clojure collection tier (core/20-coll.clj).
 
 (defn core-contains? [coll key]
   (if (core-sorted? coll) (if ((sorted-op coll :contains) coll key) true false)
@@ -774,59 +767,9 @@
     # ((into #{} [:a :b]) was #{}, jolt-h86)
     (do (var result to) (each x items (set result (core-conj result x))) result)))
 
-(defn core-merge [& maps]
-  # Clojure: (when (some identity maps) (reduce conj (or (first maps) {}) (rest maps)))
-  # - (merge) and (merge nil nil) -> nil; nil args elsewhere are no-ops.
-  # - later args follow conj semantics (a map merges its entries; a [k v]
-  #   vector/map-entry adds that entry).
-  (var any false)
-  (each m maps (when (not (nil? m)) (set any true)))
-  (if (not any)
-    nil
-    (do
-      (var result (let [f (in maps 0)] (if (nil? f) (struct) f)))
-      (var i 1)
-      (while (< i (length maps))
-        (let [m (in maps i)]
-          (cond
-            (nil? m) nil
-            (or (phm? m) (struct? m))
-              (each e (map-entries-of m)
-                (set result (core-assoc result (in e 0) (in e 1))))
-            # a [k v] pair (map-entry / 2-vector), per conj
-            (and (or (pvec? m) (tuple? m) (array? m))
-                 (= 2 (if (pvec? m) (pv-count m) (length m))))
-              (set result (core-assoc result (vnth m 0) (vnth m 1)))
-            # scalars, sets, and wrong-length sequentials can't merge into a map
-            # (a length-2 vector was handled above; anything else here is bad)
-            (or (number? m) (string? m) (buffer? m) (keyword? m) (boolean? m)
-                (set? m) (plist? m) (pvec? m) (tuple? m) (array? m)
-                (and (struct? m) (get m :jolt/type)))
-              (error (string "Can't merge " (type m) " into a map"))
-            # other map-like tables (records, sorted-maps, host tables): lenient conj
-            (set result (core-conj result m))))
-        (++ i))
-      result)))
+# merge now lives in the Clojure collection tier (core/20-coll.clj).
 
-(defn core-merge-with [f & maps]
-  # Presence — not nil-of-value — decides whether to combine: a key present in the
-  # accumulator with a nil value still triggers (f existing v), matching Clojure.
-  (if (= 0 (length maps))
-    nil
-    (do
-      (var result (first maps))
-      (var mi 1)
-      (while (< mi (length maps))
-        (let [m (maps mi)]
-          (when m
-            (each e (map-entries-of m)
-              (let [k (in e 0) v (in e 1)]
-                (set result
-                  (if (core-contains? result k)
-                    (core-assoc result k (f (core-get result k) v))
-                    (core-assoc result k v)))))))
-        (++ mi))
-      result)))
+# merge-with now lives in the Clojure collection tier (core/20-coll.clj).
 
 (defn core-keys [m]
   # phm-entries (not phm-to-struct) so keys mapped to nil values are not dropped.
@@ -837,24 +780,9 @@
   (if (core-sorted-map? m) ((sorted-op m :vals) m)
   (if (phm? m) (tuple ;(map |(in $ 1) (phm-entries m))) (tuple ;(map |(m $) (keys m))))))
 
-(defn core-select-keys [m ks]
-  # Include a key when it is PRESENT (contains?), even if its value is nil — a
-  # struct/table would drop a nil value, so collect entries and build via kvs->map.
-  (def kvs @[])
-  (each k (realize-for-iteration ks)
-    (when (core-contains? m k)
-      (array/push kvs k) (array/push kvs (core-get m k))))
-  (kvs->map kvs))
+# select-keys now lives in the Clojure collection tier (core/20-coll.clj).
 
-(defn core-zipmap [ks vs]
-  (let [ks (realize-for-iteration ks) vs (realize-for-iteration vs)]
-    # collect pairs, then build once — a nil key/value must survive (kvs->map -> phm)
-    (def kvs @[])
-    (var i 0)
-    (while (and (< i (length ks)) (< i (length vs)))
-      (array/push kvs (in ks i)) (array/push kvs (in vs i))
-      (++ i))
-    (kvs->map kvs)))
+# zipmap now lives in the Clojure collection tier (core/20-coll.clj).
 
 # ============================================================
 # Transducers
@@ -1304,29 +1232,7 @@
           (if ok hit nil)))
       (make-lazy-seq (step init-cs nil)))))
 
-(defn core-reverse [coll]
-  (if (nil? coll) @[]
-  (if (lazy-seq? coll)
-    (do
-      (var result @[])
-      (var cur coll)
-      # seq-done?, not (nil? (ls-first)): a nil element must not end the walk.
-      (while (not (seq-done? cur))
-        (array/push result (core-first cur))
-        (set cur (core-rest cur)))
-      (var reversed @[])
-      (var i (dec (length result)))
-      (while (>= i 0)
-        (array/push reversed (in result i))
-        (-- i))
-      reversed)
-    (let [c (realize-for-iteration coll)]
-      (var result @[])
-      (var i (dec (length c)))
-      (while (>= i 0)
-        (array/push result (in c i))
-        (-- i))
-      result))))
+# reverse now lives in the Clojure collection tier ((reduce conj () coll)).
 
 (defn core-nth
   "Return the nth element of a sequential collection. With a not-found arg, return
@@ -1445,10 +1351,7 @@
 # tier — core/00-kernel.clj.)
 # subvec lives in the Clojure kernel tier — core/00-kernel.clj.
 
-(defn core-trampoline [f & args]
-  (var result (apply f args))
-  (while (function? result) (set result (result)))
-  result)
+# trampoline now lives in the Clojure collection tier (core/20-coll.clj).
 
 (def core-format (fn [fmt & args] (string/format fmt ;args)))
 
@@ -1523,20 +1426,12 @@
             (-- i))
           (f result))))))
 
-(defn core-partial [f & args]
-  (fn [& more] (apply f (array/concat (array/slice args) more))))
+# partial now lives in the Clojure collection tier (canonical arities).
 
 # juxt now lives in the Clojure collection tier (core/20-coll.clj).
 
-(defn core-memoize [f]
-  (var cache @{})
-  (fn [& args]
-    (let [key (tuple ;args)]
-      (if-let [v (get cache key)]
-        v
-        (let [result (apply f args)]
-          (put cache key result)
-          result)))))
+# memoize now lives in the Clojure collection tier — find-based, so it
+# caches nil results too (this kernel fn re-computed them).
 
 # ============================================================
 # Collection constructors
@@ -2616,8 +2511,8 @@
 # lists are arrays. So key/val/map-entry? accept a 2-tuple and reject a plain
 # vector, matching Clojure (where a MapEntry is distinct from a vector).
 (defn- entry-like? [x] (and (tuple? x) (= 2 (length x))))
-(defn core-key [e] (if (entry-like? e) (in e 0) (error "key requires a map entry")))
-(defn core-val [e] (if (entry-like? e) (in e 1) (error "val requires a map entry")))
+# key / val now live in the Clojure collection tier (core/20-coll.clj),
+# along with find (previously missing from jolt entirely).
 (defn core-map-entry? [x] (entry-like? x))
 
 # Reversible (supports rseq) = vectors and sorted collections.
@@ -2818,7 +2713,6 @@
 (def- core-bindings
   "Map of symbol name → function for all core functions."
   @{"nil?" core-nil?
-    "some?" core-some?
     "string?" core-string?
     "number?" core-number?
     "fn?" core-fn?
@@ -2828,8 +2722,6 @@
     "map?" core-map?
     "seq?" core-seq?
     "coll?" core-coll?
-    "true?" core-true?
-    "false?" core-false?
     "identical?" core-identical?
     "zero?" core-zero?
     "pos?" core-pos?
@@ -2856,8 +2748,6 @@
     "mod" core-mod
     "rem" core-rem
     "quot" core-quot
-    "max" core-max
-    "min" core-min
     "rand" core-rand
     "rand-int" core-rand-int
     "=" core-=
@@ -2870,10 +2760,8 @@
     "assoc" core-assoc
     "dissoc" core-dissoc
     "get" core-get
-    "get-in" core-get-in
     "contains?" core-contains?
     "count" core-count
-    "trampoline" core-trampoline
     "format" core-format
     "first" core-first
     "rest" core-rest
@@ -2887,20 +2775,14 @@
     "__sqmap" core-sqmap
     "__sqset" core-sqset
     "into" core-into
-    "merge" core-merge
-    "merge-with" core-merge-with
     "keys" core-keys
     "vals" core-vals
-    "select-keys" core-select-keys
     "with-meta" core-with-meta
-    "zipmap" core-zipmap
     "map" core-map
     "filter" core-filter
     "remove" core-remove
     "reduce" core-reduce
     "apply" core-apply
-    "key" core-key
-    "val" core-val
     "map-entry?" core-map-entry?
     "special-symbol?" core-special-symbol?
     "promise" core-promise
@@ -2983,7 +2865,6 @@
     "take-while" core-take-while
     "drop-while" core-drop-while
     "concat" core-concat
-    "reverse" core-reverse
     "nth" core-nth
     "sort" core-sort
     "sort-by" core-sort-by
@@ -2992,8 +2873,6 @@
     "identity" core-identity
     "constantly" core-constantly
     "comp" core-comp
-    "partial" core-partial
-    "memoize" core-memoize
     "vector" core-vector
     "hash-map" core-hash-map
     "array-map" core-array-map

@@ -630,3 +630,105 @@
   [v]
   (let [t (:test (meta v))]
     (if t (do (t) :ok) :no-test)))
+
+;; --- Phase 2 leaf batch 2 (jolt-ded): canonical Clojure ports ----------------
+;; key/val/find first — merge-with and memoize below use them.
+
+;; An entry is any 2-element vector in jolt ((seq m) yields tuples, find
+;; builds a pvec — both count as entries; Clojure's stricter MapEntry-only
+;; key/val has no analog here).
+(defn- map-entryish? [e] (and (vector? e) (= 2 (count e))))
+(defn key [e] (if (map-entryish? e) (nth e 0) (throw (ex-info "key requires a map entry" {}))))
+(defn val [e] (if (map-entryish? e) (nth e 1) (throw (ex-info "val requires a map entry" {}))))
+
+;; find was previously missing from jolt entirely. Presence (contains?), not
+;; value, decides — so (find {:a nil} :a) is [:a nil]. Works on vectors by index.
+(defn find [m k]
+  (when (contains? m k) [k (get m k)]))
+
+(defn some? [x] (not (nil? x)))
+(defn true? [x] (= true x))
+(defn false? [x] (= false x))
+
+;; Presence-preserving: a key with a nil value is kept ((hash-map) base keeps
+;; nil values and canonicalizes collection keys).
+(defn select-keys [map keyseq]
+  (reduce (fn [m k] (if (contains? map k) (assoc m k (get map k)) m))
+          (hash-map) keyseq))
+
+(defn zipmap [keys vals]
+  (loop [m (hash-map) ks (seq keys) vs (seq vals)]
+    (if (and ks vs)
+      (recur (assoc m (first ks) (first vs)) (next ks) (next vs))
+      m)))
+
+;; conj semantics per entry arg (a map merges, a [k v] pair adds); nil args are
+;; no-ops; all-nil (or no args) is nil.
+(defn merge [& maps]
+  (when (some identity maps)
+    (reduce (fn [acc m] (if (nil? m) acc (conj (or acc (hash-map)) m)))
+            maps)))
+
+(defn merge-with [f & maps]
+  (when (some identity maps)
+    (let [merge-entry (fn [m e]
+                        (let [k (key e) v (val e)]
+                          ;; presence — not nil-of-value — decides combination
+                          (if (contains? m k)
+                            (assoc m k (f (get m k) v))
+                            (assoc m k v))))
+          merge2 (fn [m1 m2]
+                   (reduce merge-entry (or m1 (hash-map)) (seq m2)))]
+      (reduce merge2 maps))))
+
+(defn get-in
+  ([m ks] (reduce get m ks))
+  ([m ks not-found]
+   ;; a fresh table is its own identity — a present-but-nil step is
+   ;; distinguished from a missing one
+   (let [sentinel (hash-map)]
+     (loop [m m ks (seq ks)]
+       (if ks
+         (let [nxt (get m (first ks) sentinel)]
+           (if (identical? sentinel nxt)
+             not-found
+             (recur nxt (next ks))))
+         m)))))
+
+;; find-based, so nil RESULTS are cached too (the old kernel fn re-computed
+;; them); args canonicalize as a collection key.
+(defn memoize [f]
+  (let [mem (atom (hash-map))]
+    (fn [& args]
+      ;; plain let/if, not if-let: this tier loads before 30-macros defines it
+      (let [e (find (deref mem) args)]
+        (if e
+          (val e)
+          (let [ret (apply f args)]
+            (swap! mem assoc args ret)
+            ret))))))
+
+(defn partial
+  ([f] f)
+  ([f a] (fn [& args] (apply f a args)))
+  ([f a b] (fn [& args] (apply f a b args)))
+  ([f a b c] (fn [& args] (apply f a b c args)))
+  ([f a b c & more] (fn [& args] (apply f a b c (concat more args)))))
+
+(defn trampoline
+  ([f] (let [ret (f)] (if (fn? ret) (trampoline ret) ret)))
+  ([f & args] (trampoline (fn [] (apply f args)))))
+
+;; Canonical pairwise max/min: > / < throw on non-numbers, and the NaN
+;; behavior is Clojure's by construction.
+(defn max
+  ([x] x)
+  ([x y] (if (> x y) x y))
+  ([x y & more] (reduce max (max x y) more)))
+
+(defn min
+  ([x] x)
+  ([x y] (if (< x y) x y))
+  ([x y & more] (reduce min (min x y) more)))
+
+(defn reverse [coll] (reduce conj (list) coll))
