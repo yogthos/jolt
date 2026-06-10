@@ -298,7 +298,8 @@
                     `(= ~g ~(mk-const c))))
         build (fn build [cls]
                 (if (empty? cls)
-                  nil
+                  ;; no clause matched and no default — Clojure throws here.
+                  `(throw (ex-info (str "No matching clause: " ~g) {}))
                   (if (empty? (rest cls))
                     (first cls)
                     `(if ~(mk-test (first cls)) ~(nth cls 1) ~(build (drop 2 cls))))))]
