@@ -181,7 +181,7 @@
             (set go false)
             (do (array/push items (in cell 0))
                 (let [rt (in cell 1)]
-                  (if (nil? rt) (set go false) (set cur (make-lazy-seq rt))))))))
+                  (if (nil? rt) (set go false) (set cur (ls-rest-cached cur rt))))))))
       items)
     val))))
 
@@ -425,6 +425,13 @@
   {"sleep" (fn [ms] (ev/sleep (/ ms 1000)) nil)
    "yield" (fn [] (ev/sleep 0) nil)})
 
+# System statics (wall/monotonic clocks — what portable timing code uses).
+(def- system-statics
+  # realtime clock (sub-ms float epoch seconds) — os/time is whole seconds,
+  # which quantized every elapsed-time measurement to 1000ms.
+  {"currentTimeMillis" (fn [] (math/floor (* 1000 (os/clock :realtime))))
+   "nanoTime" (fn [] (math/floor (* 1e9 (os/clock :monotonic))))})
+
 (defn- resolve-sym
   [ctx bindings sym-s]
   (let [name (sym-s :name) ns (sym-s :ns)]
@@ -434,6 +441,9 @@
     (if (= ns "Thread")
       (let [v (get thread-statics name)]
         (if (nil? v) (error (string "Unsupported Thread member: Thread/" name)) v))
+    (if (= ns "System")
+      (let [v (get system-statics name)]
+        (if (nil? v) (error (string "Unsupported System member: System/" name)) v))
     (if (not (nil? ns))
       (let [current-ns (ctx-find-ns ctx (ctx-current-ns ctx))
             aliased-ns (or (ns-alias-lookup current-ns ns) (ns-import-lookup current-ns ns))
@@ -483,7 +493,7 @@
                       # No implicit Janet fallback (Stage 3): an unresolved
                       # Clojure symbol is an error. Host access is the explicit
                       # janet/ prefix above.
-                      (error (string "Unable to resolve symbol: " name)))))))))))))))
+                      (error (string "Unable to resolve symbol: " name))))))))))))))))
 (defn- parse-arg-names
   "Parse a parameter vector, handling & rest args.
   Returns {:fixed [names...] :rest name-or-nil :all [names...]}"

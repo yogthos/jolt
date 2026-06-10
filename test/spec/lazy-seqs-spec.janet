@@ -29,3 +29,16 @@
   ["unrealized"         "false"    "(realized? (lazy-seq (cons 1 nil)))"]
   ["realized after"     "true"     "(let [s (lazy-seq (cons 1 nil))] (first s) (realized? s))"]
   ["body runs once"     "1"        "(let [c (atom 0) s (lazy-seq (do (swap! c inc) [1 2 3]))] (seq s) (seq s) @c)"])
+
+# Independent walks over the SAME lazy seq share realization: each node's rest
+# wrapper is memoized (ls-rest-cached), so the shared rest-thunks run exactly
+# once. Pre-fix, every walk after the first re-ran the thunks — duplicating
+# side effects, and a doall'd seq of futures re-spawned them serially on the
+# deref walk (which is how it surfaced, via pmap).
+(defspec "lazy-seq / realization is shared across walks"
+  ["effects run once across three walks" "3"
+   "(let [a (atom 0) s (map (fn [x] (swap! a inc) x) [1 2 3])] (doall s) (dorun s) (vec s) (deref a))"]
+  ["values stable across walks" "true"
+   "(let [s (map inc [1 2 3])] (= (vec s) (vec s) [2 3 4]))"]
+  ["filter effects once" "4"
+   "(let [a (atom 0) s (filter (fn [x] (swap! a inc) (odd? x)) [1 2 3 4])] (dorun s) (count s) (deref a))"])

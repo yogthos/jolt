@@ -191,6 +191,10 @@
   (let [msg (if message message (str "Assert failed: " (pr-str x)))]
     `(when-not ~x (throw (ex-info ~msg {})))))
 
+;; (pvalues e1 e2 ...) — each expression evaluated in parallel (pcalls).
+(defmacro pvalues [& exprs]
+  `(pcalls ~@(map (fn [e] `(fn [] ~e)) exprs)))
+
 (defmacro delay [& body]
   `(make-delay (fn [] ~@body)))
 
