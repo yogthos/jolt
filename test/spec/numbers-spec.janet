@@ -131,5 +131,6 @@
   ["rand-int in range"  "true" "(let [r (rand-int 5)] (and (integer? r) (>= r 0) (< r 5)))"]
   ["rand-int zero"      "0"    "(rand-int 1)"]
   ["rand in [0,1)"      "true" "(let [r (rand)] (and (>= r 0) (< r 1)))"]
+  ["rand n in [0,n)"    "true" "(let [r (rand 10)] (and (>= r 0) (< r 10)))"]
   ["rand-nth member"    "true" "(contains? #{:a :b :c} (rand-nth [:a :b :c]))"]
   ["rand-nth single"    ":x"   "(rand-nth [:x])"])

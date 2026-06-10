@@ -269,7 +269,7 @@
 (defn core-max [& args] (each x args (need-num x "max")) (apply max args))
 (defn core-min [& args] (each x args (need-num x "min")) (apply min args))
 
-(defn core-rand [] (math/random))
+(defn core-rand [& n] (let [r (math/random)] (if (empty? n) r (* r (in n 0)))))
 (defn core-rand-int [n] (math/floor (* (math/random) n)))
 
 # ============================================================
@@ -375,12 +375,69 @@
 (defn- map-value? [x]
   (or (phm? x) (and (struct? x) (nil? (get x :jolt/type)))))
 
+# --- Sorted collections (sorted-map / sorted-set) -------------------------------
+# Defined here (before the collection fns) so conj/assoc/get/contains?/keys/vals/
+# disj can branch on them. A sorted-map is {:jolt/type :jolt/sorted-map :map STRUCT};
+# a sorted-set is {:jolt/type :jolt/sorted-set :items SORTED-ARRAY}. Keys/elements
+# are assumed Comparable scalars (the premise of a sorted coll); ops return a fresh
+# wrapper (persistent — source unchanged). by-comparator ctors are still TODO (no
+# stored comparator yet).
+(defn core-sorted-map? [x] (and (table? x) (= :jolt/sorted-map (x :jolt/type))))
+(defn core-sorted-set? [x] (and (table? x) (= :jolt/sorted-set (x :jolt/type))))
+(defn core-sorted? [x] (or (core-sorted-map? x) (core-sorted-set? x)))
+# A sorted coll may carry a :cmp — a Janet 2-arg comparator returning a Clojure
+# compare result (neg/0/pos). nil means natural order (Janet's < via sort). The
+# by-comparator constructors install one (built from the user IFn); all derived
+# colls (assoc/conj/...) propagate it so ordering stays consistent.
+# A Clojure comparator is either a (neg/0/pos)-returning fn or a boolean predicate
+# (true => a sorts before b, like <). Reduce both to a strict less-than for sort.
+(defn- cmp-lt? [cmp a b]
+  (let [r (cmp a b)]
+    (if (boolean? r) r (if (number? r) (< r 0) (truthy? r)))))
+(defn- sorted-by [cmp arr] (if cmp (sort arr (fn [a b] (cmp-lt? cmp a b))) (sort arr)))
+(defn sm-make [m &opt cmp] @{:jolt/type :jolt/sorted-map :map m :cmp cmp})
+(defn ss-make [items &opt cmp] @{:jolt/type :jolt/sorted-set :items items :cmp cmp})
+(defn core-sorted-map [& kvs]
+  (var m @{}) (var i 0)
+  (while (< i (length kvs)) (put m (kvs i) (kvs (+ i 1))) (+= i 2))
+  (sm-make (table/to-struct m)))
+(defn core-sorted-set [& xs]
+  (var seen @{}) (each x xs (put seen x true))
+  (ss-make (sorted-by nil (array ;(keys seen)))))
+(defn sorted-map-keys [sm] (sorted-by (sm :cmp) (array ;(keys (sm :map)))))
+(defn sorted-map-entries [sm] (let [m (sm :map)] (map (fn [k] [k (get m k)]) (sorted-map-keys sm))))
+(defn sm-assoc-many [sm kvs]
+  (var m @{}) (each k (keys (sm :map)) (put m k (get (sm :map) k)))
+  (var i 0) (while (< i (length kvs)) (put m (kvs i) (kvs (+ i 1))) (+= i 2))
+  (sm-make (table/to-struct m) (sm :cmp)))
+(defn sm-dissoc-many [sm ks]
+  (def rm @{}) (each x ks (put rm x true))
+  (var m @{}) (each k (keys (sm :map)) (unless (get rm k) (put m k (get (sm :map) k))))
+  (sm-make (table/to-struct m) (sm :cmp)))
+(defn ss-contains? [ss x] (var f false) (each e (ss :items) (when (deep= e x) (set f true) (break))) f)
+(defn ss-conj-many [ss xs]
+  (var seen @{}) (each e (ss :items) (put seen e true)) (each x xs (put seen x true))
+  (ss-make (sorted-by (ss :cmp) (array ;(keys seen))) (ss :cmp)))
+(defn ss-disj-many [ss xs]
+  (def rm @{}) (each x xs (put rm x true))
+  (ss-make (filter (fn [e] (not (get rm e))) (ss :items)) (ss :cmp)))
+
 (defn core-conj [& args]
   (if (= 0 (length args)) (make-vec @[])        # (conj) -> []
   (let [coll (first args) xs (tuple/slice args 1)]
   (if (nil? coll)
     # conj onto nil builds a list (prepends): (conj nil 1 2) -> (2 1)
     (do (var result nil) (each x xs (set result (pl-cons x result))) result)
+  (if (core-sorted-map? coll)
+    # conj a [k v] entry (or merge a map) into a sorted-map
+    (do (var m coll)
+      (each x xs
+        (if (map-value? x)
+          (each e (map-entries-of x) (set m (sm-assoc-many m [(in e 0) (in e 1)])))
+          (set m (sm-assoc-many m [(vnth x 0) (vnth x 1)]))))
+      m)
+  (if (core-sorted-set? coll)
+    (ss-conj-many coll xs)
   (if (pvec? coll)
     (do (var result coll) (each x xs (set result (pv-conj result x))) result)
   (if (plist? coll)
@@ -414,7 +471,7 @@
                 (each e (map-entries-of x)
                   (set result (map-assoc1 result (in e 0) (in e 1))))
                 (set result (map-assoc1 result (vnth x 0) (vnth x 1)))))
-            result)))))))))))
+            result)))))))))))))
 
 (defn core-assoc [m & kvs]
   (when (odd? (length kvs))
@@ -425,6 +482,7 @@
             (and (struct? m) (get m :jolt/type)))
     (error (string "assoc requires a map or vector, got " (type m))))
   (cond
+    (core-sorted-map? m) (sm-assoc-many m kvs)
     (phm? m)
       (do (var result m) (var i 0) (while (< i (length kvs)) (set result (phm-assoc result (kvs i) (kvs (+ i 1)))) (+= i 2)) result)
     (pvec? m)
@@ -466,6 +524,7 @@
 (defn core-dissoc [m & ks]
   (cond
     (nil? m) nil
+    (core-sorted-map? m) (sm-dissoc-many m ks)
     (phm? m) (do (var result m) (each k ks (set result (phm-dissoc result k))) result)
     # reject clearly non-map values (scalars, sequences, sets, symbol/char structs)
     (or (number? m) (string? m) (buffer? m) (keyword? m) (boolean? m)
@@ -479,6 +538,8 @@
 (defn core-get [m k &opt default]
   (default default nil)
   (if (nil? m) default
+    (if (core-sorted-map? m) (let [v (get (m :map) k)] (if (nil? v) default v))
+    (if (core-sorted-set? m) (if (ss-contains? m k) k default)
     (if (core-transient? m)
       (case (m :kind)
         :vector (if (and (number? k) (>= k 0) (< k (length (m :arr)))) (in (m :arr) k) default)
@@ -493,7 +554,7 @@
             (if (nil? v) default v))
           (if (and (or (tuple? m) (array? m)) (number? k) (>= k 0) (< k (length m)))
             (in m k)
-            default))))))))
+            default))))))))))
 
 # Runtime invoke dispatch for COMPILED code (interpreter uses evaluator's
 # jolt-invoke). Handles real functions plus Clojure IFn collections.
@@ -502,6 +563,8 @@
     (or (function? f) (cfunction? f)) (apply f args)
     (keyword? f) (core-get (get args 0) f (get args 1))
     (and (struct? f) (= :symbol (f :jolt/type))) (core-get (get args 0) f (get args 1))
+    (core-sorted-map? f) (let [v (get (f :map) (get args 0))] (if (nil? v) (get args 1) v))
+    (core-sorted-set? f) (if (ss-contains? f (get args 0)) (get args 0) (get args 1))
     (phm? f) (phm-get f (get args 0) (get args 1))
     (set? f) (if (phs-contains? f (get args 0)) (get args 0) (get args 1))
     (pvec? f)
@@ -551,6 +614,8 @@
   (if missing default current))
 
 (defn core-contains? [coll key]
+  (if (core-sorted-map? coll) (not (nil? (get (coll :map) key)))
+  (if (core-sorted-set? coll) (ss-contains? coll key)
   (if (core-transient? coll)
     (case (coll :kind)
       :vector (and (number? key) (>= key 0) (< key (length (coll :arr))))
@@ -562,7 +627,7 @@
         (if (table? coll) (not (nil? (coll key)))
           (if (or (tuple? coll) (array? coll))
             (and (number? key) (>= key 0) (< key (length coll)))
-            false))))))))
+            false))))))))))
 
 # Coerce a Clojure IFn value to a Janet-callable fn for higher-order fns
 # (map/filter/sort-by/group-by/...). Janet functions pass through; a keyword or
@@ -579,21 +644,8 @@
 
 # Sorted collections — minimal: backed by a struct (map) / sorted array (set),
 # ordered by key/element on read. Defined early so seq/count/get can dispatch.
-(defn core-sorted-map? [x] (and (table? x) (= :jolt/sorted-map (x :jolt/type))))
-(defn core-sorted-set? [x] (and (table? x) (= :jolt/sorted-set (x :jolt/type))))
-# sorted? is true for either sorted maps or sorted sets (Clojure: any Sorted coll).
-(defn core-sorted? [x] (or (core-sorted-map? x) (core-sorted-set? x)))
-(defn sm-make [m] @{:jolt/type :jolt/sorted-map :map m})
-(defn ss-make [items] @{:jolt/type :jolt/sorted-set :items items})
-(defn core-sorted-map [& kvs]
-  (var m @{}) (var i 0)
-  (while (< i (length kvs)) (put m (kvs i) (kvs (+ i 1))) (+= i 2))
-  (sm-make (table/to-struct m)))
-(defn core-sorted-set [& xs]
-  (var seen @{}) (each x xs (put seen x true))
-  (ss-make (sort (array ;(keys seen)))))
-(defn sorted-map-keys [sm] (sort (array ;(keys (sm :map)))))
-(defn sorted-map-entries [sm] (let [m (sm :map)] (map (fn [k] [k (get m k)]) (sorted-map-keys sm))))
+# sorted-map/sorted-set predicates, constructors and ops live ABOVE core-conj so
+# the collection fns (conj/assoc/get/contains?/…) can branch on them.
 
 (defn core-count [coll]
   (cond
@@ -773,10 +825,12 @@
 
 (defn core-keys [m]
   # phm-entries (not phm-to-struct) so keys mapped to nil values are not dropped.
-  (if (phm? m) (tuple ;(map |(in $ 0) (phm-entries m))) (tuple ;(keys m))))
+  (if (core-sorted-map? m) (tuple ;(sorted-map-keys m))
+  (if (phm? m) (tuple ;(map |(in $ 0) (phm-entries m))) (tuple ;(keys m)))))
 
 (defn core-vals [m]
-  (if (phm? m) (tuple ;(map |(in $ 1) (phm-entries m))) (tuple ;(map |(m $) (keys m)))))
+  (if (core-sorted-map? m) (tuple ;(map |(in $ 1) (sorted-map-entries m)))
+  (if (phm? m) (tuple ;(map |(in $ 1) (phm-entries m))) (tuple ;(map |(m $) (keys m))))))
 
 (defn core-select-keys [m ks]
   # Include a key when it is PRESENT (contains?), even if its value is nil — a
@@ -1509,7 +1563,10 @@
 
 (defn core-set? [x] (set? x))
 (defn core-disj [s & ks]
-  (if (set? s) (apply phs-disj s ks) (error "disj expects a set")))
+  (cond
+    (core-sorted-set? s) (ss-disj-many s ks)
+    (set? s) (apply phs-disj s ks)
+    (error "disj expects a set")))
 
 (defn core-set [coll]
   (apply core-hash-set (realize-for-iteration coll)))
@@ -1698,6 +1755,14 @@
   (prin "\n")
   nil)
 
+# Capture *out*: run thunk with Janet's :out dynamic bound to a buffer, so all
+# print/println/pr/prn output (which go through `prin` -> (dyn :out)) is collected
+# and returned as a string. The with-out-str macro (overlay) wraps a body thunk.
+(defn core-with-out-str [thunk]
+  (def buf @"")
+  (with-dyns [:out buf] (thunk))
+  (string buf))
+
 (defn core-pr [& xs]
   (var i 0)
   (while (< i (length xs))
@@ -1826,8 +1891,17 @@
 (defn core-reader-conditional [form splicing?]
   @{:jolt/type :jolt/reader-conditional :form form :splicing? splicing?})
 # reader-conditional? now lives in the Clojure collection tier (tagged-value predicate).
-(defn core-sorted-map-by [cmp & kvs] (apply core-sorted-map kvs))
-(defn core-sorted-set-by [cmp & xs] (apply core-sorted-set xs))
+# The user comparator is a Clojure IFn; wrap it as a Janet 2-arg fn returning the
+# numeric compare result, then thread it through the sorted wrapper.
+(defn core-sorted-map-by [cmp & kvs]
+  (let [jc (fn [a b] (jolt-call cmp a b))]
+    (var m @{}) (var i 0)
+    (while (< i (length kvs)) (put m (kvs i) (kvs (+ i 1))) (+= i 2))
+    (sm-make (table/to-struct m) jc)))
+(defn core-sorted-set-by [cmp & xs]
+  (let [jc (fn [a b] (jolt-call cmp a b))]
+    (var seen @{}) (each x xs (put seen x true))
+    (ss-make (sorted-by jc (array ;(keys seen))) jc)))
 (defn core-array-seq [arr & _] (core-seq arr))
 (defn core-seque [& args] (in args (- (length args) 1)))
 (defn core-supers [x] (make-phs))
@@ -1966,6 +2040,8 @@
 # future macro: (future body...) -> (future-call (fn* [] body...))
 (defn core-deref [ref & opts]
   (cond
+    (and (table? ref) (= :jolt/reduced (ref :jolt/type)))
+    (ref :val)
     (and (table? ref) (= :jolt/atom (ref :jolt/type)))
     (ref :value)
     (and (table? ref) (= :jolt/volatile (ref :jolt/type)))
@@ -2844,6 +2920,7 @@
     "ex-info" core-ex-info
     "prn-str" core-prn-str
     "println-str" core-println-str
+    "__with-out-str" core-with-out-str
     "force" core-force
     "realized?" core-realized?
     "delay?" core-delay?

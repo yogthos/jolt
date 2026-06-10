@@ -12,6 +12,11 @@
 
 (defmacro comment [& body] nil)
 
+;; with-out-str: capture everything the body prints to *out* and return it as a
+;; string. __with-out-str (clojure.core) runs the thunk with the output captured.
+(defmacro with-out-str [& body]
+  `(__with-out-str (fn* [] ~@body)))
+
 ;; defmulti/defmethod are sugar over defmulti-setup/defmethod-setup (ctx-capturing
 ;; clojure.core fns) so they compile as plain invokes. name/mm are passed quoted;
 ;; the dispatch fn, options, and dispatch value evaluate normally, and the method

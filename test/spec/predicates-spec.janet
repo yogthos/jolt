@@ -124,6 +124,7 @@
   ["integer? fraction" "false"  "(integer? 5.5)"]
   ["reduced? wrapped"  "true"   "(reduced? (reduced 1))"]
   ["reduced? plain"    "false"  "(reduced? 1)"]
+  ["deref reduced"     "9"      "(deref (reduced 9))"]
   ["unreduced wrapped" "9"      "(unreduced (reduced 9))"]
   ["unreduced plain"   "9"      "(unreduced 9)"]
   ["not-empty full"    "[1]"    "(not-empty [1])"]
