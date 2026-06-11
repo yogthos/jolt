@@ -138,4 +138,31 @@
   (eval-string c "(defn g [] 2)")
   (assert (= 2 (ct-eval c "(calls-g)")) "compiled caller sees redefined global"))
 
+# Map-literal metadata on a def'd name reads as (def (with-meta name m) v); the
+# analyzer must route it to the interpreter (uncompilable), not die extracting
+# the name. Regression: yogthos/config's (defonce ^{:doc "…"} env …) broke
+# every load-string/uberscript path while loading fine through require.
+(let [c (init-cached {:compile? true})]
+  (assert (= 42 (do (eval-string c `(def ^{:doc "d"} md-def 42)`)
+                    (ct-eval c "md-def")))
+          "compile-mode def with ^{:map} metadata")
+  (assert (= "d" (ct-eval c "(:doc (meta (var md-def)))"))
+          "map metadata lands on the var")
+  (assert (= 7 (do (eval-string c `(defonce ^{:doc "o"} md-once 7)`)
+                   (ct-eval c "md-once")))
+          "compile-mode defonce with ^{:map} metadata"))
+
+# (declare name) must intern a var so a compiled forward reference binds to it —
+# not to a like-named Janet host builtin. Regression: selmer.parser's
+# (declare parse) + a (parse …) call compiled to janet's 1-arg `parse`.
+(let [c (init-cached {:compile? true})]
+  (eval-string c "(declare parse)")
+  (eval-string c "(defn callit [s] (parse s 1 2))")
+  (eval-string c "(defn parse [s a b] [s a b])")
+  (assert (deep= ["x" 1 2] (ct-eval c `(callit "x")`))
+          "compiled forward ref through declare beats host fallback")
+  (eval-string c "(def no-init-var)")
+  (assert (= true (ct-eval c "(do (def no-init-var 5) (= 5 no-init-var))"))
+          "(def name) with no init interns; later def binds"))
+
 (print "\nAll Phase 6 tests passed!")

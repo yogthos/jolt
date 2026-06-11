@@ -10,6 +10,10 @@
 (reader-features-set! ["jolt" "clj" "default"])
 
 (def ctx (init-cached))
+# Best-effort loading: SCI's clj-targeted requires (borkdude.graal.locking,
+# clojure.tools.reader.*) don't exist on this host; a strict require would fail
+# whole ns forms and cascade. See maybe-require-ns.
+(put (ctx :env) :lenient-require? true)
 
 (printf "Loading SCI stubs...\n")
 (defn load-stubs [ctx filepath]

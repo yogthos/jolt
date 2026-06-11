@@ -73,6 +73,11 @@
   ["simple-ident?"      "true"   "(simple-ident? :a)"]
   ["ratio?"             "false"  "(ratio? 3)"]
   ["decimal?"           "false"  "(decimal? 3)"]
+  # No first-class Class objects on this host (class names are symbols handled
+  # in instance?/new positions), so class? is always false — like Clojure's
+  # class? of a symbol. Selmer's `exception` macro calls it at expansion time.
+  ["class? of value"    "false"  "(class? \"s\")"]
+  ["class? of symbol"   "false"  "(class? 'java.lang.String)"]
   ["rational? int"      "true"   "(rational? 3)"]
   ["rational? float"    "false"  "(rational? 3.5)"]
   ["nat-int? zero"      "true"   "(nat-int? 0)"]

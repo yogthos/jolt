@@ -6,6 +6,9 @@
 (use ../../src/jolt/types)
 (import ../../src/jolt/deps :as deps)
 
+# Captured before any os/cd: subprocess tests below re-import src/jolt/deps.
+(def repo-root (os/cwd))
+
 (def base (string (or (os/getenv "TMPDIR") "/tmp") "/jolt-deps-resolve-" (os/time)))
 (defn rmrf [p]
   (when (os/stat p)
@@ -53,8 +56,74 @@
   (deep= roots (deps/resolve-deps-cached "deps.edn" (string base "/proj/jpm_tree")))
   true)
 
+# The cache must hit across PROCESSES: janet's (hash ...) is seeded per process,
+# so a key built with it never matches a cached one and every invocation
+# re-resolved (and re-fetched git deps). Detection: plant a sentinel root in the
+# cache file — a fresh process that hits the cache returns it; a process that
+# misses re-resolves and overwrites it.
+(os/cd (string base "/proj"))
+(def cache-file ".cpcache/jolt-deps.jdn")
+(def cached-now (parse (slurp cache-file)))
+(spit cache-file
+  (string/format "%j" (merge cached-now
+                             {:roots [;(get cached-now :roots) "/SENTINEL"]})))
+(defn subprocess-roots []
+  (def code
+    (string `(os/cd "` repo-root `") `
+            `(import ./src/jolt/deps :as deps) `
+            `(os/cd "` base "/proj" `") `
+            `(print (string/join (deps/resolve-deps-cached "deps.edn" "` base "/proj/jpm_tree" `") ":"))`))
+  (def p (os/spawn ["janet" "-e" code] :px {:out :pipe}))
+  (def out (ev/read (p :out) :all))
+  (os/proc-wait p)
+  (string/trim (string out)))
+(check "cache hits across processes"
+  (string/has-suffix? "/SENTINEL" (subprocess-roots))
+  true)
+
 (os/cd "/")
 (rmrf base)
+
+# Git-dep resolution must keep stdout clean: `JOLT_PATH=$(jolt-deps path)` is
+# the documented capture, and git's checkout chatter ("HEAD is now at …") was
+# corrupting it. Uses a file:// git dep so no network is needed.
+(def gbase (string (or (os/getenv "TMPDIR") "/tmp") "/jolt-deps-gitout-" (os/time)))
+(rmrf gbase)
+(each d ["lib/src/glib" "proj2"] (mkdirs (string gbase "/" d)))
+(spit (string gbase "/lib/src/glib/core.clj") "(ns glib.core)\n(defn n [] 7)\n")
+(spit (string gbase "/lib/deps.edn") `{:paths ["src"]}`)
+(defn sh-out [args &opt cwd]
+  (def p (os/spawn args :px {:out :pipe :err :pipe :cd (or cwd ".")}))
+  (def out (ev/read (p :out) :all))
+  (os/proc-wait p)
+  (string/trim (string out)))
+(def git-ok
+  (truthy?
+    (protect
+      (do (sh-out ["git" "-c" "init.defaultBranch=master" "init"] (string gbase "/lib"))
+          (sh-out ["git" "add" "-A"] (string gbase "/lib"))
+          (sh-out ["git" "-c" "user.email=t@t" "-c" "user.name=t" "commit" "-m" "init" "-q"]
+                  (string gbase "/lib"))))))
+(if (not git-ok)
+  (print "  skip git-dep stdout test (git unavailable)")
+  (do
+    (def sha (sh-out ["git" "rev-parse" "HEAD"] (string gbase "/lib")))
+    (spit (string gbase "/proj2/deps.edn")
+      (string `{:paths ["src"] :deps {my/glib {:git/url "file://` gbase `/lib" :git/sha "` sha `"}}}`))
+    (os/setenv "JOLT_GITLIBS" (string gbase "/gitlibs"))
+    (def code
+      (string `(os/cd "` repo-root `") `
+              `(import ./src/jolt/deps :as deps) `
+              `(os/cd "` gbase "/proj2" `") `
+              `(deps/resolve-deps "deps.edn" "` gbase "/proj2/jpm_tree" `") `
+              `(eprint "done")`))
+    (def p (os/spawn ["janet" "-e" code] :px {:out :pipe}))
+    (def out (ev/read (p :out) :all))
+    (os/proc-wait p)
+    (os/setenv "JOLT_GITLIBS" nil)
+    (check "git-dep resolution keeps stdout clean" (string (or out "")) ""))
+  )
+(rmrf gbase)
 
 (if (> fails 0)
   (error (string "deps-resolve-test: " fails " failing check(s)"))

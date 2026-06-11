@@ -116,9 +116,12 @@
                      `(~form ~x))]
       `(->> ~threaded ~@(rest forms)))))
 
-;; Forward declaration is a no-op on Jolt — the compiler resolves forward refs via
-;; pending cells (matching the prior Janet macro).
-(defmacro declare [& syms] `(do))
+;; Forward declaration interns unbound vars (Clojure semantics). The interpreter
+;; resolves forward refs lazily either way, but the COMPILER classifies globals at
+;; compile time: without the var, a declared name that collides with a Janet root
+;; binding (parse, hash, …) would compile to the host fn instead of the var.
+(defmacro declare [& syms]
+  `(do ~@(map (fn* [s] `(def ~s)) syms)))
 
 ;; destructure — Clojure's binding-vector expander, ported from the Janet seed
 ;; (was core-destructure). Turns a binding vector that may contain destructuring
