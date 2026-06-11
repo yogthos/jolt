@@ -1476,6 +1476,8 @@
   (def n (ns :name))
   (if (and (struct? n) (= :symbol (get n :jolt/type))) (n :name) (string n)))
 
+(def- pr-char-escapes
+  {34 "\\\"" 92 "\\\\" 10 "\\n" 9 "\\t" 13 "\\r" 12 "\\f" 8 "\\b"})
 (var pr-render nil)
 
 # Format a number the way Clojure prints it: infinity and NaN have named forms
@@ -1525,14 +1527,23 @@
         ns (name-of (v :ns))]
     (if ns (string "#'" ns "/" nm) (string "#'" nm))))
 
+(defn- pr-push-escaped
+  "Readable string body: escape per char-escapes (quote, backslash, \\n & co),
+  so pr-str round-trips through the reader (this was unescaped, jolt pre-r6)."
+  [buf s]
+  (each c (string/bytes s)
+    (if-let [esc (get pr-char-escapes c)]
+      (buffer/push-string buf esc)
+      (buffer/push-byte buf c))))
+
 (set pr-render
   (fn [buf v]
     (cond
       (nil? v) (buffer/push-string buf "nil")
       (= true v) (buffer/push-string buf "true")
       (= false v) (buffer/push-string buf "false")
-      (string? v) (do (buffer/push-string buf "\"") (buffer/push-string buf v) (buffer/push-string buf "\""))
-      (buffer? v) (do (buffer/push-string buf "\"") (buffer/push-string buf (string v)) (buffer/push-string buf "\""))
+      (string? v) (do (buffer/push-string buf "\"") (pr-push-escaped buf v) (buffer/push-string buf "\""))
+      (buffer? v) (do (buffer/push-string buf "\"") (pr-push-escaped buf (string v)) (buffer/push-string buf "\""))
       (keyword? v) (do (buffer/push-string buf ":") (buffer/push-string buf (string v)))
       (core-char? v) (do (buffer/push-string buf "\\")
                          (buffer/push-string buf
@@ -1651,18 +1662,9 @@
 
 # print/println use str semantics (bare strings); pr/prn use readable (quoted).
 # All space-separate their args, like Clojure.
-(defn core-print [& xs]
-  (var i 0)
-  (while (< i (length xs))
-    (if (> i 0) (prin " "))
-    (prin (str-render-one (xs i)))
-    (++ i))
-  nil)
-
-(defn core-println [& xs]
-  (apply core-print xs)
-  (prin "\n")
-  nil)
+# print/println live in the Clojure collection tier (core/20-coll.clj) over
+# the __write / __pr-str1 host seams; str-render-one stays for core-str.
+(defn core-write [s] (prin s) nil)
 
 # newline lives in the Clojure collection tier (core/20-coll.clj).
 
@@ -1823,28 +1825,9 @@
   (with-dyns [:out buf] (thunk))
   (string buf))
 
-(defn core-pr [& xs]
-  (var i 0)
-  (while (< i (length xs))
-    (if (> i 0) (prin " "))
-    (let [b @""] (pr-render b (xs i)) (prin (string b)))
-    (++ i))
-  nil)
-
-(defn core-prn [& xs]
-  (apply core-pr xs)
-  (prin "\n")
-  nil)
-
-(defn core-pr-str [& xs]
-  (def buf @"")
-  (var i 0)
-  (let [n (length xs)]
-    (while (< i n)
-      (pr-render buf (xs i))
-      (when (< (+ i 1) n) (buffer/push-string buf " "))
-      (++ i)))
-  (string buf))
+# pr/prn/pr-str live in the Clojure collection tier (core/20-coll.clj); the
+# renderer itself stays host (representation-coupled, shared with hot str).
+(defn core-pr-str1 [x] (let [b @""] (pr-render b x) (string b)))
 
 # ============================================================
 # Java-style arrays — backed by Janet's C primitives. Byte arrays use Janet
@@ -2672,6 +2655,8 @@
     "hash-ordered-coll" core-hash-ordered-coll
     "hash-unordered-coll" core-hash-unordered-coll
     "gensym" gensym
+    "__write" core-write
+    "__pr-str1" core-pr-str1
     "__make-uuid" make-uuid
     "compare" core-compare
     "type" core-type
@@ -2737,11 +2722,6 @@
     "regex?" regex?
     "str-triml" string/triml
     "str-trimr" string/trimr
-    "print" core-print
-    "println" core-println
-    "pr" core-pr
-    "prn" core-prn
-    "pr-str" core-pr-str
     # Java-style arrays (buffers for bytes, arrays otherwise)
     "aclone" core-aclone
     "object-array" core-object-array

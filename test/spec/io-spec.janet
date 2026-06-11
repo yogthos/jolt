@@ -54,3 +54,16 @@
   ["line-seq empty"       "nil"              "(with-in-str \"\" (seq (line-seq *in*)))"]
   ["line-seq is lazy seq" "true"             "(with-in-str \"a\\nb\" (seq? (line-seq *in*)))"]
   ["line-seq count"       "3"                "(with-in-str \"1\\n2\\n3\" (count (line-seq *in*)))"])
+
+# The print family is overlay now (seed-shrink round 6), over the __write /
+# __pr-str1 host seams: pr is readable, print is str semantics, *-ln appends.
+(defspec "io / print family (overlay)"
+  ["pr-str multi-arg spacing" "\"\\\"a\\\" [1 2] :k\"" "(pr-str \"a\" [1 2] :k)"]
+  ["pr-str zero args"   "\"\""        "(pr-str)"]
+  ["pr-str escapes"     "\"\\\"a\\\\\\\"b\\\"\"" "(pr-str \"a\\\"b\")"]
+  ["print is unreadable" "\"a b\""    "(with-out-str (print \"a\" \"b\"))"]
+  ["println appends newline" "\"x 1\\n\"" "(with-out-str (println \"x\" 1))"]
+  ["prn is readable + newline" "\"[1 \\\"s\\\"]\\n\"" "(with-out-str (prn [1 \"s\"]))"]
+  ["pr writes no newline" "\"\\\\a\"" "(with-out-str (pr \\a))"]
+  ["print nil arg"      "\"\""        "(with-out-str (print nil))"]
+  ["prn keyword"        "\":k\\n\""   "(with-out-str (prn :k))"])
