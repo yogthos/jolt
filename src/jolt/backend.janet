@@ -137,7 +137,9 @@
   (def nfixed (length (vview (ar :params))))
   (def call @[(emit-arity-fn ctx ar)])
   (for i 0 nfixed (array/push call ['in jargs i]))
-  (when (ar :rest) (array/push call ['tuple/slice jargs nfixed]))
+  # empty rest binds to NIL, not () — (f) with [& r] gives r = nil in Clojure
+  (when (ar :rest)
+    (array/push call ['if ['> ['length jargs] nfixed] ['tuple/slice jargs nfixed]]))
   (tuple/slice call))
 
 (defn- emit-loop [ctx node]

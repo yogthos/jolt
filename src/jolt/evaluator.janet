@@ -453,13 +453,27 @@
                      "user.home" (os/getenv "HOME")
                      "java.io.tmpdir" (or (os/getenv "TMPDIR") "/tmp")
                      dflt))
-   "getenv" (fn [&opt k] (if k (os/getenv k) (os/environ)))})
+   "getenv" (fn [&opt k] (if k (os/getenv k) (os/environ)))
+   # the property subset getProperty serves, as an iterable map
+   "getProperties" (fn []
+                     {"os.name" (case (os/which)
+                                  :windows "Windows" :macos "Mac OS X" "Linux")
+                      "line.separator" "\n"
+                      "file.separator" "/"
+                      "user.dir" (os/cwd)
+                      "user.home" (or (os/getenv "HOME") "")
+                      "java.io.tmpdir" (or (os/getenv "TMPDIR") "/tmp")})})
 
 # Long statics: sentinels portable code compares against. jolt numbers are
 # doubles, so these are the f64 approximations.
 (def- long-statics
   {"MAX_VALUE" 9223372036854775807
-   "MIN_VALUE" -9223372036854775808})
+   "MIN_VALUE" -9223372036854775808
+   "parseLong" (fn [s &opt radix]
+                 (def n (scan-number (string/trim (string s)) (or radix 10)))
+                 (if (and n (= n (math/floor n)))
+                   n
+                   (error (string "NumberFormatException: For input string: \"" s "\""))))})
 
 # Pluggable host-class shims (java.time etc. register here at module load):
 #   class-statics: "ClassName" -> {"member" value-or-fn}   (Foo/bar resolution)
@@ -667,6 +681,12 @@
         (do (array/push fixed a) (+= i 1)))))
   {:fixed (tuple/slice (tuple ;fixed)) :rest rest-pat})
 
+(defn- rest-args-val
+  "What a rest param binds to: nil when no args remain (Clojure semantics —
+  (fn [& r]) called with nothing gives r = nil, never an empty seq)."
+  [args i]
+  (when (> (length args) i) (tuple/slice args i)))
+
 (defn- plain-sym? [p] (and (struct? p) (= :symbol (p :jolt/type))))
 
 (defn- require-symbol-params
@@ -850,6 +870,8 @@
 # longer a special-form handler for them. proto/method/type names arrive as
 # STRINGS (the defprotocol/extend-type macros pass (name sym), not the symbol).
 (defn protocol-dispatch-impl [ctx proto-name method-name obj rest-args]
+  # an empty jolt rest arg is NIL (Clojure semantics); janet apply needs a tuple
+  (default rest-args [])
   (def type-tag (if (and (table? obj) (get obj :jolt/deftype))
                   (get obj :jolt/deftype)
                   (if (get obj :jolt/protocol-methods) (get obj :jolt/deftype))))
@@ -1545,7 +1567,7 @@
                      (destructure-bind ctx new-bindings pat (macro-args i))
                      (++ i))
                    (when rest-pat
-                     (destructure-bind ctx new-bindings rest-pat (tuple/slice macro-args i)))
+                     (destructure-bind ctx new-bindings rest-pat (rest-args-val macro-args i)))
                    # Use defining namespace for symbol resolution
                    (def saved-ns (ctx-current-ns ctx))
                    (ctx-set-current-ns ctx defining-ns)
@@ -1646,7 +1668,7 @@
                             (destructure-bind ctx fn-bindings pat (fn-args i))
                             (++ i))
                           (when rest-pat
-                            (destructure-bind ctx fn-bindings rest-pat (tuple/slice fn-args i)))
+                            (destructure-bind ctx fn-bindings rest-pat (rest-args-val fn-args i)))
                           (run-clause fn-bindings))]
                    (if rest-pat
                      (do
@@ -1705,7 +1727,7 @@
                    (destructure-bind ctx fn-bindings pat (fn-args i))
                    (++ i))
                  (when rest-pat
-                   (destructure-bind ctx fn-bindings rest-pat (tuple/slice fn-args i)))
+                   (destructure-bind ctx fn-bindings rest-pat (rest-args-val fn-args i)))
                  (run-body fn-bindings)))
                # recur re-enters here: for a variadic fn it takes n-fixed + 1
                # args, the LAST bound DIRECTLY as the rest seq (Clojure) — going

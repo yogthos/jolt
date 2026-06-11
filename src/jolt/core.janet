@@ -132,6 +132,9 @@
     (buffer? c) (let [a @[]] (each x c (array/push a x)) a)
     # struct map literal (no :jolt/type marker — not a symbol/char) -> entries
     (and (struct? c) (nil? (get c :jolt/type))) (map (fn [k] (tuple k (get c k))) (keys c))
+    # raw host table (System/getenv, os/environ) — also a map: entries
+    (and (table? c) (nil? (get c :jolt/type)) (nil? (get c :jolt/deftype)))
+      (map (fn [k] (tuple k (get c k))) (keys c))
     (lazy-seq? c)
     (do
       (var items @[])
@@ -619,7 +622,8 @@
       (jolt-call f)
       (let [fixed (array/slice args 0 (- n 1))
             t (in args (- n 1))
-            tail (cond (set? t) (phs-seq t) (phm? t) (tuple ;(phm-entries t))
+            tail (cond (nil? t) []   # (apply f x nil) == (f x), as in Clojure
+                       (set? t) (phs-seq t) (phm? t) (tuple ;(phm-entries t))
                        (realize-for-iteration t))]
         (jolt-call f ;fixed ;tail)))))
 
@@ -758,6 +762,10 @@
     (struct? coll) (if (= 0 (length coll)) nil (tuple ;(map (fn [k] (tuple k (get coll k))) (keys coll))))
     (array? coll) (tuple ;coll)
     (and (table? coll) (get coll :jolt/deftype)) coll
+    # raw host table (System/getenv result) seqs like a map: kv entries
+    (and (table? coll) (nil? (get coll :jolt/type)))
+      (if (= 0 (length coll)) nil
+        (tuple ;(map (fn [k] (tuple k (get coll k))) (keys coll))))
     # scalars/functions aren't seqable
     (error (string "seq not supported on " (type coll)))))
 
@@ -978,7 +986,10 @@
           # Other concrete seqables (set/map/sorted coll/string/buffer): coerce
           # to a tuple seq via core-seq, then recurse. (lazy/indexed above.)
           (if (or (set? c) (phm? c) (buffer? c) (string? c) (core-sorted? c)
-                  (and (struct? c) (nil? (get c :jolt/type))))
+                  (and (struct? c) (nil? (get c :jolt/type)))
+                  # raw host table (System/getenv) — a map: kv entries
+                  (and (table? c) (nil? (get c :jolt/type))
+                       (nil? (get c :jolt/deftype))))
             (coll->cells (core-seq c))
             nil)))))))))
 

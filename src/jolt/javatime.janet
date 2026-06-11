@@ -177,7 +177,34 @@
     (and (struct? x) (= :jolt/char (get x :jolt/type))) (string/from-bytes (x :ch))
     (string x)))
 
+# Read one unit from any reader-ish value: our shims dispatch through their
+# tagged "read"; a janet core/file reads one byte. -1 at EOF.
+(defn- read-unit [r]
+  (cond
+    (and (or (table? r) (struct? r)) (get r :jolt/type))
+      (((get tagged-methods (r :jolt/type)) "read") r)
+    (= :core/file (type r))
+      (let [b (file/read r 1)] (if (or (nil? b) (= 0 (length b))) -1 (b 0)))
+    (error (string "not a reader: " (type r)))))
+
+(defn- pushback-reader [rdr]
+  # java.io.PushbackReader: read delegates to the wrapped reader unless
+  # something was unread; unread takes a char (or char code) and pushes it back
+  (def self @{:jolt/type :jolt/pushback-reader :rdr rdr :pushed @[]
+              :close (fn [] nil)})
+  self)
+
 (defn install-io! []
+  (register-tagged-methods! :jolt/pushback-reader
+    @{"read" (fn [self]
+               (if (> (length (self :pushed)) 0)
+                 (array/pop (self :pushed))
+                 (read-unit (self :rdr))))
+      "unread" (fn [self ch]
+                 (array/push (self :pushed)
+                             (if (number? ch) ch (get ch :ch)))
+                 nil)
+      "close" (fn [self] nil)})
   (register-tagged-methods! :jolt/jio-string-reader
     @{"read" (fn [self]
                (if (>= (self :pos) (length (self :s)))
@@ -202,6 +229,9 @@
       "charAt" (fn [self i] {:jolt/type :jolt/char :ch ((self :buf) i)})})
   (each nm ["File" "java.io.File"]
     (register-class-statics! nm @{"separator" "/" "separatorChar" {:jolt/type :jolt/char :ch 47}}))
+  (register-class-statics! "Boolean"
+    @{"parseBoolean" (fn [s] (= "true" (string/ascii-lower (string s))))
+      "TRUE" true "FALSE" false})
   (register-class-statics! "Class"
     @{"forName" (fn [nm] @{:jolt/type :jolt/class :name nm})})
   (each nm ["StringReader" "java.io.StringReader"]
@@ -230,6 +260,13 @@
                 (string/find "/" (string/slice s 0 colon)))
           (error (string "MalformedURLException: no protocol: " s))
           @{:jolt/type :jolt/url :spec s}))))
+  (each nm ["PushbackReader" "java.io.PushbackReader"]
+    (register-class-ctor! nm (fn [rdr &opt size] (pushback-reader rdr))))
+  (each nm ["BigInteger" "java.math.BigInteger"]
+    (register-class-ctor! nm
+      (fn [v]
+        (or (scan-number (string/trim (string v)))
+            (error (string "NumberFormatException: For input string: \"" v "\""))))))
   (each nm ["Locale" "java.util.Locale"]
     (register-class-ctor! nm (fn [id &opt _country] @{:jolt/type :jolt/locale :id (string id)}))))
 
