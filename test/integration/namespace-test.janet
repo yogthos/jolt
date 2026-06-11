@@ -53,6 +53,10 @@
 
 (print "5: require form (standalone)...")
 (let [ctx (fresh-ctx)]
+  # Populate other.lib first — require of an unlocatable ns now throws
+  # (Clojure's FileNotFoundException), see namespaces-spec.
+  (let [other-ns (ctx-find-ns ctx "other.lib")]
+    (ns-intern other-ns "f" (fn [x] x)))
   (eval-form ctx @{} (parse-string "(require '[other.lib :as o])"))
   (let [ns (ctx-find-ns ctx "user")
         aliased (ns-alias-lookup ns "o")]

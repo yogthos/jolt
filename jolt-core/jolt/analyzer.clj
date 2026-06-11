@@ -140,11 +140,19 @@
                     (const nil)))
     "do" (analyze-seq ctx (rest items) env)
     "throw" (throw-node (analyze ctx (nth items 1) env))
-    "def" (let [name-sym (nth items 1)
-                nm (form-sym-name name-sym)
-                cur (compile-ns ctx)]
-            (host-intern! ctx cur nm)
-            (def-node cur nm (analyze ctx (nth items 2) env) (form-sym-meta name-sym)))
+    "def" (let [name-sym (nth items 1)]
+            ;; ^{:map} metadata reads as (def (with-meta name m) v) — the
+            ;; metadata is a runtime expression, so the interpreter evaluates
+            ;; the whole def (it unwraps the name and merges the meta).
+            (when-not (form-sym? name-sym)
+              (uncompilable "def name with map metadata"))
+            ;; (def name) with no init (declare) just interns — interpreter's job
+            (when (< (count items) 3)
+              (uncompilable "def with no init"))
+            (let [nm (form-sym-name name-sym)
+                  cur (compile-ns ctx)]
+              (host-intern! ctx cur nm)
+              (def-node cur nm (analyze ctx (nth items 2) env) (form-sym-meta name-sym))))
     "let*" (let [bvec (vec (form-vec-items (nth items 1)))
                  r (analyze-bindings ctx bvec env)]
              (let-node (first r) (analyze-seq ctx (drop 2 items) (second r))))

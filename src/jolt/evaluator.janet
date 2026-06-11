@@ -340,10 +340,22 @@
   for ns-form-less stdlib files, changes it). No-op for already-loaded namespaces."
   [ctx ns-name]
   (let [ns (ctx-find-ns ctx ns-name)]
-    (when (and (= 0 (length (ns :mappings))) (not= ns-name "clojure.core"))
+    (when (and (= 0 (length (ns :mappings)))
+               (not (get (get (ctx :env) :loaded-namespaces @{}) ns-name))
+               (not= ns-name "clojure.core"))
       (let [path (find-ns-file ctx ns-name)
             embedded (get (get (ctx :env) :embedded-sources @{}) ns-name)
             stdlib? (not (nil? embedded))]
+        # Clojure throws FileNotFoundException here; succeeding silently leaves
+        # an empty namespace behind and defers the failure to the first
+        # unresolved symbol, far from the actual cause (a typo, a missing
+        # JOLT_PATH root). Best-effort loaders (the SCI bootstrap, which loads
+        # clj-targeted sources whose requires can't all exist on this host)
+        # opt out via :lenient-require? on the env.
+        (when (and (nil? path) (nil? embedded)
+                   (not (get (ctx :env) :lenient-require?)))
+          (error (string "Could not locate " ns-name
+                         " on the context's source paths (JOLT_PATH / :paths)")))
         (when (or path embedded)
           (let [saved (ctx-current-ns ctx)]
             # Stdlib files have no `ns` form, so switch into the target ns first
@@ -943,6 +955,13 @@
   [ctx sym]
   (def ns-name (if (and (struct? sym) (= :symbol (sym :jolt/type))) (sym :name) (string sym)))
   (def the-ns-obj (ctx-find-ns ctx ns-name))
+  # An ns entered in-session counts as loaded (Clojure's ns macro commutes the
+  # name into *loaded-libs*), so a later require/use of it must not try to load
+  # a file — see maybe-require-ns. Namespace objects are immutable structs, so
+  # the set lives on the env.
+  (def loaded (or (get (ctx :env) :loaded-namespaces)
+                  (let [t @{}] (put (ctx :env) :loaded-namespaces t) t)))
+  (put loaded ns-name true)
   (ctx-set-current-ns ctx ns-name)
   the-ns-obj)
 
@@ -1522,30 +1541,40 @@
                 ns-name (ctx-current-ns ctx)
                 ns (ctx-find-ns ctx ns-name)
                 # Create var first (unbound) so self-referencing defs resolve
-                v (ns-intern ns (name-sym :name))
-                # (def name docstring value): docstring is form 2, value form 3
-                has-doc (and (> (length form) 3) (string? (in form 2)))
-                val-form (in form (if has-doc 3 2))
-                val (eval-form ctx bindings val-form)]
-            (bind-root v val)
-            # Staged bootstrap (jolt-4j3): pre/at-kernel overlay defns load
-            # interpreted; stash the fn source so backend/recompile-defns! can
-            # compile them once the analyzer is alive — the defn analog of
-            # :macro-src. Only set while api/load-core-overlay! loads the early
-            # tiers (the flag scopes it away from user code).
-            (when (and (get (ctx :env) :stash-defn-src?)
-                       (function? val)
-                       (array? val-form) (> (length val-form) 0)
-                       (or (sym-name? (first val-form) "fn")
-                           (sym-name? (first val-form) "fn*")))
-              (put v :defn-src val-form))
-            (let [extra (if has-doc (merge name-meta {:doc (in form 2)}) name-meta)]
-              (when (not (empty? extra))
-                (put v :meta (merge (or (get v :meta) {}) extra))))
-            (when dynamic?
-              (put v :dynamic true))
-            # def returns the var (Clojure semantics); REPL prints #'ns/name
-            v)
+                v (ns-intern ns (name-sym :name))]
+            # (def name) with no init interns the var and leaves any existing
+            # root binding alone (Clojure semantics — this is what declare
+            # expands to, so compiled forward refs bind to the var instead of
+            # falling through to a like-named host builtin).
+            (if (= 2 (length form))
+              (do
+                (when (not (empty? name-meta))
+                  (put v :meta (merge (or (get v :meta) {}) name-meta)))
+                (when dynamic? (put v :dynamic true))
+                v)
+              (let [# (def name docstring value): docstring form 2, value form 3
+                    has-doc (and (> (length form) 3) (string? (in form 2)))
+                    val-form (in form (if has-doc 3 2))
+                    val (eval-form ctx bindings val-form)]
+                (bind-root v val)
+                # Staged bootstrap (jolt-4j3): pre/at-kernel overlay defns load
+                # interpreted; stash the fn source so backend/recompile-defns! can
+                # compile them once the analyzer is alive — the defn analog of
+                # :macro-src. Only set while api/load-core-overlay! loads the early
+                # tiers (the flag scopes it away from user code).
+                (when (and (get (ctx :env) :stash-defn-src?)
+                           (function? val)
+                           (array? val-form) (> (length val-form) 0)
+                           (or (sym-name? (first val-form) "fn")
+                               (sym-name? (first val-form) "fn*")))
+                  (put v :defn-src val-form))
+                (let [extra (if has-doc (merge name-meta {:doc (in form 2)}) name-meta)]
+                  (when (not (empty? extra))
+                    (put v :meta (merge (or (get v :meta) {}) extra))))
+                (when dynamic?
+                  (put v :dynamic true))
+                # def returns the var (Clojure semantics); REPL prints #'ns/name
+                v)))
     "defmacro" (let [name-sym (in form 1)
                      rest-form (tuple/slice form 2)
                      # optional docstring

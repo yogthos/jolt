@@ -34,7 +34,14 @@
   ["require clojure.set" "#{1 2 3}" "(do (require '[clojure.set :as set]) (set/union #{1 2} #{3}))"]
   ["require clojure.walk" "{:a 2}" "(do (require '[clojure.walk :as w]) (w/postwalk (fn [x] (if (number? x) (inc x) x)) {:a 1}))"]
   ["walk keywordize-keys" "{:a 1}" "(do (require '[clojure.walk :as w]) (w/keywordize-keys {\"a\" 1}))"]
-  ["walk stringify-keys" "true"    "(do (require '[clojure.walk :as w]) (= {\"a\" 1} (w/stringify-keys {:a 1})))"])
+  ["walk stringify-keys" "true"    "(do (require '[clojure.walk :as w]) (= {\"a\" 1} (w/stringify-keys {:a 1})))"]
+  # Clojure throws FileNotFoundException; silently succeeding masks typos and
+  # missing roots until the first unresolved-symbol error far from the cause.
+  ["require missing lib throws" :throws "(require '[no.such.lib])"]
+  ["use missing lib throws"     :throws "(use 'no.such.lib)"]
+  # …but an ns created in-session is in *loaded-libs* (the ns macro puts it
+  # there), so require/use of it must NOT hit the loader.
+  ["require of in-session ns ok" "1" "(do (ns made.here) (def x 1) (require '[made.here]) made.here/x)"])
 
 (defspec "namespaces / alias, ns-unalias, ns-publics"
   ["alias + use"        "\"1,2\"" "(do (require (quote clojure.string)) (alias (quote st) (quote clojure.string)) (st/join \",\" [1 2]))"]

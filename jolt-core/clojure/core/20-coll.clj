@@ -83,6 +83,9 @@
 ;; Jolt has no ratio or bigdecimal types, so these are constants / reduce to int?.
 (defn ratio? [x] false)
 (defn decimal? [x] false)
+;; No first-class Class objects either: class names are symbols the evaluator
+;; handles in instance?/new positions, never values — so nothing is a class.
+(defn class? [x] false)
 (defn rational? [x] (int? x))
 (defn nat-int? [x] (and (int? x) (>= x 0)))
 (defn neg-int? [x] (and (int? x) (neg? x)))
