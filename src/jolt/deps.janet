@@ -30,11 +30,17 @@
   # spec is a deps.edn dep value: {:git/url ... :git/sha/:git/tag ...}
   (def resolve-bundle (jpm-fn "jpm/pm" 'resolve-bundle))
   (def download-bundle (jpm-fn "jpm/pm" 'download-bundle))
-  (def b (resolve-bundle {:url (get spec :git/url)
-                          :sha (get spec :git/sha)
-                          :tag (get spec :git/tag)
-                          :shallow false}))
-  (download-bundle (b :url) (b :type) (b :tag) (b :shallow)))
+  # Run git silenced (jpm's shell honors :silent): its checkout chatter
+  # ("HEAD is now at …") otherwise lands on STDOUT and corrupts the
+  # documented `JOLT_PATH=$(jolt-deps path)` capture. Progress goes to stderr.
+  (eprintf "jolt-deps: fetching %s @ %s"
+           (get spec :git/url) (or (get spec :git/sha) (get spec :git/tag) "HEAD"))
+  (with-dyns [:silent true]
+    (def b (resolve-bundle {:url (get spec :git/url)
+                            :sha (get spec :git/sha)
+                            :tag (get spec :git/tag)
+                            :shallow false}))
+    (download-bundle (b :url) (b :type) (b :tag) (b :shallow))))
 
 (defn- src-roots
   "Source dirs of a project/dep at `dir`: its deps.edn :paths joined to dir
@@ -210,14 +216,16 @@
     (os/mkdir ".cpcache")
     (def cache-file ".cpcache/jolt-deps.jdn")
     (def user-path (string (config-dir) "/deps.edn"))
-    (def h (hash [(slurp deps-edn-path)
-                  (when (os/stat user-path) (slurp user-path))
-                  (string/format "%j" (map string (or aliases [])))]))
+    # The raw key material, not (hash …): janet's hash is seeded per process,
+    # so a hashed key never matches across invocations and the cache never hit.
+    (def key [(slurp deps-edn-path)
+              (or (when (os/stat user-path) (slurp user-path)) "")
+              (string/format "%j" (map string (or aliases [])))])
     (def cached (when (os/stat cache-file) (try (parse (slurp cache-file)) ([_] nil))))
-    (if (and cached (= h (get cached :hash)))
+    (if (and cached (deep= key (get cached :key)))
       (get cached :roots)
       (let [roots (resolve-deps deps-edn-path tree aliases)]
-        (spit cache-file (string/format "%j" {:hash h :roots roots}))
+        (spit cache-file (string/format "%j" {:key key :roots roots}))
         roots))))
 
 # --- :tasks (the honest subset of babashka's) ----------------------------------
