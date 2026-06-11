@@ -5,40 +5,63 @@
 # api/init). This tool does the resolution (git + :local deps, via jpm's fetch
 # cache) and either prints the roots or launches jolt with JOLT_PATH set.
 #
-#   jolt-deps path            print the resolved roots (':'-joined), e.g. for
-#                             JOLT_PATH=$(jolt-deps path) jolt file.clj
-#   jolt-deps run FILE [args] resolve, then run `jolt FILE args` with JOLT_PATH set
-#   jolt-deps repl            resolve, then start a jolt REPL with JOLT_PATH set
-#   jolt-deps -e EXPR [args]  resolve, then `jolt -e EXPR ...` with JOLT_PATH set
-#   jolt-deps uberscript OUT -m NS
-#                             resolve, then bundle NS + its deps into one .clj
+#   jolt-deps [-A:a:b] path        print the resolved roots (':'-joined), e.g.
+#                                  JOLT_PATH=$(jolt-deps path) jolt file.clj
+#   jolt-deps [-A:a:b] run FILE [args]
+#                                  resolve, then `jolt FILE args` with JOLT_PATH set
+#   jolt-deps [-A:a:b] repl        resolve, then a jolt REPL with JOLT_PATH set
+#   jolt-deps [-A:a:b] -e EXPR     resolve, then `jolt -e EXPR ...`
+#   jolt-deps -M:a[:b] [args]      resolve with the aliases, then run jolt with
+#                                  the last alias's :main-opts ++ args
+#   jolt-deps uberscript OUT -m NS resolve, then bundle NS + deps into one .clj
 #
+# -A:dev:test selects aliases (tools.deps style): their :extra-paths and
+# :extra-deps join the resolution. A user-level deps.edn ($JOLT_CONFIG, else
+# $XDG_CONFIG_HOME/jolt, else ~/.jolt) merges under the project's.
 # The jolt binary is found via $JOLT_BIN, else `jolt` on PATH.
 
 (import ./deps :as deps)
 
-(defn- roots []
-  (if (os/stat "deps.edn") (deps/resolve-deps-cached "deps.edn") @[]))
+(defn- parse-alias-flag
+  "\"-A:dev:test\" -> [:dev :test] (also accepts -M:...)."
+  [arg]
+  (map keyword (filter |(not= "" $) (string/split ":" (string/slice arg 2)))))
 
-(defn- exec-jolt [extra-args]
+(defn- roots [aliases]
+  (if (os/stat "deps.edn") (deps/resolve-deps-cached "deps.edn" nil aliases) @[]))
+
+(defn- exec-jolt [aliases extra-args]
   # Set JOLT_PATH in our own env and let the child inherit it (os/execute's env
   # arg isn't honored here; inheriting is reliable).
-  (def rs (string/join (roots) ":"))
+  (def rs (string/join (roots aliases) ":"))
   (def existing (os/getenv "JOLT_PATH"))
   (os/setenv "JOLT_PATH" (if (and existing (> (length existing) 0)) (string rs ":" existing) rs))
   (os/execute [(os/getenv "JOLT_BIN" "jolt") ;extra-args] :p))
 
 (defn- usage []
-  (print "usage: jolt-deps [path | run FILE [args] | repl | -e EXPR [args]]"))
+  (print "usage: jolt-deps [-A:alias[:alias]] [path | run FILE [args] | repl | -e EXPR [args]]")
+  (print "       jolt-deps -M:alias[:alias] [args]   (runs the alias :main-opts)")
+  (print "       jolt-deps uberscript OUT -m NS"))
 
 (defn main [&]
-  (def argv (tuple/slice (or (dyn :args) @[]) 1))
+  (var argv (tuple/slice (or (dyn :args) @[]) 1))
+  (var aliases nil)
+  # leading -A:... selects aliases for whatever command follows
+  (while (string/has-prefix? "-A" (or (get argv 0) ""))
+    (set aliases (array/concat (or aliases @[]) (parse-alias-flag (get argv 0))))
+    (set argv (tuple/slice argv 1)))
   (def cmd (get argv 0))
   (cond
     (or (nil? cmd) (= cmd "help") (= cmd "-h") (= cmd "--help")) (usage)
-    (= cmd "path") (print (string/join (roots) ":"))
-    (= cmd "run")  (os/exit (exec-jolt (tuple/slice argv 1)))
-    (= cmd "repl") (os/exit (exec-jolt []))
-    (= cmd "-e")   (os/exit (exec-jolt argv))
-    (= cmd "uberscript") (os/exit (exec-jolt argv))
+    (string/has-prefix? "-M" cmd)
+      (let [als (array/concat (or aliases @[]) (parse-alias-flag cmd))
+            mo (or (deps/alias-main-opts "deps.edn" als)
+                   (do (eprint "jolt-deps: no :main-opts in aliases " (string/format "%j" (map string als)))
+                       (os/exit 1)))]
+        (os/exit (exec-jolt als [;mo ;(tuple/slice argv 1)])))
+    (= cmd "path") (print (string/join (roots aliases) ":"))
+    (= cmd "run")  (os/exit (exec-jolt aliases (tuple/slice argv 1)))
+    (= cmd "repl") (os/exit (exec-jolt aliases []))
+    (= cmd "-e")   (os/exit (exec-jolt aliases argv))
+    (= cmd "uberscript") (os/exit (exec-jolt aliases argv))
     (do (eprint "jolt-deps: unknown command " cmd) (usage) (os/exit 1))))
