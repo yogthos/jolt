@@ -58,6 +58,35 @@
   (each m [a b] (when (dictionary? m) (eachp [k v] m (put out k v))))
   out)
 
+# Reader symbols carry position metadata, so any map keyed by SYMBOLS (deps
+# libs, task names) must be re-keyed by name before merging or deduping.
+(defn- sym-name [x]
+  (if (and (dictionary? x) (get x :name))
+    (if-let [ns (get x :ns)]
+      (string ns "/" (get x :name))
+      (get x :name))
+    (string x)))
+
+(defn- merge-by-name [a b]  # union of symbol-keyed dictionaries, b wins
+  (def out @{})
+  (each m [a b] (when (dictionary? m) (eachp [k v] m (put out (sym-name k) v))))
+  out)
+
+(defn- mkdirs [p]
+  (def abs (string/has-prefix? "/" p))
+  (var acc nil)
+  (each seg (filter |(not= "" $) (string/split "/" p))
+    (set acc (cond (nil? acc) (if abs (string "/" seg) seg) (string acc "/" seg)))
+    (unless (os/stat acc) (os/mkdir acc))))
+
+(defn- default-tree
+  "Where git clones land when no tree is given: $JOLT_GITLIBS, else
+  (config-dir)/gitlibs — a global, sha-immutable cache shared across projects
+  (the tools.gitlibs ~/.gitlibs model), not a per-project ./jpm_tree."
+  []
+  (def g (os/getenv "JOLT_GITLIBS"))
+  (if (and g (> (length g) 0)) g (string (config-dir) "/gitlibs")))
+
 (defn load-config
   "The project deps.edn merged over the user-level one (config-dir)/deps.edn.
   tools.deps merge semantics: scalar keys and :paths replace (project wins),
@@ -67,12 +96,16 @@
   [deps-edn-path]
   (def proj (read-edn deps-edn-path))
   (def user (read-edn (string (config-dir) "/deps.edn")))
-  (cond
-    (nil? user) proj
-    (nil? proj) user
-    (let [out (merge-per-key user proj)]
-      (put out :deps (merge-per-key (get user :deps) (get proj :deps)))
-      (put out :aliases (merge-per-key (get user :aliases) (get proj :aliases)))
+  (if (and (nil? user) (nil? proj))
+    nil
+    # normalize even when only one file exists: :deps/:tasks come back keyed
+    # by NAME (reader symbols carry position metadata and never compare equal)
+    (let [u (when (dictionary? user) user)
+          p (when (dictionary? proj) proj)
+          out (merge-per-key u p)]
+      (put out :deps (merge-by-name (and u (get u :deps)) (and p (get p :deps))))
+      (put out :aliases (merge-per-key (and u (get u :aliases)) (and p (get p :aliases))))
+      (put out :tasks (merge-by-name (and u (get u :tasks)) (and p (get p :tasks))))
       out)))
 
 (defn combine-aliases
@@ -107,22 +140,14 @@
   `aliases` (keywords) pull :extra-paths/:extra-deps from the merged config's
   :aliases. The user-level deps.edn (see load-config) merges under the project."
   [deps-edn-path &opt tree aliases]
-  (default tree (string (os/cwd) "/jpm_tree"))
-  (os/mkdir tree)
+  (default tree (default-tree))
+  (mkdirs tree)
   (ensure-jpm-config tree)
   (def edn (load-config deps-edn-path))
   (def extra (combine-aliases edn aliases))
   (def roots @[])
   (def seen @{})   # lib name -> chosen coordinate (for conflict reporting)
   (defn add-root [r] (unless (index-of r roots) (array/push roots r)))
-  # Reader symbols carry position metadata, so dedup/conflict keys must use the
-  # NAME, never (string lib) — two my/b symbols from different files differ.
-  (defn lib-name [lib]
-    (if (and (dictionary? lib) (get lib :name))
-      (if-let [ns (get lib :ns)]
-        (string ns "/" (get lib :name))
-        (get lib :name))
-      (string lib)))
   (defn coord-str [spec]
     (cond
       (and (dictionary? spec) (get spec :local/root))
@@ -137,7 +162,7 @@
          (deep= (get a :git/tag) (get b :git/tag))))
   (def queue @[])
   (defn discover [lib spec base-dir]
-    (def k (lib-name lib))
+    (def k (sym-name lib))
     (if-let [prev (get seen k)]
       (unless (coord= prev spec)
         (eprintf "WARNING: %s: conflicting coordinates — using %s, ignoring %s"
@@ -158,12 +183,12 @@
   # the project's own paths (+ alias extra paths) lead the roots
   (each r (src-roots (os/cwd) edn) (add-root r))
   (each pp (extra :extra-paths) (add-root (string (os/cwd) "/" pp)))
-  # breadth-first: every top-level dep (incl. alias :extra-deps) registers
-  # before any transitive dep — so a top-level coordinate always wins,
-  # matching tools.deps
-  (eachp [lib spec] (or (and (dictionary? edn) (get edn :deps)) {})
-    (discover lib spec (os/cwd)))
+  # breadth-first: every top-level dep registers before any transitive dep —
+  # so a top-level coordinate always wins, matching tools.deps. Alias
+  # :extra-deps go first: a selected alias's pin beats the project's.
   (eachp [lib spec] (extra :extra-deps)
+    (discover lib spec (os/cwd)))
+  (eachp [lib spec] (or (and (dictionary? edn) (get edn :deps)) {})
     (discover lib spec (os/cwd)))
   (while (> (length queue) 0)
     (def [dep-edn dir] (get queue 0))
@@ -178,10 +203,12 @@
   of the project deps.edn + the user deps.edn + the selected aliases, so an
   unchanged config resolves without re-fetching."
   [deps-edn-path &opt tree aliases]
-  (default tree (string (os/cwd) "/jpm_tree"))
+  (default tree (default-tree))
   (when (os/stat deps-edn-path)
-    (os/mkdir tree)
-    (def cache-file (string tree "/.jolt-deps-roots.jdn"))
+    # the roots depend on the PROJECT (config + aliases), so their cache is
+    # project-local like tools.deps' .cpcache; the clone tree stays global
+    (os/mkdir ".cpcache")
+    (def cache-file ".cpcache/jolt-deps.jdn")
     (def user-path (string (config-dir) "/deps.edn"))
     (def h (hash [(slurp deps-edn-path)
                   (when (os/stat user-path) (slurp user-path))
@@ -192,3 +219,31 @@
       (let [roots (resolve-deps deps-edn-path tree aliases)]
         (spit cache-file (string/format "%j" {:hash h :roots roots}))
         roots))))
+
+# --- :tasks (the honest subset of babashka's) ----------------------------------
+# A STRING task is a shell command. A MAP task carries :main-opts (jolt args —
+# `-e "(...)"` covers expression tasks) and an optional :doc. Babashka-style
+# bare-expression tasks aren't supported: the reader hands us parsed data, and
+# round-tripping it back to source isn't worth the fragility.
+
+(defn tasks
+  "Sorted [name doc] pairs from the merged user+project :tasks."
+  [deps-edn-path]
+  (def m (get (load-config deps-edn-path) :tasks))
+  (def names (sort (keys (or m @{}))))
+  (map (fn [n]
+         (def v (get m n))
+         [n (when (dictionary? v) (get v :doc))])
+       names))
+
+(defn task-spec
+  "What running task `name` means: {:type :shell :cmd s} or
+  {:type :jolt :argv [...]}; nil when undefined."
+  [deps-edn-path name]
+  (def v (get (or (get (load-config deps-edn-path) :tasks) @{}) name))
+  (cond
+    (nil? v) nil
+    (or (string? v) (buffer? v)) {:type :shell :cmd (string v)}
+    (and (dictionary? v) (get v :main-opts))
+      {:type :jolt :argv (tuple ;(map string (get v :main-opts)))}
+    (error (string "task " name ": use a shell string or {:main-opts [...]}"))))

@@ -14,6 +14,10 @@
 #   jolt-deps -M:a[:b] [args]      resolve with the aliases, then run jolt with
 #                                  the last alias's :main-opts ++ args
 #   jolt-deps uberscript OUT -m NS resolve, then bundle NS + deps into one .clj
+#   jolt-deps tasks                list :tasks (merged user+project deps.edn)
+#   jolt-deps task NAME [args]     run a task: a string task is a shell command
+#                                  (args appended); a {:main-opts [...]} task
+#                                  runs jolt with those args ++ extra args
 #
 # -A:dev:test selects aliases (tools.deps style): their :extra-paths and
 # :extra-deps join the resolution. A user-level deps.edn ($JOLT_CONFIG, else
@@ -60,6 +64,18 @@
                        (os/exit 1)))]
         (os/exit (exec-jolt als [;mo ;(tuple/slice argv 1)])))
     (= cmd "path") (print (string/join (roots aliases) ":"))
+    (= cmd "tasks")
+      (each row (deps/tasks "deps.edn")
+        (print (row 0) (if (row 1) (string "\t" (row 1)) "")))
+    (= cmd "task")
+      (let [name (get argv 1)
+            spec (when name (deps/task-spec "deps.edn" name))]
+        (cond
+          (nil? name) (do (eprint "jolt-deps: task needs a name") (os/exit 1))
+          (nil? spec) (do (eprint "jolt-deps: no such task: " name) (os/exit 1))
+          (= :shell (spec :type))
+            (os/exit (os/execute ["sh" "-c" (string/join [(spec :cmd) ;(tuple/slice argv 2)] " ")] :p))
+          (os/exit (exec-jolt aliases [;(spec :argv) ;(tuple/slice argv 2)]))))
     (= cmd "run")  (os/exit (exec-jolt aliases (tuple/slice argv 1)))
     (= cmd "repl") (os/exit (exec-jolt aliases []))
     (= cmd "-e")   (os/exit (exec-jolt aliases argv))

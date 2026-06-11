@@ -42,11 +42,29 @@ syntax overlap for the `:deps`/`:paths` subset), then walks `:deps`:
 - `:mvn/*` and anything else → ignored.
 
 Each resolved dependency contributes its own `:paths` (default `["src"]`) as
-source roots, and we recurse into its `deps.edn` for transitive deps. The result
+source roots; the walk is **breadth-first** so every top-level coordinate
+registers before any transitive one — a top-level pin always wins, matching
+tools.deps, and a coordinate conflict warns on stderr naming both. The result
 is a de-duplicated, ordered list of directories. `resolve-deps-cached` memoizes
-that list in the tree keyed on a hash of `deps.edn`, so an unchanged file doesn't
-re-fetch. jpm is loaded lazily (`require`, not `import`) so it's pulled in only
-when resolving — never embedded in a built binary.
+that list in the project-local `.cpcache/jolt-deps.jdn`, keyed on a hash of the
+project `deps.edn` + the user-level `deps.edn` + the selected aliases. jpm is
+loaded lazily (`require`, not `import`) so it's pulled in only when resolving —
+never embedded in a built binary.
+
+Three tools.deps features are mirrored in reduced form. **Aliases**: `:aliases`
+entries supply `:extra-paths`/`:extra-deps` (accumulate across the aliases
+selected with `-A:a:b`) and `:main-opts` (last-wins, run with `-M:alias`).
+**User config**: a `deps.edn` under `$JOLT_CONFIG` (else
+`$XDG_CONFIG_HOME/jolt`, else `~/.jolt`) merges beneath the project file,
+per key, project wins. **Tasks**: the honest subset of babashka's — a string
+task is a shell command, a map task is `{:main-opts […] :doc "…"}`; bare
+Clojure expressions aren't supported because the reader hands back parsed
+data, and round-tripping it to source isn't worth the fragility.
+
+Clones default to a global sha-immutable cache (`$JOLT_GITLIBS`, else
+`<config-dir>/gitlibs`) shared across projects, the `tools.gitlibs`
+`~/.gitlibs` model; per-project trees remain available by passing `tree`
+explicitly.
 
 The loader (`evaluator.janet/find-ns-file`) resolves a namespace by searching the
 context's `:source-paths` in order (the stdlib `src/jolt` first), trying `<ns>.clj`
