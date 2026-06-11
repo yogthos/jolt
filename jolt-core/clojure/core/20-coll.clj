@@ -1041,3 +1041,39 @@
       (into [] coll))))
 
 (defn ->Eduction [xform coll] (into [] xform coll))
+
+;; --- JVM-shape stubs and trivial shells (seed-shrink batch 2) --------------
+;; Pure compositions or documented jolt stubs; the host keeps nothing.
+(defn enumeration-seq [e] (seq e))
+(defn iterator-seq [i] (seq i))
+
+;; jolt is single-threaded: a promise is an atom, deref never blocks
+;; ((deref undelivered) is nil rather than a hang).
+(defn promise [] (atom nil))
+(defn deliver [p v] (reset! p v) p)
+
+(defn bean [x] (if (map? x) x {}))
+
+(defn uri? [x] false)
+
+;; An EVALUATED set of quoted symbols — a quoted set literal ('#{if ...})
+;; stays an unevaluated reader form on jolt and contains? can't see into it.
+(def ^:private special-syms
+  #{'if 'do 'let* 'fn* 'quote 'var 'def 'loop* 'recur 'throw 'try 'catch
+    'finally 'new 'set! '. 'monitor-enter 'monitor-exit})
+
+(defn special-symbol? [s] (contains? special-syms s))
+
+;; Printer hooks are inert until print-method is a real multimethod (jolt-g1r).
+(defn print-method [x writer] nil)
+(defn print-dup [x writer] nil)
+
+;; JVM proxies don't exist on a Janet host: the read-only surface is inert,
+;; the constructive surface throws (matching the prior seed stubs).
+(defn proxy-mappings [p] {})
+(defn proxy-call-with-super [f p meth] (f))
+(defn init-proxy [p mappings] p)
+(defn update-proxy [p mappings] p)
+(defn proxy-super [& args] (throw "proxy-super: JVM proxies are not supported in Jolt"))
+(defn construct-proxy [c & args] (throw "construct-proxy: not supported in Jolt"))
+(defn get-proxy-class [& interfaces] (throw "get-proxy-class: not supported in Jolt"))
