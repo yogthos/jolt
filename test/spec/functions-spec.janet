@@ -181,3 +181,16 @@
    "((fn f [acc & xs] (if (seq xs) (recur acc (rest xs)) :empty)) 0 1)"]
   ["fixed-arity recur untouched" "10"
    "((fn f [n acc] (if (pos? n) (recur (dec n) (+ acc 2)) acc)) 5 0)"])
+
+# An EMPTY rest arg binds nil, never () — Clojure semantics. (f) with [& r]
+# giving a truthy () sent yogthos/config's (or (.exists f) required) down the
+# wrong branch and broke its load.
+(defspec "functions / empty rest arg is nil"
+  ["no args"            ":nil"  "((fn [& r] (if r :truthy :nil)))"]
+  ["after fixed"        ":nil"  "((fn [a & r] (if r :truthy :nil)) 1)"]
+  ["via apply"          ":nil"  "(apply (fn [& r] (if r :truthy :nil)) [])"]
+  ["defn no args"       ":nil"  "(do (defn er-f [& r] (if r :truthy :nil)) (er-f))"]
+  ["non-empty unchanged" "'(1 2)" "((fn [& r] r) 1 2)"]
+  ["one extra"          "'(2)"   "((fn [a & r] r) 1 2)"]
+  ["rest destructure with no args" ":nil"
+   "((fn [& [a]] (if a :truthy :nil)))"])

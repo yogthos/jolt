@@ -50,8 +50,20 @@
   ([s] (read-edn {} s))
   ([opts s] (read-edn opts s)))
 
-(defn read
-  "Reads the next line from reader and parses one EDN object from it."
+(defn- drain-reader
+  "All remaining content of a reader as a string. Shim readers (StringReader,
+  PushbackReader, io/reader results) expose char-wise .read; a raw janet file
+  handle is read whole."
   [reader]
-  (let [line ((get (dyn :current-env) (symbol "file/read")) reader :line)]
-    (when line (read-string line))))
+  (if (= :core/file (janet/type reader))
+    (janet.file/read reader :all)
+    (loop [acc (transient []) c (.read reader)]
+      (if (== -1 c)
+        (apply str (map char (persistent! acc)))
+        (recur (conj! acc c) (.read reader))))))
+
+(defn read
+  "Reads one EDN object from reader (a PushbackReader or any jolt reader).
+  Returns the :eof option value (default nil) at end of input."
+  ([reader] (read {} reader))
+  ([opts reader] (read-edn opts (drain-reader reader))))

@@ -109,3 +109,34 @@
    "(with-open [r (StringReader. \"a\")] (.read r))"]
   ["vector :import shares deftype ctor" "\"hi!\""
    "(do (ns spec.nodea) (defprotocol SpecP (spec-pm [this])) (deftype SpecTN [t] SpecP (spec-pm [this] (str t \"!\"))) (ns spec.nodeb (:import [spec.nodea SpecTN])) (.spec-pm (SpecTN. \"hi\")))"])
+
+# Shims for yogthos/config: PushbackReader, numeric/boolean parse statics,
+# System/getenv + getProperties as iterable maps, edn/read from a reader.
+(defspec "interop / PushbackReader & parse statics"
+  ["PushbackReader read"   "[97 98]"
+   "(let [r (java.io.PushbackReader. (java.io.StringReader. \"ab\"))] [(.read r) (.read r)])"]
+  ["unread pushes back"    "[97 97 98]"
+   "(let [r (PushbackReader. (StringReader. \"ab\")) a (.read r)] (.unread r a) [a (.read r) (.read r)])"]
+  ["unread accepts a char" "[120 97]"
+   "(let [r (PushbackReader. (StringReader. \"a\"))] (.unread r \\x) [(.read r) (.read r)])"]
+  ["edn/read from reader"  "5432"
+   "(do (require (quote clojure.edn)) (clojure.edn/read (java.io.PushbackReader. (java.io.StringReader. \"{:db {:port 5432}}\\nrest\"))) (get-in (clojure.edn/read-string \"{:db {:port 5432}}\") [:db :port]))"]
+  ["edn/read multi-line"   "true"
+   "(do (require (quote clojure.edn)) (= {:a 1 :b 2} (clojure.edn/read (PushbackReader. (StringReader. \"{:a 1\\n :b 2}\")))))"]
+  ["Long/parseLong"        "42"     "(Long/parseLong \"42\")"]
+  ["parseLong rejects non-numeric" :throws "(Long/parseLong \"4x\")"]
+  ["BigInteger."           "123"    "(BigInteger. \"123\")"]
+  ["Boolean/parseBoolean"  "[true false false]"
+   "[(Boolean/parseBoolean \"true\") (Boolean/parseBoolean \"false\") (Boolean/parseBoolean \"yes\")]"]
+  ["System/getenv is a map" "true"
+   "(string? (get (System/getenv) \"HOME\"))"]
+  # NOT every? alone — it held vacuously while seq over a raw host table
+  # yielded nothing, hiding that read-system-env came back empty
+  ["getenv entries destructure (non-empty)" "true"
+   "(let [es (map (fn [[k v]] [k v]) (System/getenv))] (and (pos? (count es)) (every? vector? es)))"]
+  ["seq over a raw host table" "true"
+   "(pos? (count (seq (System/getenv))))"]
+  ["into {} from host table" "true"
+   "(string? (get (into {} (map (fn [[k v]] [k v]) (System/getenv))) \"HOME\"))"]
+  ["System/getProperties"  "true"
+   "(string? (get (System/getProperties) \"os.name\"))"])
