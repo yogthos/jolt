@@ -1402,7 +1402,7 @@
 
 # inst?/inst-ms live in the Clojure collection tier (core/20-coll.clj).
 # Jolt has no uri host type, so uri? is always false.
-(defn core-uri? [x] false)
+# uri? lives in the Clojure collection tier (no uri host type: always false).
 # uuid? now lives in the Clojure collection tier (tagged-value predicate).
 (defn core-bytes? [x] (buffer? x))
 # tagged-literal? now lives in the Clojure collection tier (tagged-value predicate).
@@ -2370,27 +2370,17 @@
     (string/replace pat repl s)))
 
 # Iterator/enumeration seqs — Jolt has no Java iterators, so adapt to plain seq.
-(defn core-enumeration-seq [x] (core-seq x))
-(defn core-iterator-seq [x] (core-seq x))
+# enumeration-seq / iterator-seq live in the Clojure collection tier.
 # xml-seq now lives in the Clojure collection tier (core/20-coll.clj).
 # line-seq now lives in the Clojure IO tier (core/50-io.clj), over the reader
 # protocol of the *in* family.
 (defn core-re-matcher [re s] @{:jolt/type :jolt/matcher :re re :s s :pos 0})
 
-# JVM reflection / proxies — not applicable on a Janet host; resolve-only.
-(defn core-bean [x] (if (core-map? x) x {}))
-(defn core-print-method [x writer] nil)
-(defn core-print-dup [x writer] nil)
-(defn core-proxy-call-with-super [f proxy meth] (f))
-(defn core-proxy-mappings [proxy] {})
-(defn core-update-proxy [proxy mappings] proxy)
+# bean / print-method / print-dup / the proxy surface live in the Clojure
+# collection tier (JVM-shape stubs; print hooks inert until jolt-g1r).
 # == lives in the Clojure collection tier (core/20-coll.clj); memfn is an
 # overlay macro (core/30-macros.clj) over the .method call sugar.
 # eduction / ->Eduction live in the Clojure collection tier (core/20-coll.clj).
-(defn core-proxy-super [& args] (error "proxy-super: JVM proxies are not supported in Jolt"))
-(defn core-construct-proxy [c & args] (error "construct-proxy: not supported in Jolt"))
-(defn core-init-proxy [proxy mappings] proxy)
-(defn core-get-proxy-class [& interfaces] (error "get-proxy-class: not supported in Jolt"))
 
 (def- char-escapes
   {10 "\\n" 9 "\\t" 13 "\\r" 12 "\\f" 8 "\\b" 34 "\\\"" 92 "\\\\"})
@@ -2434,18 +2424,13 @@
 # numerator / denominator now live in the Clojure collection tier (Jolt has
 # no ratios; they throw, as on a non-ratio in Clojure).
 
-(def- special-syms
-  {"if" true "do" true "let*" true "fn*" true "quote" true "var" true "def" true
-   "loop*" true "recur" true "throw" true "try" true "catch" true "finally" true
-   "new" true "set!" true "." true "monitor-enter" true "monitor-exit" true})
-(defn core-special-symbol? [x]
-  (and (core-symbol? x) (= true (get special-syms (x :name)))))
+# special-symbol? lives in the Clojure collection tier (a quoted symbol set).
 
 # record? now lives in the Clojure collection tier (tagged-value predicate).
 
 # Promise: single-threaded box backed by an atom (deref returns nil until set).
-(defn core-promise [] (core-atom nil))
-(defn core-deliver [p v] (core-reset! p v) p)
+# promise / deliver live in the Clojure collection tier (an atom; deref of an
+# undelivered promise is nil — single-threaded host, no blocking).
 
 (defn core-tagged-literal [tag form] @{:jolt/type :jolt/tagged-literal :tag tag :form form})
 # ensure-reduced / halt-when live in the Clojure collection tier
@@ -2637,9 +2622,6 @@
     "reduce" core-reduce
     "apply" core-apply
     "map-entry?" core-map-entry?
-    "special-symbol?" core-special-symbol?
-    "promise" core-promise
-    "deliver" core-deliver
     "future-call" core-future-call
     "future?" core-future?
     "future-cancel" core-future-cancel
@@ -2769,19 +2751,7 @@
     "disj!" core-disj!
     "reader-conditional" core-reader-conditional
     "class" core-class
-    "enumeration-seq" core-enumeration-seq
-    "iterator-seq" core-iterator-seq
     "re-matcher" core-re-matcher
-    "bean" core-bean
-    "print-method" core-print-method
-    "print-dup" core-print-dup
-    "proxy-call-with-super" core-proxy-call-with-super
-    "proxy-mappings" core-proxy-mappings
-    "update-proxy" core-update-proxy
-    "proxy-super" core-proxy-super
-    "construct-proxy" core-construct-proxy
-    "init-proxy" core-init-proxy
-    "get-proxy-class" core-get-proxy-class
     # Bit operations
     "__bit-and" core-bit-and
     "__bit-or" core-bit-or
@@ -2825,7 +2795,6 @@
     "__local-var" core-local-var
     "__close" core-close-resource
     "avoid-method-too-large" core-avoid-method-too-large
-    "uri?" core-uri?
     "bytes?" core-bytes?
     "meta" core-meta
     "var-get" core-var-get
