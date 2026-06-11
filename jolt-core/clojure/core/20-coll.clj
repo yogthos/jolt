@@ -17,6 +17,32 @@
 ;; even?/odd? stay in the seed: (filter even? ...) is idiomatic-hot and the
 ;; overlay versions cost an extra call layer per element (seq-pipe bench 4x).
 
+;; The printing family, over two host seams: __write (push a string to *out*)
+;; and __pr-str1 (render ONE value readably). The renderer itself stays host —
+;; it's representation-coupled (pvec/phm/phs/sorted internals) and shared with
+;; the hot str. print uses str semantics (unreadable), pr/pr-str readable;
+;; println/prn append the newline. Defined this early because printf and the
+;; print-str family below call them. (print-method as a real multimethod is a
+;; separate project.)
+(defn pr-str [& xs]
+  (loop [out "" s (seq xs) first? true]
+    (if s
+      (recur (str out (if first? "" " ") (__pr-str1 (first s))) (next s) false)
+      out)))
+
+(defn pr [& xs] (__write (apply pr-str xs)) nil)
+
+(defn prn [& xs] (apply pr xs) (__write "\n") nil)
+
+(defn print [& xs]
+  (__write (loop [out "" s (seq xs) first? true]
+             (if s
+               (recur (str out (if first? "" " ") (str (first s))) (next s) false)
+               out)))
+  nil)
+
+(defn println [& xs] (apply print xs) (__write "\n") nil)
+
 ;; Base is (hash-map), not the {} literal: a literal map is a struct that doesn't
 ;; canonicalize collection keys across representations (a {:a 1} literal vs
 ;; (hash-map :a 1) key), whereas a PHM does — so counting/grouping by collection
