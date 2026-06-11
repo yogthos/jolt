@@ -63,6 +63,10 @@ jolt-deps path             # print the resolved roots (':'-joined)
 jolt-deps run FILE [args]  # resolve, then run `jolt FILE …`
 jolt-deps repl             # resolve, then start a REPL
 jolt-deps -e EXPR [args]   # resolve, then evaluate EXPR
+jolt-deps -A:dev path      # include the :dev alias's extra paths/deps
+jolt-deps -M:test [args]   # run the :test alias's :main-opts through jolt
+jolt-deps tasks            # list :tasks from deps.edn
+jolt-deps task NAME [args] # run a task
 ```
 
 `jolt-deps` launches the `jolt` binary it finds on `PATH` (override with
@@ -88,10 +92,27 @@ jolt-deps run -m myapp.main
   dependency's own `deps.edn` are resolved too.
 - **local deps** — `{:local/root "../path"}`.
 - The project's own `:paths` (default `["src"]`) are included.
+- **aliases** — `:aliases {:dev {:extra-paths ["dev"] :extra-deps {…}
+  :main-opts ["-e" "…"]}}`, selected with `-A:dev` (or several: `-A:dev:test`).
+  `:extra-paths`/`:extra-deps` accumulate across selected aliases;
+  `:main-opts` is last-wins and runs via `-M:alias`.
+- **user config** — a `deps.edn` under `$JOLT_CONFIG` (else
+  `$XDG_CONFIG_HOME/jolt`, else `~/.jolt`) merges beneath the project's, the
+  way `~/.clojure/deps.edn` does: `:deps`/`:aliases`/`:tasks` merge per key
+  with the project winning.
+- **tasks** — `:tasks {clean "rm -rf target" test {:doc "run the suite"
+  :main-opts ["-e" "(run-tests)"]}}`. A string task is a shell command; a map
+  task runs jolt with its `:main-opts`. `jolt-deps tasks` lists, `jolt-deps
+  task NAME` runs.
 
-Resolution reuses jpm's git fetch and cache (a dependency is cloned once into
-`jpm_tree/.cache` and reused). Resolved roots are cached on a hash of `deps.edn`,
-so an unchanged `deps.edn` doesn't re-fetch.
+Conflicts resolve the tools.deps way: resolution is breadth-first, so a
+top-level coordinate always beats a transitive one for the same lib, and
+conflicting coordinates print a warning naming both.
+
+Git clones land in a global, sha-immutable cache shared across projects —
+`$JOLT_GITLIBS`, else `<config-dir>/gitlibs` (the `~/.gitlibs` model). The
+resolved roots are cached per project in `.cpcache/jolt-deps.jdn`, keyed on a
+hash of the project `deps.edn` + the user `deps.edn` + the selected aliases.
 
 ### What's not
 
