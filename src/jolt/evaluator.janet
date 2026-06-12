@@ -493,7 +493,26 @@
                      "user.home" (os/getenv "HOME")
                      "java.io.tmpdir" (or (os/getenv "TMPDIR") "/tmp")
                      dflt))
-   "getenv" (fn [&opt k] (if k (os/getenv k) (os/environ)))
+   # JOLT_BAKE_ENV_ALLOWLIST (jolt-s3j): during an image bake (jpm build of a
+   # native executable, set by the project's build.sh) the env snapshot that
+   # libraries like config.core capture at load gets MARSHALED INTO THE BINARY
+   # — GitHub push protection once flagged real API tokens inside an example's
+   # build output. With the var set, System/getenv serves only the listed
+   # comma-separated names (single-var reads of unlisted names return nil), so
+   # nothing secret can bake. Unset (the normal runtime case), reads are live
+   # and unfiltered.
+   "getenv" (fn [&opt k]
+              (def allow (os/getenv "JOLT_BAKE_ENV_ALLOWLIST"))
+              (if (nil? allow)
+                (if k (os/getenv k) (os/environ))
+                (let [names (string/split "," allow)
+                      ok @{}]
+                  (each n names (put ok (string/trim n) true))
+                  (if k
+                    (when (get ok k) (os/getenv k))
+                    (let [e (os/environ) out @{}]
+                      (eachp [ek ev] e (when (get ok ek) (put out ek ev)))
+                      out)))))
    # the property subset getProperty serves, as an iterable map
    "getProperties" (fn []
                      {"os.name" (case (os/which)
