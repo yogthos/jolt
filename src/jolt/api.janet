@@ -154,6 +154,11 @@
     (install-async! ctx)
     # Host contract (ns jolt.host): the seam the portable jolt-core compiler calls.
     (host/install! ctx)
+    # require/maybe-require-ns route loaded namespaces through the loader's
+    # compile-or-interpret eval-toplevel (the evaluator can't import the loader
+    # — that would be circular — so it reads this hook). Without it, required
+    # namespaces ran interpreted-only.
+    (put (ctx :env) :toplevel-eval eval-toplevel)
     # Stateful primitives as ctx-capturing clojure.core fns (protocol-dispatch,
     # register-method, …) — so the protocol macros compile to plain invokes. Must
     # precede the overlay (its defprotocol/extend-type expansions call these).

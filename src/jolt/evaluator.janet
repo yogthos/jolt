@@ -353,13 +353,19 @@
     found))
 
 (defn- load-ns-source
-  "Parse and evaluate every form of a namespace's source in the given context."
+  "Parse and evaluate every form of a namespace's source in the given context.
+  Routes through the loader's eval-toplevel when the api has installed it
+  (the :toplevel-eval hook) so REQUIRED namespaces compile like everything
+  else — without it they ran interpreted-only: slower, and their fns were
+  anonymous closures in stack traces (jolt-2o7.1)."
   [ctx src]
+  (def toplevel (get (ctx :env) :toplevel-eval))
   (var s src)
   (while (> (length (string/trim s)) 0)
     (def [f r] (parse-next s))
     (set s r)
-    (when (not (nil? f)) (eval-form ctx @{} f))))
+    (when (not (nil? f))
+      (if toplevel (toplevel ctx f) (eval-form ctx @{} f)))))
 
 (defn- maybe-require-ns
   "If namespace ns-name isn't populated yet, load its source — from a file on the
