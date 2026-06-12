@@ -1108,7 +1108,13 @@
               (if (= 0 (length c)) (f)
                 (reduce-with-reduced f (in c 0) (array/slice c 1))))))
       3 (let [f (args 0) val (args 1) coll (args 2)]
-          (reduce-with-reduced f val coll))
+          # reify clojure.lang.IReduceInit: the reified value carries its own
+          # reduce — call it (ring.util.codec's tokenizer reduces this way)
+          (if-let [m (and (table? coll)
+                          (get coll :jolt/protocol-methods)
+                          (get (get coll :jolt/protocol-methods) :reduce))]
+            (m coll f val)
+            (reduce-with-reduced f val coll)))
       (error "Wrong number of args passed to: reduce"))))
 
 (defn core-take [n & rest]
@@ -1723,7 +1729,17 @@
 (defn core-current-time-ms [] (* 1000 (os/clock :monotonic)))
 
 # Host IO (host-classified in the spec): path-based slurp/spit, *out* flush.
-(defn core-slurp [path] (string (slurp path)))
+# Opts (:encoding ...) are accepted and ignored — everything is UTF-8 here.
+# Reader shims (java.io.StringReader / PushbackReader / anything carrying
+# :s + :pos) DRAIN instead of opening a file: Ring middleware slurps request
+# bodies, and the jolt Ring adapter hands those over as StringReaders.
+(defn core-slurp [src & opts]
+  (cond
+    (and (table? src) (string? (get src :s)) (number? (get src :pos)))
+      (let [s (src :s) p (src :pos)]
+        (put src :pos (length s))
+        (string/slice s p))
+    (string (slurp src))))
 
 (defn core-spit [path content & opts]
   (def append? (do (var a false) (var i 0)

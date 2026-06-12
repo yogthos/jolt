@@ -73,6 +73,26 @@
       (get x :name))
     (string x)))
 
+
+(defn- ensure-jpm-dep
+  "A :jpm/module dep declares a janet module installed through jpm (e.g.
+  spork/http). jolt-deps doesn't manage janet packages — jpm does — so this
+  just verifies the module is importable, optionally running `jpm install
+  <:jpm/install>` once when it isn't, and fails with the install hint
+  otherwise. Contributes no source roots; the janet.* bridge autoloads the
+  module at first use."
+  [lib spec]
+  (def mod (get spec :jpm/module))
+  (defn importable? [] ((protect (require mod)) 0))
+  (unless (importable?)
+    (when-let [pkg (get spec :jpm/install)]
+      (eprintf "jolt-deps: %s: jpm module %s missing — running `jpm install %s`"
+               (sym-name lib) mod pkg)
+      (os/execute ["jpm" "install" pkg] :p))
+    (unless (importable?)
+      (errorf "%s: janet module %s is not importable. Install it with `jpm install %s` (jolt-deps leaves janet packages to jpm)."
+              (sym-name lib) mod (or (get spec :jpm/install) mod)))))
+
 (defn- merge-by-name [a b]  # union of symbol-keyed dictionaries, b wins
   (def out @{})
   (each m [a b] (when (dictionary? m) (eachp [k v] m (put out (sym-name k) v))))
@@ -165,7 +185,8 @@
     (and (deep= (get a :local/root) (get b :local/root))
          (deep= (get a :git/url) (get b :git/url))
          (deep= (get a :git/sha) (get b :git/sha))
-         (deep= (get a :git/tag) (get b :git/tag))))
+         (deep= (get a :git/tag) (get b :git/tag))
+         (deep= (get a :jpm/module) (get b :jpm/module))))
   (def queue @[])
   (defn discover [lib spec base-dir]
     (def k (sym-name lib))
@@ -175,9 +196,16 @@
                  k (coord-str prev) (coord-str spec)))
       (do
         (put seen k spec)
+        (when (and (dictionary? spec) (get spec :jpm/module))
+          (ensure-jpm-dep lib spec))
         (def dir
           (cond
-            (and (dictionary? spec) (get spec :git/url)) (clone-git spec)
+            (and (dictionary? spec) (get spec :git/url))
+              # :deps/root (tools.deps): the project lives in a subdirectory
+              # of the repo — monorepos like ring-clojure/ring.
+              (let [cloned (clone-git spec)
+                    root (get spec :deps/root)]
+                (if root (string cloned "/" root) cloned))
             (and (dictionary? spec) (get spec :local/root))
               (let [lr (get spec :local/root)]
                 (if (string/has-prefix? "/" lr) lr (string base-dir "/" lr)))

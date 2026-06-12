@@ -13,6 +13,31 @@
 # the janet/* interop bridge falls back to it inside env-less fibers.
 (def- module-load-env (fiber/getenv (fiber/current)))
 
+# jpm-module autoload: a janet.<module>/<name> reference whose module isn't
+# in the env is satisfied by requiring it from the jpm module path on first
+# use — (janet.spork.http/server ...) just works when spork is installed,
+# and the same goes for any jpm module. Loaded bindings are cached here
+# (and failures negatively cached, so a missing module errors fast).
+(def- janet-bridge-extras @{})
+(def- janet-bridge-failed @{})
+(defn- bridge-autoload
+  "jname is spork.http/server-shaped: require spork/http, cache its public
+  bindings under the dotted prefix, return the one asked for (nil when the
+  module is missing or has no such binding)."
+  [jname]
+  (def slash (string/find "/" jname))
+  (when slash
+    (def mod-ns (string/slice jname 0 slash))
+    (unless (get janet-bridge-failed mod-ns)
+      (def mod-path (string/replace-all "." "/" mod-ns))
+      (def r (protect (require mod-path)))
+      (if (r 0)
+        (eachp [sym entry] (r 1)
+          (when (and (symbol? sym) (table? entry) (not (get entry :private)))
+            (put janet-bridge-extras (string mod-ns "/" sym) (get entry :value))))
+        (put janet-bridge-failed mod-ns true))))
+  (in janet-bridge-extras jname))
+
 (defn- sym-name?
   [sym-s name-str]
   (and (struct? sym-s) (= :symbol (sym-s :jolt/type)) (= name-str (sym-s :name))))
@@ -501,17 +526,60 @@
 # ctor fns are interned as clojure.core vars at init (install-stateful-fns!).
 (def class-ctors @{})
 (defn register-class-ctor! [nm f] (put class-ctors nm f))
+# Class names evaluate to their CANONICAL NAME STRING — the same value
+# core-class returns — so (defmethod m String ...) keys match a
+# (defmulti m (comp class :body)) dispatch (ring.util.request does this).
+# `new` resolves the actual constructor from class-ctors by short name.
+(def- class-canonical-names
+  @{"String" "java.lang.String" "Number" "java.lang.Number"
+    "Boolean" "java.lang.Boolean" "Long" "java.lang.Long"
+    "Integer" "java.lang.Integer" "Double" "java.lang.Double"
+    "InputStream" "java.io.InputStream" "OutputStream" "java.io.OutputStream"
+    "File" "java.io.File" "Reader" "java.io.Reader" "Writer" "java.io.Writer"
+    "ISeq" "clojure.lang.ISeq" "Keyword" "clojure.lang.Keyword"
+    "Symbol" "clojure.lang.Symbol" "MapEntry" "clojure.lang.MapEntry"
+    "StringReader" "java.io.StringReader" "StringWriter" "java.io.StringWriter"
+    "StringBuilder" "java.lang.StringBuilder"
+    "StringTokenizer" "java.util.StringTokenizer"
+    "Charset" "java.nio.charset.Charset" "Base64" "java.util.Base64"})
+(defn- class-value-for
+  "The value a class-name symbol evaluates to: its canonical name string."
+  [nm]
+  (or (get class-canonical-names nm)
+      # qualified already, or unknown: the name itself is the token
+      nm))
+(defn- ctor-for-class-token
+  "Constructor fn for a class token (a canonical-name string): try the full
+  name, then the short name after the last dot."
+  [tok]
+  (or (in class-ctors tok)
+      (let [parts (string/split "." tok)]
+        (in class-ctors (last parts)))))
 
 # java.lang.String method surface for clj-compat interop: (.toLowerCase s),
 # (.indexOf s x), ... — the methods portable cljc libraries actually call.
 # Case mapping is ASCII (the whole engine is byte-based); indexOf returns -1
 # on miss, as on the JVM.
 (defn- str-needle [x]
-  (if (and (struct? x) (= :jolt/char (get x :jolt/type)))
-    (string/from-bytes (x :ch))
+  (cond
+    (and (struct? x) (= :jolt/char (get x :jolt/type))) (string/from-bytes (x :ch))
+    # (.indexOf s 61): an int needle is a char CODE on the JVM, not its decimal
+    # text (ring-codec splits k=v pairs this way)
+    (number? x) (string/from-bytes (math/trunc x))
     (string x)))
+# java.lang.Number surface (ring-codec: (.byteValue (Integer/valueOf s 16))).
+(def- number-methods
+  {"byteValue"   (fn [n] (let [b (band (math/trunc n) 0xff)] (if (> b 127) (- b 256) b)))
+   "shortValue"  (fn [n] (let [v (band (math/trunc n) 0xffff)] (if (> v 32767) (- v 65536) v)))
+   "intValue"    (fn [n] (math/trunc n))
+   "longValue"   (fn [n] (math/trunc n))
+   "floatValue"  (fn [n] (* 1.0 n))
+   "doubleValue" (fn [n] (* 1.0 n))
+   "toString"    (fn [n &opt radix] (if (= radix 16) (string/format "%x" (math/trunc n)) (string n)))})
+
 (def- string-methods
-  {"toString"    (fn [s] s)
+  {"getBytes"    (fn [s &opt charset] (buffer s))
+   "toString"    (fn [s] s)
    "toLowerCase" (fn [s] (string/ascii-lower s))
    "toUpperCase" (fn [s] (string/ascii-upper s))
    "trim"        (fn [s] (string/trim s))
@@ -586,16 +654,24 @@
             (let [jname (if (= ns "janet") name (string (string/slice ns 6) "/" name))
                   # worker fibers may carry no env (fiber/new without :e inherit)
                   # — fall back to the env captured at module load
-                  entry (in (or (fiber/getenv (fiber/current)) module-load-env)
-                            (symbol jname))]
+                  # four-step resolution: the runtime fiber's env (when it
+                  # has one), the evaluator's module env (worker/connection
+                  # fibers carry a foreign or empty env — net/server handler
+                  # fibers resolve janet/struct through here), the autoload
+                  # cache, then a jpm-module require on first miss
+                  entry (or (when-let [fe (fiber/getenv (fiber/current))]
+                              (in fe (symbol jname)))
+                            (in module-load-env (symbol jname))
+                            (in janet-bridge-extras jname)
+                            (bridge-autoload jname))]
               (if (not (nil? entry))
                 (if (table? entry) (entry :value) entry)
                 (error (string "Unable to resolve Janet symbol: " jname))))
             # syntax-quote ns-qualifies bare class names inside macros
             # (selmer.util/StringBuilder); class names never belong to an ns —
             # fall back to the constructor / statics shims before giving up.
-            (if-let [ctor (in class-ctors name)]
-              ctor
+            (if (or (in class-ctors name) (get class-canonical-names name))
+              (class-value-for name)
               (error (string "Unable to resolve symbol: " ns "/" name))))))
       # Use :jolt/not-found sentinel to distinguish nil binding from absent binding
       (let [local (get bindings name :jolt/not-found-1)
@@ -846,7 +922,10 @@
    "Keyword" true "Symbol" true "Object" true "IFn" true "Fn" true
    "PersistentVector" true "PersistentList" true "PersistentHashMap" true
    "PersistentHashSet" true "IPersistentMap" true "IPersistentVector" true
-   "IPersistentSet" true "IPersistentCollection" true "ISeq" true "Atom" true "nil" true})
+   "IPersistentSet" true "IPersistentCollection" true "ISeq" true "Atom" true "nil" true
+   # java.util interfaces + seq types ring & friends extend on
+   "Map" true "Set" true "List" true "Collection" true "LazySeq" true
+   "APersistentMap" true})
 
 (defn- canonical-host-tag
   "If type-name names a host type (optionally java.*/clojure.lang.* qualified),
@@ -869,7 +948,17 @@
     (keyword? obj) ["Keyword" "Object"]
     (and (struct? obj) (= :jolt/char (get obj :jolt/type))) ["Character" "Object"]
     (and (struct? obj) (= :symbol (get obj :jolt/type))) ["Symbol" "Object"]
-    (plist? obj) ["PersistentList" "IPersistentList" "IPersistentCollection" "ISeq" "Object"]
+    (plist? obj) ["PersistentList" "IPersistentList" "IPersistentCollection" "ISeq" "List" "Collection" "Object"]
+    (lazy-seq? obj) ["LazySeq" "ISeq" "IPersistentCollection" "Collection" "Object"]
+    # maps: phm / plain struct / sorted / records — java.util.Map covers them
+    # all in ring-style extend-protocol clauses
+    (or (phm? obj)
+        (and (struct? obj) (nil? (get obj :jolt/type)))
+        (and (table? obj) (or (get obj :jolt/deftype)
+                              (= :jolt/sorted-map (get obj :jolt/type)))))
+      ["PersistentHashMap" "APersistentMap" "IPersistentMap" "Map" "IPersistentCollection" "Object"]
+    (or (set? obj) (and (table? obj) (= :jolt/sorted-set (get obj :jolt/type))))
+      ["PersistentHashSet" "IPersistentSet" "Set" "IPersistentCollection" "Object"]
     (or (tuple? obj) (array? obj) (pvec? obj)) ["PersistentVector" "IPersistentVector" "IPersistentCollection" "ISeq" "Object"]
     (or (function? obj) (cfunction? obj)) ["IFn" "Fn" "Object"]
     (nil? obj) ["nil" "Object"]
@@ -1054,7 +1143,8 @@
   (def v-box @[nil])
   (def mm-fn
     (fn [& args]
-      (let [dv (apply dispatch-fn args)
+      (let [dv* (apply dispatch-fn args)
+            dv (if (nil? dv*) :jolt/nil-sentinel dv*)
             method (get methods dv)]
         (if method
           (apply method args)
@@ -1137,7 +1227,9 @@
           (put v :jolt/methods @{})
           v)))
   (def methods (or (get mm-var :jolt/methods) (let [m @{}] (put mm-var :jolt/methods m) m)))
-  (put methods dispatch-val impl)
+  # nil is a legal dispatch value (ring's body-string keys a method on it);
+  # janet tables can't hold nil keys, so it rides the sentinel
+  (put methods (if (nil? dispatch-val) :jolt/nil-sentinel dispatch-val) impl)
   (let [dc (get mm-var :jolt/dispatch-cache)]
     (when dc (each k (keys dc) (put dc k nil))))
   mm-var)
@@ -1294,6 +1386,7 @@
       mm-var))
   (ns-intern core "remove-method-setup"
     (fn [mm-sym dval]
+      (def dval (if (nil? dval) :jolt/nil-sentinel dval))
       (def mm-var (mm-var-of mm-sym false))
       (when mm-var
         (let [methods (get mm-var :jolt/methods)]
@@ -1316,6 +1409,7 @@
       (or (and mm-var (get mm-var :jolt/prefers)) {})))
   (ns-intern core "get-method-setup"
     (fn [mm-sym dval]
+      (def dval (if (nil? dval) :jolt/nil-sentinel dval))
       (def mm-var (mm-var-of mm-sym false))
       (when mm-var
         (let [methods (get mm-var :jolt/methods)]
@@ -1408,8 +1502,13 @@
   # read, with-in-str, and line-seq are Clojure over these (core/50-io.clj).
   # The loader's registered source roots (the closest thing to a classpath) —
   # io/resource searches these for relative resource paths.
-  # registered constructor shims (StringReader., StringBuilder., ...)
-  (eachp [nm f] class-ctors (ns-intern core nm f))
+  # registered constructor shims: the NAME evaluates to the canonical class
+  # string (so class-dispatch defmultis match); `new` finds the ctor fn.
+  (eachp [nm f] class-ctors (ns-intern core nm (class-value-for nm)))
+  # dispatch-only type names (no ctor): InputStream, File, ISeq, ...
+  (eachp [nm canon] class-canonical-names
+    (unless (or (in class-ctors nm) (ns-find core nm))
+      (ns-intern core nm canon)))
   (ns-intern core "__source-roots"
     (fn [] (tuple ;(get (ctx :env) :source-paths))))
   (ns-intern core "__stdin-read-line"
@@ -1975,7 +2074,8 @@
     # compiles as a plain (do …); no special-form arm.
     "new" (let [type-sym (in form 1)
                 args (map |(eval-form ctx bindings $) (tuple/slice form 2))
-                ctor (eval-form ctx bindings type-sym)]
+                ctor (eval-form ctx bindings type-sym)
+                ctor (if (string? ctor) (or (ctor-for-class-token ctor) ctor) ctor)]
             (apply ctor args))
     "." (let [target (eval-form ctx bindings (in form 1))
               member-raw (in form 2)
@@ -1996,6 +2096,8 @@
                   (if m
                     (m (string target) ;args)
                     (error (string "Unsupported String method ." field-name))))
+              (if (and (number? target) (get number-methods field-name))
+                ((get number-methods field-name) target ;args)
               # registered shim objects (java.time etc.): tag-keyed method tables
               (if (and (or (table? target) (struct? target))
                        (get tagged-methods (get target :jolt/type)))
@@ -2028,7 +2130,7 @@
                             (method-fn target ;args)
                             (error (string "Cannot call non-function " field-name " on " (type target)))))
                         (error (string "Cannot call non-function " field-name " on " (type target))))))
-                  (error (string "Cannot call method " field-name " on " (type target))))))))
+                  (error (string "Cannot call method " field-name " on " (type target)))))))))
             # (. obj member) with no extra args: a symbol member naming a
             # function is a zero-arg method call (receiver passed as self);
             # a keyword or `-field` member is plain field access. Strings get
@@ -2038,6 +2140,8 @@
                 (if m
                   (m (string target))
                   (error (string "Unsupported String method ." field-name))))
+            (if (and (number? target) (get number-methods field-name))
+              ((get number-methods field-name) target)
             (if (and (or (table? target) (struct? target))
                      (get tagged-methods (get target :jolt/type))
                      (get (get tagged-methods (get target :jolt/type)) field-name))
@@ -2057,7 +2161,7 @@
                   (array? v) (let [f (eval-form ctx bindings v)]
                                (if (or (function? f) (cfunction? f)) (f target) f))
                   v)
-                v))))))
+                v)))))))
     # default: function application — check for macros
     (if (and (struct? first-form) (= :symbol (first-form :jolt/type)))
       (let [sym-name (first-form :name)]
@@ -2086,6 +2190,9 @@
           (let [type-name (string/slice sym-name 0 (- (length sym-name) 1))
                 type-sym {:jolt/type :symbol :ns (first-form :ns) :name type-name}
                 ctor (eval-form ctx bindings type-sym)
+                # class names evaluate to canonical-name STRINGS now; the
+                # constructor itself comes from the ctor registry
+                ctor (if (string? ctor) (or (ctor-for-class-token ctor) ctor) ctor)
                 args (map |(eval-form ctx bindings $) (tuple/slice form 1))]
             (apply ctor args))
           (let [v (resolve-var ctx bindings first-form)]

@@ -140,3 +140,49 @@
    "(string? (get (into {} (map (fn [[k v]] [k v]) (System/getenv))) \"HOME\"))"]
   ["System/getProperties"  "true"
    "(string? (get (System/getProperties) \"os.name\"))"])
+
+# ring-core enablement (host shims + protocol/reduce fixes): the java.net /
+# java.util surface ring.util.codec needs, extend-protocol on Map and nil,
+# and reduce over a reified clojure.lang.IReduceInit.
+(defspec "host-interop / ring-codec surface"
+  ["URLEncoder www form"   "\"a+b%3Dc\"" "(URLEncoder/encode \"a b=c\")"]
+  ["URLDecoder www form"   "\"a b=c\""   "(URLDecoder/decode \"a+b%3Dc\" (Charset/forName \"UTF-8\"))"]
+  ["url round trip"        "\"x &=%?\""  "(URLDecoder/decode (URLEncoder/encode \"x &=%?\"))"]
+  ["Base64 encode"         "\"aGVsbG8=\"" "(String. (.encode (Base64/getEncoder) (.getBytes \"hello\")))"]
+  ["Base64 round trip"     "\"hello\""   "(String. (.decode (Base64/getDecoder) (String. (.encode (Base64/getEncoder) (.getBytes \"hello\")))))"]
+  ["Integer radix + byteValue" "-1"      "(.byteValue (Integer/valueOf \"ff\" 16))"]
+  ["Integer parseInt"      "255"         "(Integer/parseInt \"ff\" 16)"]
+  ["StringTokenizer"       "[\"a=1\" \"b=2\"]" "(let [t (StringTokenizer. \"a=1&b=2\" \"&\")] [(.nextToken t) (.nextToken t)])"]
+  ["MapEntry key/val"      "[:a 1]"      "(let [e (MapEntry. :a 1)] [(key e) (val e)])"]
+  ["String ctor from bytes" "\"hi\""     "(String. (.getBytes \"hi\"))"]
+  ["extend-protocol Map"   ":map"
+   "(do (defprotocol Pe (pe [x])) (extend-protocol Pe Map (pe [m] :map) Object (pe [o] :obj)) (pe {:a 1}))"]
+  ["extend-protocol nil"   ":nil"
+   "(do (defprotocol Pn (pn [x])) (extend-protocol Pn nil (pn [n] :nil) Object (pn [o] :obj)) (pn nil))"]
+  ["extend-protocol Map covers sorted" ":map"
+   "(do (defprotocol Ps (ps [x])) (extend-protocol Ps Map (ps [m] :map) Object (ps [o] :obj)) (ps (sorted-map 1 2)))"]
+  ["reduce over reified IReduceInit" "42"
+   "(reduce + 0 (reify clojure.lang.IReduceInit (reduce [_ f init] (f (f init 40) 2))))"])
+
+# ring-core enablement, part 2: class-name symbols evaluate to canonical
+# class-name strings (so class-dispatch defmultis match), ctor sugar still
+# constructs, type-hinted param vectors parse, slurp drains reader shims,
+# str/replace takes fn replacements, and int needles are char codes.
+(defspec "host-interop / class tokens & readers"
+  ["class name evaluates to canonical string" "\"java.lang.String\"" "String"]
+  ["dispatch-only class name" "\"java.io.InputStream\"" "InputStream"]
+  ["(class x) matches the token" "true" "(= String (class \"abc\"))"]
+  ["defmulti on class dispatches" ":str"
+   "(do (defmulti cm (fn [x] (class x))) (defmethod cm String [x] :str) (cm \"a\"))"]
+  ["defmethod on nil dispatch value" ":nil"
+   "(do (defmulti cn (fn [x] (class x))) (defmethod cn nil [x] :nil) (defmethod cn String [x] :str) (cn nil))"]
+  ["ctor sugar still constructs" "\"x\"" "(.toString (StringBuilder. \"x\"))"]
+  ["return-hinted defn parses" "7" "(do (defn- hb ^bytes [b] b) (hb 7))"]
+  ["hinted multi-arity parses" ":two" "((fn ([x] :one) (^String [x y] :two)) 1 2)"]
+  ["slurp drains a StringReader" "\"a=1\"" "(slurp (StringReader. \"a=1\"))"]
+  ["slurp accepts :encoding opts" "\"b\"" "(slurp (StringReader. \"b\") :encoding \"UTF-8\")"]
+  ["replace with fn replacement is literal" "\"$0\""
+   "(do (require (quote [clojure.string :as s9])) (s9/replace \"x\" #\".\" (fn [m] \"$0\")))"]
+  ["replace fn gets group vector" "\"v=k\""
+   "(do (require (quote [clojure.string :as s9])) (s9/replace \"k=v\" #\"(\\w+)=(\\w+)\" (fn [[_ k v]] (str v \"=\" k))))"]
+  ["indexOf int needle is a char code" "1" "(.indexOf \"a=b\" 61)"])
