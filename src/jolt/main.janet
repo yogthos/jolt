@@ -226,10 +226,100 @@
     (string? err) err
     (string/format "%q" err)))
 
+# --- error presentation (jolt-2o7.2, rephrase-inspired) ----------------------
+# Host messages rewritten into Clojure-shaped ones; stack frames filtered to
+# the USER'S code (compiled jolt fns carry _r$ns/name--N janet names — round
+# 2o7.1). JOLT_DEBUG=1 restores the raw janet trace for jolt development.
+
+(defn- demangle
+  "_r$app.deep/level3--105 -> app.deep/level3 (nil for non-jolt names)."
+  [nm]
+  (when (string/has-prefix? "_r$" nm)
+    (def s (string/slice nm 3))
+    # the counter suffix is the LAST --N run
+    (var cut (length s))
+    (var i (string/find "--" s))
+    (while (not (nil? i))
+      (set cut i)
+      (set i (string/find "--" s (+ i 1))))
+    (string/slice s 0 cut)))
+
+(defn- fmt-val [x]
+  (cond
+    (string? x) (string `"` x `"`)
+    (nil? x) "nil"
+    (string x)))
+
+(def- op-words
+  {"+" "add" "-" "subtract" "*" "multiply" "/" "divide"
+   "<" "compare" ">" "compare" "<=" "compare" ">=" "compare"})
+
+(defn- rewrite-message
+  "Host/janet error text -> a user-facing message. Unknown messages verbatim."
+  [msg]
+  (def msg (string msg))
+  (cond
+    # janet polymorphic arithmetic: could not find method :+ for 1 or :r+ for "a"
+    (string/has-prefix? "could not find method :" msg)
+    (let [rest* (string/slice msg (length "could not find method :"))
+          sp (string/find " " rest*)
+          op (string/slice rest* 0 sp)
+          tail (string/slice rest* (+ sp (length " for ")))
+          orpos (string/find " or :r" tail)
+          a (string/slice tail 0 orpos)
+          forpos (string/find " for " tail (+ orpos 1))
+          b (string/slice tail (+ forpos 5))]
+      (string "Cannot " (get op-words op op) " " a " and " b
+              " — " op " expects numbers"))
+    # janet fixed-arity: <function _r$ns/f--N> called with 2 arguments, expected 1
+    (and (string/has-prefix? "<function " msg) (string/find "> called with " msg))
+    (let [nm-end (string/find ">" msg)
+          nm (string/slice msg (length "<function ") nm-end)
+          pretty (or (demangle nm) nm)
+          tail (string/slice msg (+ nm-end (length "> called with ")))
+          n-end (string/find " " tail)
+          n (string/slice tail 0 n-end)
+          exp (if-let [i (string/find "expected " tail)]
+                (string " (expected " (string/slice tail (+ i 9)) ")") "")]
+      (string "Wrong number of args (" n ") passed to: " pretty exp))
+    # a typo'd symbol compiles to nil today (round 2o7.3 will fix resolution)
+    (= msg "Cannot call nil as a function")
+    (string msg " — often an undefined (misspelled?) symbol")
+    msg))
+
+(defn- print-user-trace
+  "Filter the stashed janet trace down to frames a jolt user can act on:
+  compiled jolt fns (the _r$ns/name--N janet names, demangled) and frames
+  from non-jolt source files. Internal janet/jolt frames are dropped."
+  [trace]
+  (var shown 0)
+  (each line (string/split "\n" trace)
+    (def t (string/trim line))
+    (when (string/has-prefix? "in " t)
+      (def rest* (string/slice t 3))
+      (def sp (or (string/find " " rest*) (length rest*)))
+      (def nm (string/slice rest* 0 sp))
+      (cond
+        (string/has-prefix? "_r$" nm)
+        (do (eprint "  at " (demangle nm)) (++ shown))
+        # a frame from a real source file outside jolt internals
+        (and (string/find "[" rest*)
+             (not (string/find "src/jolt/" rest*))
+             (not (string/find "boot.janet" rest*))
+             (not (string/find "[eval]" rest*)))
+        (do (eprint "  " t) (++ shown))
+        nil)))
+  shown)
+
 (defn- report-error [err fib]
-  (eprint "Error: " (err-message err))
-  # Janet-level stack trace of where evaluation failed
-  (when fib (debug/stacktrace fib "")))
+  (eprint "Error: " (rewrite-message (err-message err)))
+  (def stashed (get (ctx :env) :error-trace))
+  (put (ctx :env) :error-trace nil)
+  (cond
+    (os/getenv "JOLT_DEBUG")
+      (if stashed (eprin stashed) (when fib (debug/stacktrace fib "")))
+    stashed (print-user-trace stashed)
+    fib (when fib nil)))
 
 (defn- run-repl []
   (print "Jolt — Clojure on Janet")

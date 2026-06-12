@@ -7,6 +7,12 @@
   (os/proc-wait p)
   (string (or out "")))
 
+(defn- run-err [& args]
+  (def p (os/spawn ["janet" "src/jolt/main.janet" ;args] :p {:out :pipe :err :pipe}))
+  (def err (:read (p :err) :all))
+  (os/proc-wait p)
+  (string (or err "")))
+
 (var fails 0)
 (defn check [label got pred]
   (if (pred got) (print "  ok   " label)
@@ -34,3 +40,28 @@
 (if (> fails 0)
   (error (string "cli-test: " fails " failing check(s)"))
   (print "\nAll CLI tests passed!"))
+
+# --- user-facing error output (jolt-2o7 rounds 1+2) --------------------------
+# Messages are Clojure-shaped; traces show the USER'S fns (compiled fn names
+# carry ns/fn-name, demangled by report-error) and never jolt internals.
+(check "arith error message rewritten"
+       (run-err "-e" `(+ 1 "a")`)
+       (has `Cannot add 1 and "a"`))
+(check "arity error names the fn"
+       (run-err "-e" "(defn afn [x] x) (afn 1 2)")
+       (has "Wrong number of args (2) passed to: user/afn"))
+(check "nil-call hints at undefined symbol"
+       (run-err "-e" "(undefined-fn 1)")
+       (has "undefined (misspelled?) symbol"))
+(check "trace shows the user's call chain"
+       (run-err "-e" "(defn inner [x] (let [r (+ x :k)] r)) (defn outer [x] (let [v (inner x)] v)) (outer 1)")
+       (fn [s] (and (string/find "at user/inner" s) (string/find "at user/outer" s))))
+(check "no jolt-internal frames in user errors"
+       (run-err "-e" `(+ 1 "a")`)
+       (fn [s] (nil? (string/find "src/jolt/" s))))
+(check "JOLT_DEBUG restores the raw trace"
+       (do (os/setenv "JOLT_DEBUG" "1")
+           (def r (run-err "-e" `(+ 1 "a")`))
+           (os/setenv "JOLT_DEBUG" nil)
+           r)
+       (has "could not find method"))

@@ -52,11 +52,22 @@
         (try-compile)
         (eval-form ctx @{} form)))
     (eval-form ctx @{} form)))
-  (def res (protect (run)))
-  (if (res 0)
-    (res 1)
-    (do (ctx-set-current-ns ctx entry-ns)
-        (error (res 1)))))
+  (try
+    (run)
+    ([err fib]
+      (ctx-set-current-ns ctx entry-ns)
+      # Stash the full trace TEXT at this innermost boundary: janet's
+      # debug/stacktrace walks the propagation chain (fiber->child, no public
+      # accessor), so this is the only place the user's compiled frames
+      # (in _r$ns/fn--N ...) are reachable. Innermost capture wins; the CLI's
+      # report-error filters + demangles it. (jolt-2o7.1/2)
+      (when (nil? (get (ctx :env) :error-trace))
+        (def buf @"")
+        (with-dyns [:err buf] (debug/stacktrace fib err ""))
+        (put (ctx :env) :error-trace (string buf)))
+      # propagate (not error): re-raising with `error` discards the failing
+      # fiber's stack
+      (propagate err fib))))
 
 (defn load-ns
   "Load a Clojure namespace from a .clj file. Per-form routing (compile-or-
