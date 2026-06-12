@@ -37,9 +37,7 @@
 (os/setenv "JOLT_PATH" nil)
 (os/rm (string tmp "/app/core.clj")) (os/rmdir (string tmp "/app")) (os/rmdir tmp)
 
-(if (> fails 0)
-  (error (string "cli-test: " fails " failing check(s)"))
-  (print "\nAll CLI tests passed!"))
+
 
 # --- user-facing error output (jolt-2o7 rounds 1+2) --------------------------
 # Messages are Clojure-shaped; traces show the USER'S fns (compiled fn names
@@ -66,9 +64,35 @@
 (check "no jolt-internal frames in user errors"
        (run-err "-e" `(+ 1 "a")`)
        (fn [s] (nil? (string/find "src/jolt/" s))))
+# --- round 4: load errors carry file:line + the require chain ---------------
+(def r4 (string (or (os/getenv "TMPDIR") "/tmp") "/jolt-cli-r4-" (os/time)))
+(os/mkdir r4) (os/mkdir (string r4 "/app"))
+(spit (string r4 "/app/broken.clj") "(ns app.broken)\n\n(def config\n  (+ 1 \"boom\"))\n")
+(spit (string r4 "/app/mid.clj") "(ns app.mid (:require [app.broken :as b]))\n")
+(spit (string r4 "/app/top.clj") "(ns app.top (:require [app.mid :as m]))\n(defn -main [& a] nil)\n")
+(os/setenv "JOLT_PATH" r4)
+(def deep-err (run-err "-m" "app.top"))
+(check "load error names the failing file:line" deep-err
+       (has "at " ))
+(check "load error points into broken.clj line 3" deep-err
+       (has "/app/broken.clj:3"))
+(check "require chain shows the loading path" deep-err
+       (fn [s] (and (string/find "while loading" s) (string/find "/app/mid.clj" s) (string/find "/app/top.clj" s))))
+(check "script errors name the script file" 
+       (do (spit (string r4 "/scr.clj") "(ns scr)\n\n(+ 1 \"x\")\n")
+           (run-err (string r4 "/scr.clj")))
+       (has "/scr.clj:3"))
+(check "no synthetic <eval> position on one-liners"
+       (run-err "-e" `(+ 1 "a")`)
+       (fn [s] (nil? (string/find "<eval>" s))))
+
 (check "JOLT_DEBUG restores the raw trace"
        (do (os/setenv "JOLT_DEBUG" "1")
            (def r (run-err "-e" `(+ 1 "a")`))
            (os/setenv "JOLT_DEBUG" nil)
            r)
        (has "could not find method"))
+
+(if (> fails 0)
+  (error (string "cli-test: " fails " failing check(s)"))
+  (print "\nAll CLI tests passed!"))

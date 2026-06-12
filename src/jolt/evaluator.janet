@@ -358,14 +358,23 @@
   (the :toplevel-eval hook) so REQUIRED namespaces compile like everything
   else — without it they ran interpreted-only: slower, and their fns were
   anonymous closures in stack traces (jolt-2o7.1)."
-  [ctx src]
+  [ctx src &opt file]
+  (default file "<source>")
   (def toplevel (get (ctx :env) :toplevel-eval))
-  (var s src)
-  (while (> (length (string/trim s)) 0)
-    (def [f r] (parse-next s))
-    (set s r)
-    (when (not (nil? f))
-      (if toplevel (toplevel ctx f) (eval-form ctx @{} f)))))
+  (each [f line] (parse-all-positioned src)
+    (try
+      (if toplevel (toplevel ctx f) (eval-form ctx @{} f))
+      ([err fib]
+        # innermost failing form wins; files unwound through form the
+        # 'while loading …' chain (mirrors loader/eval-forms-positioned,
+        # which this can't import — circularity) (jolt-2o7.4)
+        (def env (ctx :env))
+        (when (nil? (get env :error-pos))
+          (put env :error-pos {:file file :line line}))
+        (when (nil? (get env :error-loading)) (put env :error-loading @[]))
+        (def chain (get env :error-loading))
+        (when (not= (last chain) file) (array/push chain file))
+        (propagate err fib)))))
 
 (defn- maybe-require-ns
   "If namespace ns-name isn't populated yet, load its source — from a file on the
@@ -395,7 +404,9 @@
             # Stdlib files have no `ns` form, so switch into the target ns first
             # (their defs intern there); a library's own `ns` form overrides this.
             (ctx-set-current-ns ctx ns-name)
-            (if path (load-ns-source ctx (slurp path)) (load-ns-source ctx embedded))
+            (if path
+              (load-ns-source ctx (slurp path) path)
+              (load-ns-source ctx embedded (string ns-name " (stdlib)")))
             # Record load order for tooling (uberscript): a dependency finishes
             # loading before its requirer, so this is topological. Skip the
             # baked-in stdlib — it's part of the runtime, not something to bundle.

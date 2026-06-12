@@ -84,6 +84,27 @@
       res)
     (eval-toplevel-1 ctx form)))
 
+(defn eval-forms-positioned
+  "Evaluate parsed [form line] pairs, recording WHERE an error happened: the
+  innermost failing form's {:file :line} goes to (env :error-pos) and each
+  file unwound through joins the (env :error-loading) chain — the CLI's
+  report-error prints 'at file:line' and 'while loading …' from these.
+  (jolt-2o7.4)"
+  [ctx pairs file]
+  (var res nil)
+  (each [form line] pairs
+    (try
+      (set res (eval-toplevel ctx form))
+      ([err fib]
+        (def env (ctx :env))
+        (when (nil? (get env :error-pos))
+          (put env :error-pos {:file file :line line}))
+        (when (nil? (get env :error-loading)) (put env :error-loading @[]))
+        (def chain (get env :error-loading))
+        (when (not= (last chain) file) (array/push chain file))
+        (propagate err fib))))
+  res)
+
 (defn load-ns
   "Load a Clojure namespace from a .clj file. Per-form routing (compile-or-
   interpret, stateful forms interpret) is shared with eval-one via eval-toplevel.
@@ -91,28 +112,21 @@
   (load-ns ctx filepath) → namespace symbol string"
   [ctx filepath]
   (def source (slurp filepath))
+  (def pairs (parse-all-positioned source))
   (var ns-name nil)
-  (var remaining source)
-  (var forms @[])
-
-  # Parse all forms
-  (while (> (length (string/trim remaining)) 0)
-    (def [form rest] (parse-next remaining))
-    (set remaining rest)
-    (when (not (nil? form))
-      (array/push forms form)
-      # Extract ns name from the first ns form
-      (when (and (nil? ns-name)
-                 (array? form)
-                 (> (length form) 0)
-                 (and (struct? (first form))
-                      (= :symbol ((first form) :jolt/type))
-                      (= "ns" ((first form) :name))))
-        (let [name-form (in form 1)]
-          (set ns-name (if (struct? name-form) (name-form :name) (string name-form)))))))
+  (each [form _] pairs
+    # Extract ns name from the first ns form
+    (when (and (nil? ns-name)
+               (array? form)
+               (> (length form) 0)
+               (and (struct? (first form))
+                    (= :symbol ((first form) :jolt/type))
+                    (= "ns" ((first form) :name))))
+      (let [name-form (in form 1)]
+        (set ns-name (if (struct? name-form) (name-form :name) (string name-form))))))
 
   (when (nil? ns-name)
     (error (string "No ns form found in " filepath)))
 
-  (each form forms (eval-toplevel ctx form))
+  (eval-forms-positioned ctx pairs filepath)
   ns-name)

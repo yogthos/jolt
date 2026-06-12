@@ -324,13 +324,7 @@
   "Evaluate all forms from a Clojure source string.
   Uses parse-next to load every top-level form in sequence.
   Returns the result of the last form evaluated."
-  [ctx s]
-  (var cur s)
-  (var result nil)
-  (while (> (length (string/trim cur)) 0)
-    (def [form rest] (parse-next cur))
-    (set cur rest)
-    (when (not (nil? form))
-      (set result (eval-one ctx form))))
-  result)
+  [ctx s &opt file]
+  (default file "<eval>")
+  (eval-forms-positioned ctx (parse-all-positioned s) file))
 
