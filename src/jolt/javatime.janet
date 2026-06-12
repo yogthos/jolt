@@ -129,10 +129,12 @@
   (register-class-statics! "LocalDateTime"
     @{"ofInstant" (fn [inst zone] (local-dt (ms-of inst)))
       "now" (fn [] (local-dt (math/floor (* 1000 (os/clock :realtime)))))})
-  (register-class-statics! "Locale"
-    @{"getDefault" (fn [] @{:jolt/type :jolt/locale :id "default"})
-      "ENGLISH" @{:jolt/type :jolt/locale :id "en"}
-      "US" @{:jolt/type :jolt/locale :id "en-US"}})
+  (let [locale-statics @{"getDefault" (fn [] @{:jolt/type :jolt/locale :id "default"})
+                         "ENGLISH" @{:jolt/type :jolt/locale :id "en"}
+                         "US" @{:jolt/type :jolt/locale :id "en-US"}
+                         "ROOT" @{:jolt/type :jolt/locale :id "root"}}]
+    (each nm ["Locale" "java.util.Locale"]
+      (register-class-statics! nm locale-statics)))
   (register-tagged-methods! :jolt/instant
     @{"atZone" (fn [self zone] (zoned (self :ms) zone))
       "toEpochMilli" (fn [self] (self :ms))})

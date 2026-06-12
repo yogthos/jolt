@@ -212,3 +212,14 @@
    "(let [m (HashMap. {:a 1 :b 2})] (.get m :b))"]
   ["HashMap put + size" "2"
    "(let [m (HashMap. {})] (.put m :x 1) (.put m :y 2) (.size m))"])
+
+# Reader-feature toggle exposed to Clojure (scoped clj-lib loading): a
+# namespace can load a clj-targeted library under :clj without forcing the
+# whole process — set features, require, restore.
+(defspec "host-interop / reader-feature toggle"
+  ["features default to jolt+default" "true"
+   "(contains? (set (__reader-features)) \"jolt\")"]
+  ["set + read back" "true"
+   "(do (def prev (__reader-features)) (__reader-features-set! [\"clj\" \"jolt\" \"default\"]) (def r (contains? (set (__reader-features)) \"clj\")) (__reader-features-set! prev) r)"]
+  ["restore returns to default" "false"
+   "(do (def prev (__reader-features)) (__reader-features-set! [\"clj\"]) (__reader-features-set! prev) (contains? (set (__reader-features)) \"clj\"))"])

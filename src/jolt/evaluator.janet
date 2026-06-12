@@ -1311,6 +1311,20 @@
   # Java class jolt doesn't ship (e.g. reitit.Trie). __register-class-statics!
   # makes (Class/method ...) resolve; __register-class-methods! makes (.method
   # tagged-value ...) dispatch; __register-class-ctor! makes (Class. ...) build.
+  # Reader-conditional feature toggle, exposed to Clojure so a namespace can
+  # load a clj-targeted library (e.g. reitit, under :clj) WITHOUT forcing the
+  # whole process to :clj — set features, require the lib, restore. Returns the
+  # previous feature set (a list of name strings) for restoration.
+  (ns-intern core "__reader-features"
+    (fn [] (tuple ;(map (fn [k] (string k)) (keys reader-features)))))
+  (ns-intern core "__reader-features-set!"
+    (fn [names]
+      # names arrives as a jolt vector (pvec) or list — coerce to a janet array
+      (def arr (cond (pvec? names) (pv->array names)
+                     (or (tuple? names) (array? names)) names
+                     @[names]))
+      (reader-features-set! (map (fn [n] (if (keyword? n) n (string n))) arr))
+      nil))
   (ns-intern core "__register-class-statics!"
     (fn [nm tbl] (register-class-statics! nm tbl) nil))
   (ns-intern core "__register-class-methods!"
