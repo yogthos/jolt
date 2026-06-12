@@ -313,13 +313,28 @@
 
 (defn- report-error [err fib]
   (eprint "Error: " (rewrite-message (err-message err)))
-  (def stashed (get (ctx :env) :error-trace))
-  (put (ctx :env) :error-trace nil)
+  (def env (ctx :env))
+  (def stashed (get env :error-trace))
+  (def pos (get env :error-pos))
+  (def chain (get env :error-loading))
+  (put env :error-trace nil)
+  (put env :error-pos nil)
+  (put env :error-loading nil)
+  # <eval>:1 is the synthetic require/apply string the CLI feeds itself (and
+  # any one-line -e) — no information there
+  (when (and pos (not (and (= (pos :file) "<eval>") (= (pos :line) 1))))
+    (eprint "  at " (pos :file) ":" (pos :line)))
   (cond
     (os/getenv "JOLT_DEBUG")
       (if stashed (eprin stashed) (when fib (debug/stacktrace fib "")))
     stashed (print-user-trace stashed)
-    fib (when fib nil)))
+    fib (when fib nil))
+  # requires unwound through, innermost first; the failing file itself is
+  # already on the 'at' line
+  (when chain
+    (each f chain
+      (unless (or (= f "<eval>") (and pos (= f (pos :file))))
+        (eprint "  while loading " f)))))
 
 (defn- run-repl []
   (print "Jolt — Clojure on Janet")
@@ -360,7 +375,7 @@
     (do (eprint "Error: file not found: " path) (os/exit 1))
     (let [src (slurp path)]
       (try
-        (load-string ctx src)
+        (load-string ctx src path)
         ([err fib] (report-error err fib) (os/exit 1))))))
 
 (defn- run-eval [expr argv]

@@ -651,3 +651,35 @@
         (parse-next-loop new-pos)
         [form (string/slice s new-pos)])))
   (parse-next-loop 0))
+
+(defn parse-all-positioned
+  "Parse every top-level form of source, returning an array of [form line]
+  where line is the 1-based source line the form starts on. parse-next eats
+  leading trivia itself, so the form's start line is the running newline
+  count plus the newlines in the trivia (whitespace, commas, ; comments)
+  ahead of it. (jolt-2o7.4)"
+  [source]
+  (def out @[])
+  (var s source)
+  (var line 1)
+  (while (> (length (string/trim s)) 0)
+    # newlines in the leading trivia belong BEFORE the form's line
+    (var i 0)
+    (def n (length s))
+    (var scanning true)
+    (while (and scanning (< i n))
+      (def c (in s i))
+      (cond
+        (= c (chr "\n")) (do (++ line) (++ i))
+        (or (= c (chr " ")) (= c (chr "\t")) (= c (chr "\r")) (= c (chr ","))) (++ i)
+        (= c (chr ";")) (while (and (< i n) (not= (in s i) (chr "\n"))) (++ i))
+        (set scanning false)))
+    (def [form rest*] (parse-next s))
+    (def consumed (- (length s) (length rest*)))
+    (def form-line line)
+    # count newlines inside the consumed chunk past the trivia
+    (loop [j :range [i consumed]]
+      (when (= (in s j) (chr "\n")) (++ line)))
+    (set s rest*)
+    (when (not (nil? form)) (array/push out [form form-line])))
+  out)
