@@ -6,6 +6,7 @@
 # install call — adding another java.* shim follows the same shape.
 
 (use ./evaluator)
+(import ./phm)
 
 (defn- chr [s] (get s 0))
 
@@ -383,6 +384,27 @@
                                  :toks (tokenize s (or delims " \t\n\r\f"))
                                  :pos 0})))
   # clojure.lang.MapEntry: a 2-tuple, jolt's map-entry representation.
+  # java.util.HashMap: a mutable wrapper over a janet table, keyed by canonical
+  # key (so jolt collection keys compare by value). reitit uses it as a fast
+  # read cache: (HashMap. m) copies a map's entries, (.get hm k) reads.
+  # raw value-keys: reitit's HashMap keys are strings/keywords/tuples, all of
+  # which janet tables key by value — no canonicalization needed here.
+  (defn- hm-entries [m]
+    (cond (phm/phm? m) (phm/phm-entries m)
+          (struct? m) (pairs m)
+          (table? m) (pairs m)
+          @[]))
+  (register-tagged-methods! :jolt/hashmap
+    @{"get"         (fn [self k] (get (self :tbl) k))
+      "put"         (fn [self k v] (put (self :tbl) k v) v)
+      "containsKey" (fn [self k] (not (nil? (get (self :tbl) k))))
+      "size"        (fn [self] (length (self :tbl)))})
+  (each nm ["HashMap" "java.util.HashMap"]
+    (register-class-ctor! nm
+      (fn [&opt init]
+        (def tbl @{})
+        (when init (each pair (hm-entries init) (put tbl (in pair 0) (in pair 1))))
+        @{:jolt/type :jolt/hashmap :tbl tbl})))
   (each nm ["MapEntry" "clojure.lang.MapEntry"]
     (register-class-ctor! nm (fn [k v] [k v])))
   # (String. bytes) / (String. bytes charset): UTF-8 bytes to string.
