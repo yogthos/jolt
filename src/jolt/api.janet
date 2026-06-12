@@ -326,5 +326,5 @@
   Returns the result of the last form evaluated."
   [ctx s &opt file]
   (default file "<eval>")
-  (eval-forms-positioned ctx (parse-all-positioned s) file))
+  (eval-forms-positioned ctx (parse-all-positioned s file) file))
 

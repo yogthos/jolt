@@ -23,6 +23,36 @@
       (= c 13)   # \r
       (= c 44))) # comma
 
+# Reader errors carry the raw byte OFFSET; the parse entry points (parse-string,
+# parse-all-positioned) convert offset -> line:col against the full source and
+# re-raise Clojure's 'Syntax error reading source at (file:line:col): msg'
+# shape. Raising structured here keeps the 15 error sites one-liners.
+# (jolt-2o7.5)
+(defn- reader-error [msg pos]
+  (error {:jolt/type :jolt/reader-error :msg msg :pos pos}))
+
+(defn line-col
+  "1-based [line col] of byte offset in source."
+  [source offset]
+  (var line 1)
+  (var bol 0)
+  (def stop (min offset (length source)))
+  (loop [i :range [0 stop]]
+    (when (= (in source i) (chr "\n")) (++ line) (set bol (+ i 1))))
+  [line (+ 1 (- stop bol))])
+
+(defn format-reader-error
+  "Clojure-shaped syntax error message for a reader-error struct raised
+  against source; file may be nil (omitted)."
+  [e source file]
+  (def [l c] (line-col source (e :pos)))
+  (if file
+    (string "Syntax error reading source at (" file ":" l ":" c "): " (e :msg))
+    (string "Syntax error reading source at (" l ":" c "): " (e :msg))))
+
+(defn reader-error? [e]
+  (and (struct? e) (= :jolt/reader-error (e :jolt/type))))
+
 (defn skip-whitespace [s pos]
   (if (and (< pos (length s))
            (whitespace? (s pos)))
@@ -89,7 +119,7 @@
 (defn read-symbol [s pos]
   (let [end (read-symbol-name s pos pos)]
     (if (= end pos)
-      (error (string "Unrecognized character at " pos ": " (string/from-bytes (s pos))))
+      (reader-error (string "Unrecognized character: " (string/from-bytes (s pos))) pos)
       (let [name (string/slice s pos end)]
         (if (= name "nil") [nil end]
           (if (= name "true") [true end]
@@ -126,12 +156,12 @@
 
 (defn read-string-chars [s pos end chars]
   (if (>= pos end)
-    (error "Unterminated string")
+    (reader-error "Unterminated string" pos)
     (let [c (s pos)]
       (if (= c 92) # backslash
         (let [next-pos (+ pos 1)]
           (if (>= next-pos end)
-            (error "Unterminated escape")
+            (reader-error "Unterminated escape" pos)
             (read-string-chars s (+ pos 2) end
               (array/push chars (escape-char (s next-pos))))))
         (if (= c 34) # closing quote
@@ -198,19 +228,19 @@
                   (= (s pos) 48) (or (= (s (+ pos 1)) 120) (= (s (+ pos 1)) 88)))]  # 0x / 0X
     (if hex?
       (let [hs (+ pos 2) he (read-hex-digits s hs hs)]
-        (if (= he hs) (error (string "Expected hex digits at " pos)))
+        (if (= he hs) (reader-error "Expected hex digits" pos))
         (let [he2 (if (and (< he len) (= (s he) 78)) (+ he 1) he)   # trailing N
               val (scan-number (string "0x" (string/slice s hs he)))]
           [(if neg (- val) val) he2]))
       (let [iend (read-digits s pos pos)]
-        (if (= iend pos) (error (string "Expected number at " pos)))
+        (if (= iend pos) (reader-error "Expected number" pos))
         (cond
           # radix integer: <base>r<digits>, e.g. 2r1010, 16rFF, 36rZ
           (and (< iend len) (or (= (s iend) 114) (= (s iend) 82)))
             (let [base (scan-number (string/slice s pos iend))
                   ds (+ iend 1)
                   de (read-alnum s ds ds)]
-              (if (= de ds) (error (string "Expected radix digits at " ds)))
+              (if (= de ds) (reader-error "Expected radix digits" ds))
               (var acc 0)
               (var i ds)
               (while (< i de) (set acc (+ (* acc base) (radix-digit-val (s i)))) (++ i))
@@ -238,7 +268,7 @@
   (defn read-list-items [s pos items]
     (let [pos (skip-whitespace s pos)]
       (if (>= pos (length s))
-        (error "Unterminated list"))
+        (reader-error "Unterminated list" pos))
       (if (= (s pos) 41) # )
         [items (+ pos 1)]
         (let [[form new-pos] (read-form s pos)]
@@ -256,7 +286,7 @@
   (defn read-vec-items [s pos items]
     (let [pos (skip-whitespace s pos)]
       (if (>= pos (length s))
-        (error "Unterminated vector"))
+        (reader-error "Unterminated vector" pos))
       (if (= (s pos) 93) # ]
         [(tuple/slice (tuple ;items)) (+ pos 1)]
         (let [[form new-pos] (read-form s pos)]
@@ -282,7 +312,7 @@
   (defn read-kvs [s pos kvs]
     (let [pos (skip-whitespace s pos)]
       (if (>= pos (length s))
-        (error "Unterminated map"))
+        (reader-error "Unterminated map" pos))
       (if (= (s pos) 125) # }
         [(reader-map kvs) (+ pos 1)]
         (let [[key new-pos] (read-form s pos)]
@@ -321,7 +351,7 @@
   (defn read-set-items [s pos items]
     (let [pos (skip-whitespace s pos)]
       (if (>= pos (length s))
-        (error "Unterminated set"))
+        (reader-error "Unterminated set" pos))
       (if (= (s pos) 125) # }
         [{:jolt/type :jolt/set :value (tuple/slice (tuple ;items))} (+ pos 1)]
         (let [[form new-pos] (read-form s pos)]
@@ -477,7 +507,7 @@
         (set done [(struct ;[:jolt/type :jolt/tagged :tag :regex :form (string/slice s (+ pos 2) i)])
                    (+ i 1)])
         (++ i))))
-  (if done done (error "Unterminated regex literal")))
+  (if done done (reader-error "Unterminated regex literal" pos)))
 
 (defn read-dispatch [s pos]
   # pos is at #
@@ -499,7 +529,7 @@
             (= name "Inf") [math/inf end]
             (= name "-Inf") [(- math/inf) end]
             (= name "NaN") [math/nan end]
-            (error (string "Invalid symbolic value: ##" name))))
+            (reader-error (string "Invalid symbolic value: ##" name) pos)))
       # unknown dispatch — tagged literal
       (let [end (read-symbol-name s pos pos)
             tag (string/slice s pos end)
@@ -581,13 +611,13 @@
           
           # unmatched closing delimiters
           (= c 41)
-          (error (string "Unmatched closing paren at " pos))
+          (reader-error "Unmatched delimiter: )" pos)
           
           (= c 93)
-          (error (string "Unmatched closing bracket at " pos))
+          (reader-error "Unmatched delimiter: ]" pos)
           
           (= c 125)
-          (error (string "Unmatched closing brace at " pos))
+          (reader-error "Unmatched delimiter: }" pos)
           
           # vector
           (= c 91)
@@ -637,10 +667,15 @@
 (defn parse-string
   "Parse a Clojure source string and return the first form."
   [s]
-  (let [[form pos] (read-form s 0)]
-    (if (and (struct? form) (= :jolt/skip (form :jolt/type)))
-      (parse-string (string/slice s pos))
-      form)))
+  (try
+    (let [[form pos] (read-form s 0)]
+      (if (and (struct? form) (= :jolt/skip (form :jolt/type)))
+        (parse-string (string/slice s pos))
+        form))
+    ([err fib]
+      (if (reader-error? err)
+        (error (format-reader-error err s nil))
+        (propagate err fib)))))
 
 (defn parse-next
   "Parse the first form from a string. Returns [form remaining-string]."
@@ -658,7 +693,7 @@
   leading trivia itself, so the form's start line is the running newline
   count plus the newlines in the trivia (whitespace, commas, ; comments)
   ahead of it. (jolt-2o7.4)"
-  [source]
+  [source &opt file]
   (def out @[])
   (var s source)
   (var line 1)
@@ -674,7 +709,17 @@
         (or (= c (chr " ")) (= c (chr "\t")) (= c (chr "\r")) (= c (chr ","))) (++ i)
         (= c (chr ";")) (while (and (< i n) (not= (in s i) (chr "\n"))) (++ i))
         (set scanning false)))
-    (def [form rest*] (parse-next s))
+    (def [form rest*]
+      (try (parse-next s)
+        ([err fib]
+          (if (reader-error? err)
+            # err's :pos is relative to the remaining slice — rebase onto the
+            # full source so line:col are absolute (jolt-2o7.5)
+            (error (format-reader-error
+                     {:jolt/type :jolt/reader-error :msg (err :msg)
+                      :pos (+ (- (length source) (length s)) (err :pos))}
+                     source file))
+            (propagate err fib)))))
     (def consumed (- (length s) (length rest*)))
     (def form-line line)
     # count newlines inside the consumed chunk past the trivia
