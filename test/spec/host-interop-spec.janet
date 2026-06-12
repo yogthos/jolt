@@ -186,3 +186,16 @@
   ["replace fn gets group vector" "\"v=k\""
    "(do (require (quote [clojure.string :as s9])) (s9/replace \"k=v\" #\"(\\w+)=(\\w+)\" (fn [[_ k v]] (str v \"=\" k))))"]
   ["indexOf int needle is a char code" "1" "(.indexOf \"a=b\" 61)"])
+
+# JOLT_BAKE_ENV_ALLOWLIST (jolt-s3j): with the allowlist set, System/getenv
+# serves only the listed names — so an image bake can't marshal the builder's
+# secrets into the binary. Unset, reads are live and unfiltered.
+(defspec "host-interop / bake env scrub"
+  ["unlisted name reads nil under the allowlist" "nil"
+   "(do (janet.os/setenv \"JOLT_BAKE_ENV_ALLOWLIST\" \"PATH\") (let [r (System/getenv \"HOME\")] (janet.os/setenv \"JOLT_BAKE_ENV_ALLOWLIST\" nil) r))"]
+  ["listed name still reads" "true"
+   "(do (janet.os/setenv \"JOLT_BAKE_ENV_ALLOWLIST\" \"HOME\") (let [r (System/getenv \"HOME\")] (janet.os/setenv \"JOLT_BAKE_ENV_ALLOWLIST\" nil) (string? r)))"]
+  ["full snapshot filtered to the allowlist" "true"
+   "(do (janet.os/setenv \"JOLT_BAKE_ENV_ALLOWLIST\" \"HOME\") (let [e (System/getenv)] (janet.os/setenv \"JOLT_BAKE_ENV_ALLOWLIST\" nil) (and (contains? (set (keys e)) \"HOME\") (= 1 (count (keys e))))))"]
+  ["no allowlist: unfiltered live reads" "true"
+   "(string? (System/getenv \"HOME\"))"])
