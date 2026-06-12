@@ -20,12 +20,18 @@
 (check-const "(quot 7 2)" 3)
 (check-const "(mod -7 3)" 2)
 (check-const "(if (< 1 2) :yes :no)" :yes)
-# dead-branch elimination: the untaken branch never evaluates
-(check-const "(if false (this-would-not-resolve) 2)" 2)
+# dead-branch elimination: the untaken branch never evaluates (it must still
+# RESOLVE — unresolved symbols are analysis errors as in Clojure, jolt-2o7.3)
+(check-const "(if false (throw (ex-info \"boom\" {})) 2)" 2)
+# an unresolvable symbol errors even in a dead branch (analysis precedes folding)
+(assert (not ((protect (ir "(if false (this-would-not-resolve) 2)")) 0))
+        "unresolved symbol errors even in a dead branch")
 
-# non-constants stay calls; folding must be conservative
-(assert (= :invoke ((ir "(+ x 2)") :op)) "free var stays a call")
-(assert (= :invoke ((ir "(mod x 0)") :op)) "non-const args stay calls")
+# non-constants stay calls; folding must be conservative. `xq` is a real var
+# (defined here) so it resolves, but its VALUE must not be folded in.
+(api/eval-string ctx "(def xq 1)")
+(assert (= :invoke ((ir "(+ xq 2)") :op)) "var ref stays a call")
+(assert (= :invoke ((ir "(mod xq 0)") :op)) "non-const args stay calls")
 # a fold that would THROW is left for runtime
 (assert (= :invoke ((ir "(mod 5 0)") :op)) "throwing fold left to runtime")
 

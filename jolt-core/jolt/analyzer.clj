@@ -199,7 +199,17 @@
               (case (:kind r)
                 :var (var-ref (:ns r) (:name r))
                 :host (host-ref (:name r))
-                (var-ref (compile-ns ctx) nm))))))
+                ;; :unresolved — previously emitted a var-ref that auto-interned
+                ;; an UNBOUND var, so a typo'd symbol died later as 'Cannot call
+                ;; nil as a function' with no hint which symbol (jolt-2o7.3).
+                ;; Punt to the interpreter: its resolver raises Clojure's
+                ;; 'Unable to resolve symbol' when the form actually runs (at
+                ;; eval for top-level forms, at call for fn bodies). A punt
+                ;; rather than a hard throw because runtime-interning forms
+                ;; (defmulti's setup call) legitimately reference the var they
+                ;; are about to create when nested in a non-top-level do. Real
+                ;; forward references want (declare ...), as in Clojure.
+                (uncompilable (str "Unable to resolve symbol: " nm " in this context")))))))
 
 (defn- analyze-list [ctx form env]
   (let [items (vec (form-elements form))]

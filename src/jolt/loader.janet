@@ -24,12 +24,7 @@
     (let [ff (first form)]
       (when (and (struct? ff) (= :symbol (ff :jolt/type))) (ff :name)))))
 
-(defn eval-toplevel
-  "Evaluate one top-level form for ctx, honoring :compile?. Stateful forms always
-  interpret; otherwise the form runs through the self-hosted compile pipeline
-  (portable Clojure analyzer -> IR -> Janet back end), which falls back to the
-  interpreter for forms it can't compile. Only the compile step is guarded —
-  runtime errors in compiled code propagate (no double-eval, no hidden errors)."
+(defn- eval-toplevel-1
   [ctx form]
   # Repair point for the interpreted-fn ns swap: a body runs with current-ns
   # rebound to its defining ns and restores it on normal return; an UNWINDING
@@ -68,6 +63,26 @@
       # propagate (not error): re-raising with `error` discards the failing
       # fiber's stack
       (propagate err fib))))
+
+(defn eval-toplevel
+  "Evaluate one top-level form for ctx, honoring :compile?. Stateful forms always
+  interpret; otherwise the form runs through the self-hosted compile pipeline
+  (portable Clojure analyzer -> IR -> Janet back end), which falls back to the
+  interpreter for forms it can't compile. Only the compile step is guarded —
+  runtime errors in compiled code propagate (no double-eval, no hidden errors)."
+  [ctx form]
+  # Clojure's top-level `do` rule: children are compiled AND evaluated one at
+  # a time, so a child's runtime effects (defmulti's var intern, requires, …)
+  # are visible while the NEXT child compiles. Without the split, (do
+  # (defmulti area …) (area …)) can't analyze — `area` only exists once the
+  # defmulti has RUN, and unresolved symbols are analysis errors now
+  # (jolt-2o7.3).
+  (if (and (array? form) (= "do" (form-head-name form)))
+    (do
+      (var res nil)
+      (each child (array/slice form 1) (set res (eval-toplevel ctx child)))
+      res)
+    (eval-toplevel-1 ctx form)))
 
 (defn load-ns
   "Load a Clojure namespace from a .clj file. Per-form routing (compile-or-

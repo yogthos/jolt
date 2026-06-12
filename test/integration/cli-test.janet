@@ -50,9 +50,16 @@
 (check "arity error names the fn"
        (run-err "-e" "(defn afn [x] x) (afn 1 2)")
        (has "Wrong number of args (2) passed to: user/afn"))
-(check "nil-call hints at undefined symbol"
+(check "nil-call (nil value) keeps the hint"
+       (run-err "-e" "(def x nil) (x 1)")
+       (has "Cannot call nil as a function"))
+# round 3: typos die at resolve time with Clojure's message, not as nil-calls
+(check "unresolved symbol named at resolve time"
        (run-err "-e" "(undefined-fn 1)")
-       (has "undefined (misspelled?) symbol"))
+       (has "Unable to resolve symbol: undefined-fn in this context"))
+(check "typo inside fn body also resolves to the message"
+       (run-err "-e" "(defn f [] (no-such 1)) (f)")
+       (has "Unable to resolve symbol: no-such"))
 (check "trace shows the user's call chain"
        (run-err "-e" "(defn inner [x] (let [r (+ x :k)] r)) (defn outer [x] (let [v (inner x)] v)) (outer 1)")
        (fn [s] (and (string/find "at user/inner" s) (string/find "at user/outer" s))))

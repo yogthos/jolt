@@ -7,6 +7,8 @@
 ;; internal Janet callers, not used by the self-hosted compiler.
 
 ;; Tiny leaves first — fns below in this tier (and 25-sorted) use them.
+(defn some? [x] (not (nil? x)))
+
 (defn identity [x] x)
 
 (defn constantly [x] (fn [& args] x))
@@ -130,6 +132,11 @@
 
 (defn split-with [pred coll] [(take-while pred coll) (drop-while pred coll)])
 
+(defn qualified-keyword? [x] (and (keyword? x) (some? (namespace x))))
+(defn simple-keyword? [x] (and (keyword? x) (nil? (namespace x))))
+(defn qualified-symbol? [x] (and (symbol? x) (some? (namespace x))))
+(defn simple-symbol? [x] (and (symbol? x) (nil? (namespace x))))
+
 (defn ident? [x] (or (keyword? x) (symbol? x)))
 
 (defn qualified-ident? [x] (or (qualified-symbol? x) (qualified-keyword? x)))
@@ -234,10 +241,8 @@
 (defn thread-bound? [& vars]
   (every? (fn [v] (__thread-bound? v)) vars))
 
-;; file-seq: the tree of paths under root (root included), directories walked
-;; via the host dir primitives. Paths (strings), not File objects.
-(defn file-seq [root]
-  (tree-seq __dir? __list-dir root))
+(defn key [e] (if (map-entry? e) (nth e 0) (throw (ex-info "key requires a map entry" {}))))
+(defn val [e] (if (map-entry? e) (nth e 1) (throw (ex-info "val requires a map entry" {}))))
 
 ;; --- Ad-hoc hierarchies (stage 3) — Clojure's canonical pure-map port. -----
 ;; A hierarchy is {:parents {tag #{parents}} :ancestors {tag #{all}} 
@@ -322,6 +327,10 @@
 (defn counted? [x]
   (or (vector? x) (map? x) (set? x) (list? x) (string? x)))
 (defn indexed? [x] (vector? x))
+;; sorted? is defined by the next tier (25-sorted) — declared here so this
+;; tier compiles (forward references are analysis errors now, jolt-2o7.3).
+(declare sorted?)
+
 (defn reversible? [x] (or (vector? x) (sorted? x)))
 (defn seqable? [x]
   (or (nil? x) (coll? x) (string? x)))
@@ -331,10 +340,8 @@
 (defn float? [x] (double? x))
 (defn infinite? [x] (and (number? x) (or (= x ##Inf) (= x ##-Inf))))
 
-(defn qualified-keyword? [x] (and (keyword? x) (some? (namespace x))))
-(defn simple-keyword? [x] (and (keyword? x) (nil? (namespace x))))
-(defn qualified-symbol? [x] (and (symbol? x) (some? (namespace x))))
-(defn simple-symbol? [x] (and (symbol? x) (nil? (namespace x))))
+;; qualified-/simple- keyword?/symbol? moved above qualified-ident? (forward
+;; references are analysis errors now — jolt-2o7.3).
 
 ;; find: the map entry [k v] when k is present (nil values included), nil
 ;; otherwise. contains? gives vectors-by-index for free, matching Clojure.
@@ -342,6 +349,19 @@
   (when (contains? m k) [k (get m k)]))
 
 ;; realized?: defined on the pending types only (delay/lazy-seq/future read
+;; Tagged-value predicates. The constructors (atom/volatile!/...) stay in Janet,
+;; but every tagged value carries its kind under :jolt/type (records under
+;; :jolt/deftype), reachable via get — which is nil on non-tables — so the
+;; predicates are pure over get and move out of the seed.
+(defn atom? [x]               (= (get x :jolt/type) :jolt/atom))
+(defn volatile? [x]           (= (get x :jolt/type) :jolt/volatile))
+(defn reader-conditional? [x] (= (get x :jolt/type) :jolt/reader-conditional))
+(defn tagged-literal? [x]     (= (get x :jolt/type) :jolt/tagged-literal))
+(defn record? [x]             (some? (get x :jolt/deftype)))
+(defn uuid? [x]               (= (get x :jolt/type) :jolt/uuid))
+(defn inst? [x]               (= (get x :jolt/type) :jolt/inst))
+(defn char? [x]               (= (get x :jolt/type) :jolt/char))
+
 ;; their realization slot; promises/atoms always-realized), error otherwise.
 (defn realized? [x]
   (cond
@@ -379,6 +399,14 @@
   ([coll] (dorun coll) coll)
   ([n coll] (dorun n coll) coll))
 
+;; spread: (spread [1 2 [3 4]]) => (1 2 3 4) — list*'s variadic helper
+;; (private in Clojure).
+(defn- spread [arglist]
+  (cond
+    (nil? arglist) nil
+    (nil? (next arglist)) (seq (first arglist))
+    :else (cons (first arglist) (spread (next arglist)))))
+
 ;; list*: cons the leading args onto the final seq argument.
 (defn list*
   ([args] (seq args))
@@ -387,14 +415,6 @@
   ([a b c args] (cons a (cons b (cons c args))))
   ([a b c d & more]
    (cons a (cons b (cons c (cons d (spread more)))))))
-
-;; spread: (spread [1 2 [3 4]]) => (1 2 3 4) — list*'s variadic helper
-;; (private in Clojure; defined after use is fine, vars resolve at call time).
-(defn- spread [arglist]
-  (cond
-    (nil? arglist) nil
-    (nil? (next arglist)) (seq (first arglist))
-    :else (cons (first arglist) (spread (next arglist)))))
 
 ;; print-str family: print/println/prn into a captured *out*.
 (defn print-str [& xs] (__with-out-str (fn* [] (apply print xs))))
@@ -494,6 +514,12 @@
                        (when (branch? node)
                          (mapcat walk (children node))))))]
     (walk root)))
+
+;; file-seq: the tree of paths under root (root included), directories walked
+;; via the host dir primitives. Paths (strings), not File objects. (Lives below
+;; tree-seq: forward references are analysis errors now — jolt-2o7.3.)
+(defn file-seq [root]
+  (tree-seq __dir? __list-dir root))
 
 ;; Canonical flatten via tree-seq: the leaves (non-sequential nodes) in order.
 ;; Flattens lists too (sequential?), matching Clojure/CLJS.
@@ -603,19 +629,6 @@
 (defn ex-cause [e]
   (let [e (ex-unwrap e)] (if (ex-info-val? e) (get e :cause) nil)))
 
-;; Tagged-value predicates. The constructors (atom/volatile!/...) stay in Janet,
-;; but every tagged value carries its kind under :jolt/type (records under
-;; :jolt/deftype), reachable via get — which is nil on non-tables — so the
-;; predicates are pure over get and move out of the seed.
-(defn atom? [x]               (= (get x :jolt/type) :jolt/atom))
-(defn volatile? [x]           (= (get x :jolt/type) :jolt/volatile))
-(defn reader-conditional? [x] (= (get x :jolt/type) :jolt/reader-conditional))
-(defn tagged-literal? [x]     (= (get x :jolt/type) :jolt/tagged-literal))
-(defn record? [x]             (some? (get x :jolt/deftype)))
-(defn uuid? [x]               (= (get x :jolt/type) :jolt/uuid))
-(defn inst? [x]               (= (get x :jolt/type) :jolt/inst))
-(defn char? [x]               (= (get x :jolt/type) :jolt/char))
-
 ;; inst-ms: epoch milliseconds of an instant; throws on a non-inst (Clojure
 ;; protocol behavior).
 (defn inst-ms [x]
@@ -634,6 +647,10 @@
   ([n coll] (map vec (partition n coll)))
   ([n step coll] (map vec (partition n step coll)))
   ([n step pad coll] (map vec (partition n step pad coll))))
+
+;; partition-all is a lazy-tier fn (40-lazy) — declared so partitionv-all
+;; compiles; bound by the time anything calls it.
+(declare partition-all)
 
 (defn partitionv-all
   ([n coll] (map vec (partition-all n coll)))
@@ -684,12 +701,7 @@
 (defn set-validator! [a f]
   (jolt.host/ref-put! a :validator f) nil)
 
-;; Volatiles. The constructor (volatile!) stays native — it builds the mutable box —
-;; but vreset! sets the box's slot through ref-put! and vswap! is pure over it + get.
-(defn vreset! [vol newval]
-  (jolt.host/ref-put! vol :val newval) newval)
-(defn vswap! [vol f & args]
-  (vreset! vol (apply f (get vol :val) args)))
+;; vreset!/vswap! live in the seq tier (10-seq.clj): its transducers use them.
 
 ;; Future status predicates — pure reads of the future's :cached/:cancelled slots.
 ;; future? stays native (deref/future-cancel/realized? call it); future-call and
@@ -761,8 +773,7 @@
 
 ;; Strict, as in Clojure: an entry is what (seq m) yields (a host tuple), NOT
 ;; a plain vector — (key [1 2]) throws.
-(defn key [e] (if (map-entry? e) (nth e 0) (throw (ex-info "key requires a map entry" {}))))
-(defn val [e] (if (map-entry? e) (nth e 1) (throw (ex-info "val requires a map entry" {}))))
+;; key/val moved above the hierarchies section (underive uses them).
 
 ;; find was previously missing from jolt entirely. Presence (contains?), not
 ;; value, decides — so (find {:a nil} :a) is [:a nil]. Works on vectors by
@@ -772,7 +783,7 @@
 (defn find [m k]
   (when (contains? m k) (first {k (get m k)})))
 
-(defn some? [x] (not (nil? x)))
+;; some? lives in the top leaf block now (forward refs are errors).
 (defn true? [x] (= true x))
 (defn false? [x] (= false x))
 

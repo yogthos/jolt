@@ -130,14 +130,23 @@
 #                                      same fallback the interpreter's resolve-sym uses
 #   {:kind :unresolved :name NAME}   — not yet defined (forward reference)
 (defn h-resolve-global [ctx sym]
-  (let [v (resolve-var ctx @{} sym)]
-    (if v
-      {:kind :var :ns (var-ns v) :name (var-name v)}
-      (let [nm (sym :name)
-            entry (in (fiber/getenv (fiber/current)) (symbol nm))]
-        (if (not (nil? entry))
-          {:kind :host :name nm}
-          {:kind :unresolved :name nm})))))
+  # Unqualified syms must resolve against the COMPILE ns (h-current-ns), not
+  # ctx-current-ns: the analyzer runs interpreted in jolt.analyzer, so during
+  # analysis resolve-var's unqualified branch looks in the wrong namespace.
+  # Before jolt-2o7.3 the analyzer's lenient fallthrough masked this (it
+  # emitted a var-ref against compile-ns for everything 'unresolved').
+  (def v (if (sym :ns)
+           (resolve-var ctx @{} sym)
+           (let [cns (ctx-find-ns ctx (h-current-ns ctx))]
+             (or (and cns (ns-find cns (sym :name)))
+                 (ns-find (ctx-find-ns ctx "clojure.core") (sym :name))))))
+  (if v
+    {:kind :var :ns (var-ns v) :name (var-name v)}
+    (let [nm (sym :name)
+          entry (in (fiber/getenv (fiber/current)) (symbol nm))]
+      (if (not (nil? entry))
+        {:kind :host :name nm}
+        {:kind :unresolved :name nm}))))
 
 (defn h-intern! [ctx ns-name nm]
   (ns-intern (ctx-find-ns ctx ns-name) nm)

@@ -740,7 +740,7 @@
                       # No implicit Janet fallback (Stage 3): an unresolved
                       # Clojure symbol is an error. Host access is the explicit
                       # janet/ prefix above.
-                      (error (string "Unable to resolve symbol: " name))))))))))))))))))
+                      (error (string "Unable to resolve symbol: " name " in this context"))))))))))))))))))
 (defn- parse-arg-names
   "Parse a parameter vector, handling & rest args.
   Returns {:fixed [names...] :rest name-or-nil :all [names...]}"
