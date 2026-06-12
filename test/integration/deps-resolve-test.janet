@@ -125,6 +125,32 @@
   )
 (rmrf gbase)
 
+# --- :jpm/module deps: janet libraries installed through jpm -----------------
+# Verification only (jpm owns installation): an importable module passes and
+# contributes no roots; a missing one errors with the install hint. jpm/pm is
+# always importable wherever jpm itself runs (CI included).
+(do
+  (def jbase (string (or (os/getenv "TMPDIR") "/tmp") "/jolt-deps-jpm-" (os/time)))
+  (mkdirs (string jbase "/src"))
+  (spit (string jbase "/deps.edn")
+    `{:paths ["src"] :deps {janet/jpm-pm {:jpm/module "jpm/pm"}}}`)
+  (def cwd (os/cwd))
+  (os/cd jbase)
+  (def roots (deps/resolve-deps "deps.edn" (string jbase "/jpm_tree")))
+  (os/cd cwd)
+  (check "jpm module dep resolves" true (not (nil? roots)))
+  (check "jpm module contributes no roots" 1 (length roots))
+
+  (spit (string jbase "/deps.edn")
+    `{:paths ["src"] :deps {janet/nope {:jpm/module "no/such-module-xyz"}}}`)
+  (os/cd jbase)
+  (def r (protect (deps/resolve-deps "deps.edn" (string jbase "/jpm_tree"))))
+  (os/cd cwd)
+  (check "missing jpm module errors" false (r 0))
+  (check "error carries the install hint" true
+         (not (nil? (string/find "jpm install" (string (r 1))))))
+  (rmrf jbase))
+
 (if (> fails 0)
   (error (string "deps-resolve-test: " fails " failing check(s)"))
   (print "\nAll deps-resolve tests passed!"))

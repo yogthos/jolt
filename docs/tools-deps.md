@@ -107,3 +107,23 @@ a regex feature like Unicode property classes (`\p{…}`).
 - **Compiling deps into a binary image.** `uberscript` already produces a
   standalone `.clj`; baking a project's dependencies directly into a custom
   executable image is a heavier variant that isn't implemented.
+
+## Janet dependencies: `:jpm/module`
+
+A jolt project can depend on janet libraries. jpm owns their installation;
+`deps.edn` declares the requirement and `jolt-deps` verifies it at resolve
+time:
+
+```clojure
+:deps {janet/spork-http {:jpm/module "spork/http"
+                         :jpm/install "spork"}}
+```
+
+- `:jpm/module` — the janet module path that must be importable.
+- `:jpm/install` (optional) — the jpm package to install when it isn't;
+  `jolt-deps` runs `jpm install <name>` once, then re-checks. Without it the
+  resolve fails with the install hint.
+
+A `:jpm/module` dep contributes no source roots. At runtime the `janet.*`
+interop bridge autoloads the module on first reference
+(`janet.spork.http/server`, …), so nothing else is needed.

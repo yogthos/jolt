@@ -13,20 +13,30 @@
 # the janet/* interop bridge falls back to it inside env-less fibers.
 (def- module-load-env (fiber/getenv (fiber/current)))
 
-# spork/http, VENDORED (vendor/spork/http.janet, MIT) so the jolt binary
-# carries its own HTTP support: a direct import marshals the fns into the
-# baked image — no runtime require, no env-bridge marshal hazards. Reaches
-# the jolt layer as janet.spork.http/* via janet-bridge-extras, the second
-# lookup the janet.* bridge consults after the fiber env. The Ring adapter
-# (examples/ring-app) and jolt.http build on it.
-(import ../../vendor/spork/http :as vendored-spork-http)
-(def- janet-bridge-extras
-  (let [t @{} pfx "vendored-spork-http/"]
-    (eachp [sym entry] (curenv)
-      (when (and (symbol? sym) (string/has-prefix? pfx sym) (table? entry))
-        (put t (string "spork.http/" (string/slice sym (length pfx)))
-               (get entry :value))))
-    t))
+# jpm-module autoload: a janet.<module>/<name> reference whose module isn't
+# in the env is satisfied by requiring it from the jpm module path on first
+# use — (janet.spork.http/server ...) just works when spork is installed,
+# and the same goes for any jpm module. Loaded bindings are cached here
+# (and failures negatively cached, so a missing module errors fast).
+(def- janet-bridge-extras @{})
+(def- janet-bridge-failed @{})
+(defn- bridge-autoload
+  "jname is spork.http/server-shaped: require spork/http, cache its public
+  bindings under the dotted prefix, return the one asked for (nil when the
+  module is missing or has no such binding)."
+  [jname]
+  (def slash (string/find "/" jname))
+  (when slash
+    (def mod-ns (string/slice jname 0 slash))
+    (unless (get janet-bridge-failed mod-ns)
+      (def mod-path (string/replace-all "." "/" mod-ns))
+      (def r (protect (require mod-path)))
+      (if (r 0)
+        (eachp [sym entry] (r 1)
+          (when (and (symbol? sym) (table? entry) (not (get entry :private)))
+            (put janet-bridge-extras (string mod-ns "/" sym) (get entry :value))))
+        (put janet-bridge-failed mod-ns true))))
+  (in janet-bridge-extras jname))
 
 (defn- sym-name?
   [sym-s name-str]
@@ -644,15 +654,16 @@
             (let [jname (if (= ns "janet") name (string (string/slice ns 6) "/" name))
                   # worker fibers may carry no env (fiber/new without :e inherit)
                   # — fall back to the env captured at module load
-                  # three-step resolution: the runtime fiber's env (when it
+                  # four-step resolution: the runtime fiber's env (when it
                   # has one), the evaluator's module env (worker/connection
                   # fibers carry a foreign or empty env — net/server handler
-                  # fibers resolve janet/struct through here), then the
-                  # vendored-module registry (spork.http/*, marshaled fns)
+                  # fibers resolve janet/struct through here), the autoload
+                  # cache, then a jpm-module require on first miss
                   entry (or (when-let [fe (fiber/getenv (fiber/current))]
                               (in fe (symbol jname)))
                             (in module-load-env (symbol jname))
-                            (in janet-bridge-extras jname))]
+                            (in janet-bridge-extras jname)
+                            (bridge-autoload jname))]
               (if (not (nil? entry))
                 (if (table? entry) (entry :value) entry)
                 (error (string "Unable to resolve Janet symbol: " jname))))
