@@ -124,12 +124,15 @@
           "runtime error in compiled code propagates"))
 
 # Context isolation: a def in one compiled context is invisible in another. With
-# var-indirection each context has its own var cells, so b's `secret` is a
-# distinct, unbound var (nil) rather than a's 7.
+# var-indirection each context has its own var cells, so in b `secret` does not
+# resolve at all ('Unable to resolve symbol', jolt-2o7.3) rather than seeing a's 7.
 (let [a (init-cached {:compile? true}) b (init-cached {:compile? true})]
   (eval-string a "(def secret 7)")
   (assert (= 7 (ct-eval a "secret")) "def visible in its own ctx")
-  (assert (nil? (ct-eval b "secret")) "def isolated to its ctx"))
+  (def r (protect (ct-eval b "secret")))
+  (assert (and (not (r 0))
+               (string/find "Unable to resolve symbol: secret" (string/format "%q" (r 1))))
+          "def isolated to its ctx (unresolved there)"))
 
 # Redefinition is visible to already-compiled callers (var-indirection).
 (let [c (init-cached {:compile? true})]

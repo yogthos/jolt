@@ -8,6 +8,14 @@
 ;; self-hosted compiler (jolt-core/jolt/*.clj). Compiler-facing structural fns go
 ;; in the kernel tier (00-kernel) instead — see its header.
 
+;; Volatiles (moved up from 20-coll: this tier's transducers use them, and the
+;; analyzer now ERRORS on unresolved forward references — jolt-2o7.3). The
+;; constructor (volatile!) stays native; these are pure over ref-put!/get.
+(defn vreset! [vol newval]
+  (jolt.host/ref-put! vol :val newval) newval)
+(defn vswap! [vol f & args]
+  (vreset! vol (apply f (get vol :val) args)))
+
 (defn ffirst [coll] (first (first coll)))
 (defn nfirst [coll] (next (first coll)))
 (defn fnext  [coll] (first (next coll)))
