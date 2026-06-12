@@ -112,7 +112,7 @@
   (load-ns ctx filepath) → namespace symbol string"
   [ctx filepath]
   (def source (slurp filepath))
-  (def pairs (parse-all-positioned source))
+  (def pairs (parse-all-positioned source filepath))
   (var ns-name nil)
   (each [form _] pairs
     # Extract ns name from the first ns form

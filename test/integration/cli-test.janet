@@ -86,6 +86,25 @@
        (run-err "-e" `(+ 1 "a")`)
        (fn [s] (nil? (string/find "<eval>" s))))
 
+# --- round 5: reader errors carry file:line:col ------------------------------
+(check "unterminated string positions in -e"
+       (run-err "-e" `(+ 1 "abc`)
+       (has "Syntax error reading source at (<eval>:1:10): Unterminated string"))
+(check "unterminated list names script file:line:col"
+       (do (spit (string r4 "/syn.clj") "(ns syn)\n\n(defn f [x]\n  (+ x 1\n")
+           (run-err (string r4 "/syn.clj")))
+       (has ":5:1): Unterminated list"))
+(check "unmatched delimiter positioned"
+       (do (spit (string r4 "/app/synreq.clj") "(ns app.synreq)\n\n(def x ])\n")
+           (spit (string r4 "/app/top2.clj") "(ns app.top2 (:require [app.synreq :as q]))\n(defn -main [& a] nil)\n")
+           (os/setenv "JOLT_PATH" r4)
+           (run-err "-m" "app.top2"))
+       (fn [s] (and (string/find "/app/synreq.clj:3:8): Unmatched delimiter: ]" s)
+                    (string/find "/app/top2.clj:1" s))))
+(check "bad token positioned"
+       (run-err "-e" "(def x ##Huh)")
+       (has "Invalid symbolic value: ##Huh"))
+
 (check "JOLT_DEBUG restores the raw trace"
        (do (os/setenv "JOLT_DEBUG" "1")
            (def r (run-err "-e" `(+ 1 "a")`))

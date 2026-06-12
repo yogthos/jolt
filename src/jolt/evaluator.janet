@@ -361,7 +361,7 @@
   [ctx src &opt file]
   (default file "<source>")
   (def toplevel (get (ctx :env) :toplevel-eval))
-  (each [f line] (parse-all-positioned src)
+  (each [f line] (parse-all-positioned src file)
     (try
       (if toplevel (toplevel ctx f) (eval-form ctx @{} f))
       ([err fib]
