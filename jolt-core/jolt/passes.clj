@@ -848,10 +848,19 @@
 (def ^:private user-sig-box (atom {}))      ;; "ns/name" -> {:params [..] :body ir}
 (def ^:private checking-box (atom #{}))     ;; keys mid-recheck — cycle guard
 (def ^:private strict-box (atom false))     ;; report against user-fn domains?
+;; When true, `infer` emits success-type diagnostics as it types (jolt audit).
+;; The checker IS the inference walk now — one O(n) pass that both types and
+;; checks, instead of a separate check-walk that re-inferred every subtree
+;; (quadratic in nesting). Off during the optimization fixpoint so it doesn't
+;; emit intermediate diagnostics; on only inside check-form.
+(def ^:private checking? (atom false))
 
 ;; fns that RETURN an element of their (first) collection arg, so a lookup on the
 ;; result of (rand-nth coll-of-structs) etc. types as the element.
 (def ^:private elem-fns #{"rand-nth" "first" "peek" "last" "nth" "fnext" "second"})
+
+;; the checker's emission points, defined after infer but referenced from it
+(declare check-invoke check-user-call register-user-fn!)
 
 (defn- var-key [fnode] (str (get fnode :ns) "/" (get fnode :name)))
 
@@ -1039,6 +1048,15 @@
                 ares (mapv (fn [a] (infer a tenv)) args)]
             (when iscall-var
               (swap! calls-box conj [(var-key fnode) (mapv (fn [r] (nth r 0)) ares)]))
+            ;; success-type check at this call, reusing the arg types just
+            ;; computed (jolt audit): core error domains always, user-fn domains
+            ;; in strict mode. The arg subtrees are inferred exactly once.
+            (when @checking?
+              (let [ats (mapv (fn [r] (nth r 0)) ares) pos (get node :pos)]
+                (when cn (check-invoke cn args ats pos))
+                (when (and @strict-box iscall-var)
+                  (let [k (var-key fnode) usig (get @user-sig-box k)]
+                    (when usig (check-user-call k usig ats pos))))))
             [(cond
                (= cn "range") (mk-vec :num)
                ;; element-returning fn over a typed vector -> the element type
@@ -1074,7 +1092,8 @@
                              (assoc a :body (nth (infer (get a :body) pe) 1))))
                          (get node :arities)))]
       (= op :def)
-      [:any (assoc node :init (nth (infer (get node :init) tenv) 1))]
+      (do (when @checking? (register-user-fn! node))
+          [:any (assoc node :init (nth (infer (get node :init) tenv) 1))])
       (= op :try)
       [:any (assoc node
                    :body (nth (infer (get node :body) tenv) 1)
@@ -1157,8 +1176,6 @@
                           ", but argument 1 is " (type-name t))})))
     :else nil))
 
-(declare check-walk)
-
 ;; --- user-function error domains (jolt-zo1), opt-in --------------------------
 (defn- all-any-env
   "tenv binding every param name to :any (the all-ambiguous baseline)."
@@ -1166,12 +1183,13 @@
   (reduce (fn [e p] (assoc e p :any)) {} params))
 
 (defn- isolated-diag-count
-  "Count of diagnostics check-walk produces for body under tenv, with the shared
-  diag-box saved and restored so this probe never leaks into the real report."
+  "Count of diagnostics typing body under tenv produces, with the shared
+  diag-box saved and restored so this probe never leaks into the real report.
+  Runs the same checking inference as check-form (checking? is already on)."
   [body tenv]
   (let [saved @diag-box]
     (reset! diag-box [])
-    (check-walk body tenv)
+    (infer body tenv)
     (let [n (count @diag-box)]
       (reset! diag-box saved)
       n)))
@@ -1226,65 +1244,6 @@
           nil (range np)))
       (reset! checking-box prev))))
 
-(defn- check-walk
-  "Walk the IR, inferring argument types and recording diagnostics for
-  provably-wrong core-fn calls. Threads tenv through binders exactly like infer."
-  [node tenv]
-  (let [op (get node :op)]
-    (cond
-      (= op :invoke)
-      (let [fnode (get node :fn)
-            args (get node :args)
-            cn (when (and (= :var (get fnode :op)) (= "clojure.core" (get fnode :ns)))
-                 (get fnode :name))
-            ukey (when (= :var (get fnode :op))
-                   (str (get fnode :ns) "/" (get fnode :name)))
-            usig (when (and @strict-box ukey) (get @user-sig-box ukey))]
-        (when (or cn usig)
-          (let [ats (mapv (fn [a] (nth (infer a tenv) 0)) args)
-                pos (get node :pos)]
-            (when cn (check-invoke cn args ats pos))
-            (when usig (check-user-call ukey usig ats pos))))
-        (check-walk fnode tenv)
-        (reduce (fn [_ a] (check-walk a tenv) nil) nil args))
-      (= op :let)
-      (let [te (reduce (fn [e b]
-                         (check-walk (nth b 1) e)
-                         (assoc e (nth b 0) (nth (infer (nth b 1) e) 0)))
-                       tenv (get node :bindings))]
-        (check-walk (get node :body) te))
-      (= op :if)
-      (do (check-walk (get node :test) tenv)
-          (check-walk (get node :then) tenv)
-          (check-walk (get node :else) tenv))
-      (= op :do)
-      (do (reduce (fn [_ s] (check-walk s tenv) nil) nil (get node :statements))
-          (check-walk (get node :ret) tenv))
-      (= op :fn)
-      (reduce (fn [_ a]
-                (let [pe (reduce (fn [e p] (assoc e p :any)) tenv (get a :params))
-                      pe (if (get a :rest) (assoc pe (get a :rest) :any) pe)]
-                  (check-walk (get a :body) pe))
-                nil)
-              nil (get node :arities))
-      (= op :loop)
-      (do (reduce (fn [_ b] (check-walk (nth b 1) tenv) nil) nil (get node :bindings))
-          (check-walk (get node :body) tenv))
-      (= op :recur)
-      (reduce (fn [_ a] (check-walk a tenv) nil) nil (get node :args))
-      (= op :def) (do (register-user-fn! node) (check-walk (get node :init) tenv))
-      (= op :throw) (check-walk (get node :expr) tenv)
-      (= op :vector) (reduce (fn [_ x] (check-walk x tenv) nil) nil (get node :items))
-      (= op :set) (reduce (fn [_ x] (check-walk x tenv) nil) nil (get node :items))
-      (= op :map)
-      (reduce (fn [_ pr] (check-walk (nth pr 0) tenv) (check-walk (nth pr 1) tenv) nil)
-              nil (get node :pairs))
-      (= op :try)
-      (do (check-walk (get node :body) tenv)
-          (when (get node :catch-body) (check-walk (get node :catch-body) tenv))
-          (when (get node :finally) (check-walk (get node :finally) tenv)))
-      :else nil)))
-
 ;; --- Inter-procedural driver API (jolt-767) consumed by the back end --------
 (defn set-rtenv!
   "Install the current return-type estimates (a map \"ns/name\" -> type) used to
@@ -1319,7 +1278,12 @@
    (reset! strict-box (if strict? true false))
    (reset! checking-box #{})
    (reset! diag-box [])
-   (check-walk node {})
+   ;; the check IS the inference: one walk that types and emits diagnostics
+   ;; (jolt audit). checking? gates emission so the optimization fixpoint, which
+   ;; also calls infer, stays silent.
+   (reset! checking? true)
+   (infer node {})
+   (reset! checking? false)
    (reset! strict-box false)
    (vec @diag-box)))
 
