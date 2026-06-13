@@ -1,9 +1,14 @@
 # RFC 0006 — Compile-time detection of provably-wrong code (success typing)
 
-- **Status**: Implemented (jolt-y3b), first table. Core-fn error domains
-  (arithmetic on non-numbers, count/first/rest/next/seq/nth on non-seqable
-  scalars), `JOLT_TYPE_CHECK=off|warn|error`, decoupled from specialization.
-  Precise source locations (file:line:col) remain follow-up work.
+- **Status**: Implemented. Core-fn error domains (arithmetic on non-numbers,
+  count/first/rest/next/seq/nth on non-seqable scalars), `JOLT_TYPE_CHECK=
+  off|warn|error`. Follow-ups landed: bounded scalar **unions** (jolt-pz5) so a
+  use is reported only when every member is in the error domain; **user-fn
+  error domains** behind `JOLT_TYPE_CHECK_USER` (jolt-zo1, closed-world);
+  precise **file:line:col** locations (jolt-fqy). The checker is now one
+  inference walk (folded into `infer`), and is **on by default in direct-link
+  builds** — where it piggybacks on the specialization inference for ~free —
+  and opt-in (`JOLT_TYPE_CHECK`) in plain builds.
 - **Champions**: jolt maintainers
 - **Created**: 2026-06-13
 - **Depends on**: RFC 0005 (structural collection-type inference)
@@ -112,8 +117,7 @@ A reported error includes:
 Example:
 
 ```
-type error at scene.clj:42:18
-  (inc total) — `inc` requires a number, but `total` is a string
+type error scene.clj:42:18: `inc` requires a number, but argument 1 is a string
 ```
 
 Errors are attributed to the form the user wrote. For macro-expanded code, the
@@ -122,13 +126,19 @@ tracks `:error-pos`), never at synthesized internals.
 
 ## Strictness levels
 
-A single env/compile flag controls behavior, defaulting to non-breaking:
+`JOLT_TYPE_CHECK` controls behavior:
 
-- **off** — no checking (default for now).
-- **warn** — report to stderr, do not fail compilation. The recommended rollout
-  default once the table is trusted.
+- **off** — no checking.
+- **warn** — report to stderr, do not fail compilation. **The default in
+  direct-link builds**, where checking rides the specialization inference for
+  ~free; opt-in elsewhere.
 - **error** — fail compilation on a provable type error. Opt-in for CI / strict
   builds.
+
+When `JOLT_TYPE_CHECK` is unset, checking is **on (`warn`) in direct-link
+builds** and **off in plain REPL/dev builds** (where it would cost a standalone
+inference pass, ~2.6× compile). `JOLT_TYPE_CHECK_USER` additionally enables
+reporting against inferred user-function domains (closed-world; see below).
 
 Because the checker only fires on provable errors, even `error` mode cannot
 break a correct program: a correct program has no provable type errors to
@@ -193,26 +203,28 @@ smallest high-confidence table (arithmetic and seq/count/nth/first), and grow.
   destroys trust. Mitigation: start tiny, test each entry against the runtime,
   grow slowly. Open question: derive the table from the same machinery the
   runtime uses, to avoid drift?
-- **Unions.** Today the inference joins to `:any` rather than forming unions
-  (`{:num | :str}`). Precise success typing wants unions (report only when
-  *every* member is in the error domain). Open question: add a small bounded
-  union type to RFC 0005's lattice, or keep `:any` and lose some precision (more
-  conservative, fewer reports, still no false positives)? Proposed: start with
-  `:any` (conservative), add unions if too many real errors are missed.
-- **User-function signatures.** Reporting against inferred user-fn domains is
-  more powerful but rests on the closed-world assumption and on the inferred
-  signature being a true requirement. Proposed: core fns first; user fns behind
-  an explicit opt-in.
-- **Negative/never types.** Some "provably wrong" cases are about a value being
-  the wrong arity or a fn vs a non-fn (calling a non-function). Worth including
-  the clear ones (calling a `:num` as a function) since the inference already
-  knows function-ness.
-- **Position vs intent.** Reporting at the right source location through
-  inlining and macro expansion needs the position metadata to survive the
-  passes. The loader tracks `:error-pos`; the IR may need to carry form
-  positions for precise column reporting.
-- **Interaction with the optimization gate.** The inference currently runs only
-  in optimization mode. The checker is valuable in normal builds too, so the
-  inference (at least its intra-procedural, sound-without-closed-world part)
-  may need to run for checking even when specialization is off. Open question:
-  decouple "run inference for checking" from "specialize from inference".
+- **Unions.** *Resolved (jolt-pz5).* The lattice has a bounded scalar union
+  `{:union #{T...}}` (cap 4); differing if-branches form a union instead of
+  collapsing to `:any`, and a use is reported only when *every* member is in the
+  error domain. Unions are opaque to structural specialization, so codegen is
+  unchanged.
+- **User-function signatures.** *Resolved (jolt-zo1), opt-in.* Behind
+  `JOLT_TYPE_CHECK_USER`: the checker re-checks a registered non-redefinable
+  user fn's body with one parameter bound to its concrete argument type; a
+  diagnostic the all-`:any` body did not have means that argument is provably
+  wrong. Monotonic, so still no false positives; closed-world, hence opt-in.
+- **Negative/never types.** Still open. Some "provably wrong" cases are wrong
+  arity or a non-fn called as a fn; worth including the clear ones (calling a
+  `:num`) since the inference knows function-ness.
+- **Position vs intent.** *Resolved (jolt-fqy).* The reader records each list
+  form's absolute offset (identity-keyed, so positions survive macroexpansion
+  exactly when the user's sub-form is spliced through); the analyzer stamps it
+  onto `:invoke` nodes, the checker carries it into each diagnostic, and the
+  back end renders `file:line:col`. Inlining/scalar-replace preserve it via
+  `assoc`.
+- **Interaction with the optimization gate.** *Resolved (jolt audit).* The
+  checker is one inference walk folded into `infer`. In direct-link builds it
+  piggybacks on the specialization inference that already runs (~free, default
+  on); in plain builds it runs as a standalone pass only when `JOLT_TYPE_CHECK`
+  is set. "Run inference for checking" and "specialize from inference" are the
+  same walk now, gated by a `checking?` flag.
