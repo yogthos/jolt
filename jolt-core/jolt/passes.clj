@@ -794,6 +794,7 @@
 (def ^:private rtenv-box (atom {}))   ;; "ns/name" -> inferred return type
 (def ^:private calls-box (atom []))   ;; collected [ "ns/name" [arg-types...] ]
 (def ^:private escapes-box (atom #{})) ;; var-keys used as a VALUE (not a call head)
+(def ^:private diag-box (atom []))    ;; success-type-check diagnostics (RFC 0006)
 ;; jolt-d6u: a var reference's VALUE type — a fn var is :truthy (non-nil), a def
 ;; var carries its inferred init type (e.g. a color table -> {:vec :struct-map}).
 ;; The orchestrator populates this from sealed (opt-mode) cell roots + def inits.
@@ -1034,6 +1035,121 @@
 
 (defn- infer-top [node] (nth (infer node {}) 1))
 
+;; ---------------------------------------------------------------------------
+;; Success-type checking (RFC 0006). Reuse the inference above as a loose type
+;; checker: flag a core-fn call ONLY when an argument's inferred type is
+;; concrete AND lies in that op's error domain (the op provably throws on it).
+;; Everything ambiguous — :any, :truthy (true/char/...), :nil — is accepted, so
+;; there are no false positives. The table is curated to genuinely-throwing
+;; cases; lenient ops ((get 5 :k) -> nil, (:k 5) -> nil) are NOT listed.
+
+;; concrete non-numbers: arithmetic provably throws on these.
+(defn- not-number? [t]
+  (or (= t :str) (= t :kw) (= t :phm)
+      (struct-type? t) (vec-type? t) (set-type? t)))
+
+;; concrete non-seqable scalars: seq/count/first/nth provably throw on these.
+;; (Strings and collections ARE seqable/countable; :truthy is ambiguous; :nil
+;; and :any are accepted.)
+(defn- not-seqable? [t] (or (= t :num) (= t :kw)))
+
+;; arithmetic / numeric ops: EVERY argument must be a number.
+(def ^:private num-ops
+  #{"+" "-" "*" "/" "inc" "dec" "mod" "rem" "quot" "min" "max" "abs"
+    "bit-and" "bit-or" "bit-xor" "bit-not" "bit-shift-left" "bit-shift-right"})
+;; seq/count/index ops: argument 0 must be seqable/countable.
+(def ^:private seq-ops #{"count" "first" "rest" "next" "seq" "nth"})
+
+(defn- type-name
+  "Render an inferred type for an error message."
+  [t]
+  (cond (struct-type? t) "a map"
+        (vec-type? t) "a vector"
+        (set-type? t) "a set"
+        (= t :str) "a string"
+        (= t :kw) "a keyword"
+        (= t :num) "a number"
+        (= t :phm) "a map"
+        :else (str t)))
+
+(defn- check-invoke
+  "If node is a core-op call whose argument type is provably in the error domain,
+  conj a diagnostic. arg-types is the vector of inferred argument types."
+  [cn args arg-types]
+  (cond
+    (contains? num-ops cn)
+    (reduce (fn [_ i]
+              (let [t (nth arg-types i)]
+                (when (not-number? t)
+                  (swap! diag-box conj
+                         {:op cn :argpos i :type (type-name t)
+                          :msg (str "`" cn "` requires a number, but argument "
+                                    (inc i) " is " (type-name t))})))
+              nil)
+            nil (range (count args)))
+    (and (contains? seq-ops cn) (> (count args) 0))
+    (let [t (nth arg-types 0)]
+      (when (not-seqable? t)
+        (swap! diag-box conj
+               {:op cn :argpos 0 :type (type-name t)
+                :msg (str "`" cn "` requires "
+                          (if (= cn "count") "a countable collection" "a seqable")
+                          ", but argument 1 is " (type-name t))})))
+    :else nil))
+
+(defn- check-walk
+  "Walk the IR, inferring argument types and recording diagnostics for
+  provably-wrong core-fn calls. Threads tenv through binders exactly like infer."
+  [node tenv]
+  (let [op (get node :op)]
+    (cond
+      (= op :invoke)
+      (let [fnode (get node :fn)
+            args (get node :args)
+            cn (when (and (= :var (get fnode :op)) (= "clojure.core" (get fnode :ns)))
+                 (get fnode :name))]
+        (when cn
+          (check-invoke cn args (mapv (fn [a] (nth (infer a tenv) 0)) args)))
+        (check-walk fnode tenv)
+        (reduce (fn [_ a] (check-walk a tenv) nil) nil args))
+      (= op :let)
+      (let [te (reduce (fn [e b]
+                         (check-walk (nth b 1) e)
+                         (assoc e (nth b 0) (nth (infer (nth b 1) e) 0)))
+                       tenv (get node :bindings))]
+        (check-walk (get node :body) te))
+      (= op :if)
+      (do (check-walk (get node :test) tenv)
+          (check-walk (get node :then) tenv)
+          (check-walk (get node :else) tenv))
+      (= op :do)
+      (do (reduce (fn [_ s] (check-walk s tenv) nil) nil (get node :statements))
+          (check-walk (get node :ret) tenv))
+      (= op :fn)
+      (reduce (fn [_ a]
+                (let [pe (reduce (fn [e p] (assoc e p :any)) tenv (get a :params))
+                      pe (if (get a :rest) (assoc pe (get a :rest) :any) pe)]
+                  (check-walk (get a :body) pe))
+                nil)
+              nil (get node :arities))
+      (= op :loop)
+      (do (reduce (fn [_ b] (check-walk (nth b 1) tenv) nil) nil (get node :bindings))
+          (check-walk (get node :body) tenv))
+      (= op :recur)
+      (reduce (fn [_ a] (check-walk a tenv) nil) nil (get node :args))
+      (= op :def) (check-walk (get node :init) tenv)
+      (= op :throw) (check-walk (get node :expr) tenv)
+      (= op :vector) (reduce (fn [_ x] (check-walk x tenv) nil) nil (get node :items))
+      (= op :set) (reduce (fn [_ x] (check-walk x tenv) nil) nil (get node :items))
+      (= op :map)
+      (reduce (fn [_ pr] (check-walk (nth pr 0) tenv) (check-walk (nth pr 1) tenv) nil)
+              nil (get node :pairs))
+      (= op :try)
+      (do (check-walk (get node :body) tenv)
+          (when (get node :catch-body) (check-walk (get node :catch-body) tenv))
+          (when (get node :finally) (check-walk (get node :finally) tenv)))
+      :else nil)))
+
 ;; --- Inter-procedural driver API (jolt-767) consumed by the back end --------
 (defn set-rtenv!
   "Install the current return-type estimates (a map \"ns/name\" -> type) used to
@@ -1052,6 +1168,16 @@
 
 (defn reset-escapes! [] (reset! escapes-box #{}))
 (defn collected-escapes [] (vec @escapes-box))
+
+(defn check-form
+  "Success-type check a single analyzed form (RFC 0006). Returns a vector of
+  diagnostics [{:op :argpos :type :msg} ...] for provably-wrong core-fn calls;
+  empty when nothing is provably wrong. Runs independently of specialization so
+  it is usable in normal builds (the decoupled checking path)."
+  [node]
+  (reset! diag-box [])
+  (check-walk node {})
+  (vec @diag-box))
 
 (defn infer-body
   "Type `body` under tenv (local-name -> type). Returns [ret-type node' calls],

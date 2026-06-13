@@ -613,6 +613,27 @@
   [ctx]
   (build-compiler! ctx))
 
+(defn type-check!
+  "Success-type check the analyzed IR (RFC 0006). Looks up jolt.passes/check-form
+  (absent during pre-passes bootstrap -> no-op), runs it protected so a checker
+  bug never breaks compilation, then reports each diagnostic per strictness:
+  `warn` prints to stderr, `error` throws (failing this form's compilation).
+  Because the checker only fires on PROVABLY-wrong code, a correct program has
+  nothing to report under either level."
+  [ctx ir strictness ns]
+  (def cf (ns-find (ctx-find-ns ctx "jolt.passes") "check-form"))
+  (when cf
+    (def r (protect ((var-get cf) ir)))
+    (when (r 0)
+      (def diags (if (pv/pvec? (r 1)) (pv/pv->array (r 1)) (r 1)))
+      (when (and diags (> (length diags) 0))
+        (def loc (if ns (string ns) "?"))
+        (each d diags
+          (def msg (string "type error in " loc ": " (get d :msg)))
+          (if (= strictness "error")
+            (error msg)
+            (eprint "  " msg)))))))
+
 (defn analyze-form
   "Run the portable Clojure analyzer (jolt.analyzer/analyze) on a reader form,
   returning host-neutral IR."
@@ -645,14 +666,23 @@
   # Resolved lazily; absent during the pre-passes bootstrap window.
   (def pv (unless (= "1" (os/getenv "JOLT_NO_IR_PASSES"))
             (ns-find (ctx-find-ns ctx "jolt.passes") "run-passes")))
-  (if pv
-    (let [pr (protect ((var-get pv) (r 1) ctx))]
-      # the pass runs interpreted; a throw inside it unwinds past the
-      # interpreter's ns restores — put the compile ns back either way, or
-      # the REST of this compilation resolves in jolt.passes
-      (ctx-set-current-ns ctx saved-ns)
-      (if (pr 0) (pr 1) (r 1)))
-    (r 1)))
+  (def result
+    (if pv
+      (let [pr (protect ((var-get pv) (r 1) ctx))]
+        # the pass runs interpreted; a throw inside it unwinds past the
+        # interpreter's ns restores — put the compile ns back either way, or
+        # the REST of this compilation resolves in jolt.passes
+        (ctx-set-current-ns ctx saved-ns)
+        (if (pr 0) (pr 1) (r 1)))
+      (r 1)))
+  # Success-type check (RFC 0006), decoupled from specialization: runs whenever
+  # JOLT_TYPE_CHECK is warn/error, regardless of :inline?. Read at runtime so it
+  # needs no rebuild. The analyzed IR (r 1) carries no specialization; the
+  # checker does its own inference.
+  (def tc (os/getenv "JOLT_TYPE_CHECK"))
+  (when (and tc (not= tc "off") (not= tc "0"))
+    (type-check! ctx (r 1) tc saved-ns))
+  result)
 
 # The analyzer's deliberate punt signal — (uncompilable why) throws the string
 # "jolt/uncompilable: <why>". Anything else escaping the compile step is an
