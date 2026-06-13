@@ -506,7 +506,9 @@
 # future doesn't block the parent.
 (def- thread-statics
   {"sleep" (fn [ms] (ev/sleep (/ ms 1000)) nil)
-   "yield" (fn [] (ev/sleep 0) nil)})
+   "yield" (fn [] (ev/sleep 0) nil)
+   "interrupted" (fn [] false)
+   "currentThread" (fn [] @{:jolt/type :jolt/thread :id "main"})})
 
 # System statics (wall/monotonic clocks — what portable timing code uses).
 (def- system-statics
@@ -563,7 +565,12 @@
                  (def n (scan-number (string/trim (string s)) (or radix 10)))
                  (if (and n (= n (math/floor n)))
                    n
-                   (error (string "NumberFormatException: For input string: \"" s "\""))))})
+                   (error (string "NumberFormatException: For input string: \"" s "\""))))
+   "valueOf" (fn [s &opt radix]
+               (def n (scan-number (string/trim (string s)) (or radix 10)))
+               (if (and n (= n (math/floor n)))
+                 n
+                 (error (string "NumberFormatException: For input string: \"" s "\""))))})
 
 # Pluggable host-class shims (java.time etc. register here at module load):
 #   class-statics: "ClassName" -> {"member" value-or-fn}   (Foo/bar resolution)

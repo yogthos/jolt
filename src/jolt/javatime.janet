@@ -481,7 +481,62 @@
   (each nm ["IllegalArgumentException" "java.lang.IllegalArgumentException"]
     (register-class-ctor! nm (fn [msg] (string msg))))
   (each nm ["InterruptedException" "java.lang.InterruptedException"]
-    (register-class-ctor! nm (fn [msg] (string msg)))))
+    (register-class-ctor! nm (fn [msg] (string msg))))
+  # Character class statics (ASCII — the engine is byte-based).
+  (register-class-statics! "Character"
+    @{"isUpperCase" (fn [ch] (and (>= (ch :ch) 65) (<= (ch :ch) 90)))
+      "isLowerCase" (fn [ch] (and (>= (ch :ch) 97) (<= (ch :ch) 122)))})
+  # java.net.URI constructor: stores the spec string, rounds-trips through str.
+  (each nm ["URI" "java.net.URI"]
+    (register-class-ctor! nm (fn [spec] (string spec))))
+  # java.util.Date: millis-valued instants; no-arg = now.
+  (defn- make-date [&opt ms]
+    @{:jolt/type :jolt/date :ms (or ms (math/floor (* 1000 (os/clock :realtime))))})
+  (each nm ["Date" "java.util.Date"]
+    (register-class-ctor! nm make-date))
+  (register-tagged-methods! :jolt/date
+    @{"getTime" (fn [self] (self :ms))
+      "toString" (fn [self] (string (self :ms)))})
+  # java.util.TimeZone: getTimeZone(id) -> a tz value.
+  (defn- make-tz [id] @{:jolt/type :jolt/tz :id (string id)})
+  (register-class-statics! "TimeZone"
+    @{"getTimeZone" (fn [id] (make-tz id))})
+  (register-class-statics! "java.util.TimeZone"
+    @{"getTimeZone" (fn [id] (make-tz id))})
+  # java.text.SimpleDateFormat: minimal formatter supporting y M d H m s tokens.
+  (defn- pad2 [n] (if (< n 10) (string "0" n) (string n)))
+  (defn- sdf-format [pattern ms utc?]
+    (def d (os/date (math/floor (/ ms 1000)) (not utc?)))
+    (def out @"")
+    (var i 0)
+    (while (< i (length pattern))
+      (def c (pattern i))
+      (def k (do (var j i)
+                 (while (and (< j (length pattern)) (= (pattern j) c)) (++ j))
+                 (- j i)))
+      (cond
+        (= c (chr "y")) (do (buffer/push out (if (>= k 4) (string (d :year)) (pad2 (mod (d :year) 100)))) (+= i k))
+        (= c (chr "M")) (do (buffer/push out (if (= k 1) (string (+ 1 (d :month))) (pad2 (+ 1 (d :month))))) (+= i k))
+        (= c (chr "d")) (do (buffer/push out (if (= k 1) (string (+ 1 (d :month-day))) (pad2 (+ 1 (d :month-day))))) (+= i k))
+        (= c (chr "H")) (do (buffer/push out (if (= k 1) (string (d :hours)) (pad2 (d :hours)))) (+= i k))
+        (= c (chr "m")) (do (buffer/push out (if (= k 1) (string (d :minutes)) (pad2 (d :minutes)))) (+= i k))
+        (= c (chr "s")) (do (buffer/push out (if (= k 1) (string (d :seconds)) (pad2 (d :seconds)))) (+= i k))
+        (do (buffer/push out (string/from-bytes c)) (++ i))))
+    (string out))
+  (defn- make-sdf [pattern]
+    @{:jolt/type :jolt/sdf :pattern pattern :utc true})
+  (each nm ["SimpleDateFormat" "java.text.SimpleDateFormat"]
+    (register-class-ctor! nm make-sdf))
+  (register-tagged-methods! :jolt/sdf
+    @{"setTimeZone" (fn [self tz]
+                      (put self :utc (= "UTC" (get tz :id)))
+                      self)
+      "format" (fn [self date]
+                 (sdf-format (self :pattern) (date :ms) (self :utc)))})
+  # Thread stub: getContextClassLoader returns a stub so migratus jar/create code
+  # that walks Thread/currentThread doesn't crash.
+  (register-tagged-methods! :jolt/thread
+    @{"getContextClassLoader" (fn [self] @{:jolt/type :jolt/classloader})}))
 
 (install!)
 (install-io!)
