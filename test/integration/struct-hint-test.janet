@@ -33,6 +33,10 @@
 (assert (= 1 (guards "(fn [^String v] (:r v))")) "^String (not a record) still guards")
 (assert (= 0 (guards "(fn [^:struct v] (+ (+ (:r v) (:g v)) (:b v)))")) "all three hinted lookups bare")
 (assert (= 0 (guards "(fn [^:struct v] (lensq v))")) "hint survives through an inlined call")
+# hints work on let bindings too, not just params (init is a plain local here,
+# so the only candidate guard is the hinted (:r v))
+(assert (= 0 (guards "(fn [^:struct s] (let [^:struct v s] (:r v)))")) "^:struct on a let binding drops the guard")
+(assert (= 1 (guards "(fn [s] (let [v s] (:r v)))")) "unhinted let binding keeps the guard")
 # (get m :k) gets the same treatment as (:k m)
 (assert (= 1 (guards "(fn [m] (get m :k))")) "unhinted (get m :k) is guarded-inline")
 (assert (= 0 (guards "(fn [^:struct m] (get m :k))")) "^:struct (get m :k) drops the guard")
