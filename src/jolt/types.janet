@@ -625,15 +625,31 @@
        (struct? (in x 0)) (not (nil? (in (in x 0) :jolt/shape)))))
 (defn shape-keys [rec] ((in rec 0) :jolt/shape))
 (defn shape-get [rec k default]
-  (def pos (get ((in rec 0) :idx) k))
-  (if (nil? pos) default (in rec (+ pos 1))))
-(defn shape-assoc [rec k v]
-  # assoc on a known key keeps the layout; a new key falls back to a struct
   (def desc (in rec 0))
   (def pos (get (desc :idx) k))
-  (if (nil? pos)
-    (let [t @{}] (each kk (desc :jolt/shape) (put t kk (shape-get rec kk nil))) (put t k v) (table/to-struct t))
-    (let [a (array ;rec)] (put a (+ pos 1) v) (tuple ;a))))
+  (cond
+    (not (nil? pos)) (in rec (+ pos 1))
+    # records respond to the virtual :jolt/deftype key with their type tag, so
+    # every existing (get obj :jolt/deftype) dispatch site keeps working
+    (and (= k :jolt/deftype) (desc :type)) (desc :type)
+    default))
+(defn shape-assoc [rec k v]
+  # assoc on a known key keeps the layout. A new key: a record keeps its type
+  # and grows a slot (Clojure records stay records when extended); a plain
+  # shape-rec falls back to a struct.
+  (def desc (in rec 0))
+  (def pos (get (desc :idx) k))
+  (cond
+    (not (nil? pos)) (let [a (array ;rec)] (put a (+ pos 1) v) (tuple ;a))
+    (desc :type)
+      (let [new-keys (array ;(desc :jolt/shape) k) idx @{}]
+        (var i 0) (each kk new-keys (put idx kk i) (++ i))
+        (def ndesc (struct :jolt/shape (tuple ;new-keys) :idx (table/to-struct idx) :type (desc :type)))
+        (def out @[ndesc])
+        (each kk (desc :jolt/shape) (array/push out (shape-get rec kk nil)))
+        (array/push out v)
+        (tuple ;out))
+    (let [t @{}] (each kk (desc :jolt/shape) (put t kk (shape-get rec kk nil))) (put t k v) (table/to-struct t))))
 (defn shape-count [rec] (- (length rec) 1))
 (defn shape-contains? [rec k] (not (nil? (get ((in rec 0) :idx) k))))
 (defn shape-vals [rec] (tuple/slice rec 1))
@@ -643,4 +659,35 @@
   (def desc (in rec 0)) (def t @{})
   (each kk (desc :jolt/shape) (put t kk (in rec (+ 1 (get (desc :idx) kk)))))
   (table/to-struct t))
+
+# --- records as shapes (jolt-t34 R3) ----------------------------------------
+# A user record (deftype/defrecord) is a shape-rec whose descriptor ALSO carries
+# :type (the type tag). Field layout is the DECLARED field order (not sorted),
+# so the positional ->Name constructor maps args to slots directly. The
+# descriptor is interned per type tag, so all instances of a type share it.
+# record-tag unifies the type accessor over both the new shape-rec records and
+# the table form still used for reified protocol objects.
+(def- record-desc-cache @{})
+(defn record-desc [type-tag field-keys]
+  "Build a record descriptor (interned in declared field order) for the given
+  key set. Not cached — used for records extended past their declared fields."
+  (let [idx @{}]
+    (var i 0) (each k field-keys (put idx k i) (++ i))
+    (struct :jolt/shape (tuple ;field-keys) :idx (table/to-struct idx) :type type-tag)))
+(defn record-shape-for [type-tag field-keys]
+  (or (get record-desc-cache type-tag)
+      (let [desc (record-desc type-tag field-keys)]
+        (put record-desc-cache type-tag desc)
+        desc)))
+(defn make-record [type-tag field-keys args]
+  (def out @[(record-shape-for type-tag field-keys)])
+  (var i 0) (each k field-keys (array/push out (in args i)) (++ i))
+  (tuple ;out))
+(defn record-tag
+  "The deftype/record type tag of x, or nil. Covers shape-rec records (descriptor
+  :type) and the table form (reified objects, :jolt/deftype)."
+  [x]
+  (cond
+    (and (tuple? x) (> (length x) 0) (struct? (in x 0))) (get (in x 0) :type)
+    (and (table? x) (get x :jolt/deftype)) (get x :jolt/deftype)))
 

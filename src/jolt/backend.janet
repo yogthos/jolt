@@ -384,10 +384,14 @@
   # on, a raw-get-safe value may still be a shape-rec (its :shape dropped by a
   # join), so read the index from the value's own descriptor when it is a tuple;
   # a real struct takes the bare get. (jolt-t34)
+  # sidx => proven complete shape, bare index (the fast path). Otherwise route a
+  # TUPLE (a possible shape-rec) to core-get, which is shape-aware and nil-safe;
+  # a struct takes the bare get. NOT gated on compile-time JOLT_SHAPE: core is
+  # baked WITHOUT the flag but still receives user shape-recs, so this must hold
+  # in baked core too. Cost on the default path is one tuple? test per
+  # non-proven keyword lookup. (jolt-t34 R3)
   (defn get-or-shape [getexpr]
-    (cond sidx ['in m sidx]
-          (os/getenv "JOLT_SHAPE") ['if ['tuple? m] ['in m ['+ 1 [[['in m 0] :idx] k]]] getexpr]
-          getexpr))
+    (if sidx ['in m sidx] ['if ['tuple? m] (tuple core-get m k nil) getexpr]))
   (if (nil? d-expr)
     (let [fast (get-or-shape ['get m k])]
       (wrap (cond

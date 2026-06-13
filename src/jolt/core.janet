@@ -1631,8 +1631,15 @@
             (buffer/push-string buf (ns-display-name v))
             (buffer/push-string buf "]"))
       (and (table? v) (= :jolt/var (get v :jolt/type))) (buffer/push-string buf (var-display v))
-      (shape-rec? v) (pr-render-pairs buf
-                       (map (fn [k] [k (shape-get v k nil)]) (shape-keys v)))
+      (shape-rec? v)
+        (let [rtag (record-tag v)
+              pairs (map (fn [k] [k (shape-get v k nil)]) (shape-keys v))]
+          (cond
+            # a record shape-rec prints Clojure-style: #ns.Type{:k v, ...}
+            (and rtag print-method-cb (print-method-cb v (fn [piece] (buffer/push-string buf piece)))) nil
+            rtag (do (buffer/push-string buf (string "#" rtag))
+                     (pr-render-pairs buf pairs))
+            (pr-render-pairs buf pairs)))
       (core-sorted-map? v) (pr-render-pairs buf
                              (map (fn [e] [(vnth e 0) (vnth e 1)]) (sorted-entries-arr v)))
       (core-sorted-set? v) (pr-render-seq buf (sorted-entries-arr v) "#{" "}")
