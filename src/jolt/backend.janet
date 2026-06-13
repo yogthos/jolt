@@ -355,13 +355,15 @@
 #   - ^:struct / ^Record hinted subject: skip the guard, bare get (~20 vs ~36ns).
 #   - hinted + JOLT_CHECK_HINTS: keep the guard but THROW on the tagged arm, so a
 #     lying hint surfaces a clear error (dev aid; off by default, no perf cost).
+# vec3 shape layout: descriptor at 0, then sorted keys [:b :g :r] at 1,2,3 (jolt-t34)
+(def- vec3-shape-idx {:b 1 :g 2 :r 3})
 (defn- emit-kw-lookup [subj-node m-expr k d-expr]
   # the subject is a struct (raw-get-safe) when hinted so — by an explicit
   # ^:struct/^Record hint on a local, OR by inference tagging ANY subject
   # expression it proved to be a struct (jolt-d6u/RFC 0005), which is what lets
   # nested access like (:r (:direction ray)) drop its guard.
-  (def hinted (and subj-node (= :struct (subj-node :hint))))
-  (def checked (and hinted (os/getenv "JOLT_CHECK_HINTS")))
+  (def hinted (and subj-node (or (= :struct (subj-node :hint)) (= :shape (subj-node :hint)))))
+  (def checked (and (= :struct (subj-node :hint)) (os/getenv "JOLT_CHECK_HINTS")))
   (def m (if (symbol? m-expr) m-expr (jsym)))
   (def wrap (fn [body] (if (symbol? m-expr) body ['let [m m-expr] body])))
   (def err (when checked
@@ -369,15 +371,24 @@
                              k " " (subj-node :name) ") — value carries :jolt/type "
                              "(a phm/sorted/transient/lazy-seq), not the plain "
                              "struct/record the ^:struct/^Record hint asserts")]))
+  (def sidx (and (os/getenv "JOLT_SHAPE") (get vec3-shape-idx k)))
+  # subject PROVEN to be the vec3 shape (jolt-t34): read by bare index, no check.
+  (def shaped (and sidx (= :shape (subj-node :hint))))
+  # otherwise, when JOLT_SHAPE is on and the key is a vec3 field but the shape
+  # isn't proven, runtime-check (tuple? + struct? of elem 0, inline opcodes).
+  (defn get-or-shape [getexpr]
+    (cond shaped ['in m sidx]
+          sidx ['if ['and ['tuple? m] ['struct? ['in m 0]]] ['in m sidx] getexpr]
+          getexpr))
   (if (nil? d-expr)
-    (let [fast ['get m k]]
+    (let [fast (get-or-shape ['get m k])]
       (wrap (cond
               checked ['if ['get m :jolt/type] err fast]
               hinted fast
               ['if ['get m :jolt/type] (tuple core-get m k) fast])))
     (let [d (if (symbol? d-expr) d-expr (jsym))
           v (jsym)
-          fast ['let [v ['get m k]] ['if ['nil? v] d v]]
+          fast ['let [v (get-or-shape ['get m k])] ['if ['nil? v] d v]]
           body (cond
                  checked ['if ['get m :jolt/type] err fast]
                  hinted fast
@@ -470,6 +481,29 @@
     (unless (and (= :const (k :op))
                  (or (keyword? kv) (string? kv) (number? kv) (boolean? kv)))
       (set fast false)))
+  # Shape-record fast path (jolt-t34, JOLT_SHAPE): a vec3-shaped {:r :g :b} map
+  # literal becomes a shape tuple (≈2x cheaper than a struct). Scoped to this
+  # one shape for the prototype so other maps (hit-info/ray/material) stay
+  # structs and assoc on them is unaffected. Values are emitted in the shape's
+  # canonical (sorted-key) order; element 0 is the compile-time shape descriptor.
+  (def shape-keys
+    (when (and fast (os/getenv "JOLT_SHAPE"))
+      (def ks @[])
+      (each pair pairs (array/push ks ((norm-node (in (vview pair) 0)) :val)))
+      (def srt (sorted ks))
+      (when (deep= srt @[:b :g :r]) srt)))
+  (if shape-keys
+    (do
+      (def desc (shape-for shape-keys))
+      (def by-key @{})
+      (each pair pairs
+        (def p (vview pair))
+        (put by-key ((norm-node (in p 0)) :val) (emit ctx (in p 1))))
+      # quote the descriptor: it is a struct constant, and its keys are a parens
+      # tuple — unquoted in code position Janet would try to CALL it ((:b :g))
+      (def out @['tuple ['quote desc]])
+      (each k shape-keys (array/push out (get by-key k)))
+      (tuple/slice out))
   (if fast
     (do
       (def binds @[])
@@ -499,7 +533,7 @@
         (def p (vview pair))
         (array/push args (emit ctx (in p 0)))
         (array/push args (emit ctx (in p 1))))
-      (tuple/slice args))))
+      (tuple/slice args)))))
 
 # A set literal: build (make-phs e1 e2 …) so each element is evaluated at runtime
 # then the persistent set is constructed — mirrors compiler.janet's emit-set-expr.

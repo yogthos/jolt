@@ -806,6 +806,17 @@
 ;; k, if known, else :any.
 (defn- struct-safe? [t] (struct-type? t))
 (defn- field-type [t k] (if (struct-type? t) (get (sfields t) k :any) :any))
+;; vec3 shape detection (jolt-t34, prototype): a struct type whose key set is
+;; exactly {:r :g :b}. The back end represents such maps as shape tuples, so a
+;; lookup on a value PROVEN to be this shape can read by bare index with no
+;; runtime check. Scoped to the one shape for the prototype.
+(defn- vec3-shape? [t]
+  (and (struct-type? t)
+       (let [fs (sfields t)]
+         (and (get fs :r) (get fs :g) (get fs :b) (= 3 (count (keys fs)))))))
+;; the structural hint for a subject: :shape when provably the vec3 shape (bare
+;; indexed read), else :struct when raw-get-safe.
+(defn- struct-hint [t] (if (vec3-shape? t) :shape :struct))
 ;; tag a node (any expression, not just a :local) so the back end can specialize
 ;; a lookup whose SUBJECT is that node — this is what makes nested access work:
 ;; (:direction ray) is tagged struct, so (:r (:direction ray)) drops its guard.
@@ -929,7 +940,7 @@
       (let [t (get tenv (get node :name))]
         [(if t t :any)
          (cond
-           (struct-safe? t) (assoc node :hint :struct)
+           (struct-safe? t) (assoc node :hint (struct-hint t))
            (vec-type? t) (assoc node :hint :vector)
            :else node)])
       (= op :map)
@@ -987,7 +998,7 @@
           (and (= :const (get fnode :op)) (keyword? (get fnode :val)) (>= n 1) (<= n 2))
           (let [mr (infer (nth args 0) tenv)
                 mt (nth mr 0)
-                msub (if (struct-safe? mt) (mark-hint (nth mr 1) :struct) (nth mr 1))
+                msub (if (struct-safe? mt) (mark-hint (nth mr 1) (struct-hint mt)) (nth mr 1))
                 ft (field-type mt (get fnode :val))
                 dr (when (= n 2) (infer (nth args 1) tenv))]
             [(if dr (join ft (nth dr 0)) ft)
@@ -998,7 +1009,7 @@
                (>= n 2) (= :const (get (nth args 1) :op)) (keyword? (get (nth args 1) :val)))
           (let [mr (infer (nth args 0) tenv)
                 mt (nth mr 0)
-                msub (if (struct-safe? mt) (mark-hint (nth mr 1) :struct) (nth mr 1))
+                msub (if (struct-safe? mt) (mark-hint (nth mr 1) (struct-hint mt)) (nth mr 1))
                 kr (infer (nth args 1) tenv)
                 ft (field-type mt (get (nth args 1) :val))
                 dr (when (= n 3) (infer (nth args 2) tenv))]
