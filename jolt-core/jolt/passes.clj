@@ -806,21 +806,26 @@
 ;; k, if known, else :any.
 (defn- struct-safe? [t] (struct-type? t))
 (defn- field-type [t k] (if (struct-type? t) (get (sfields t) k :any) :any))
-;; vec3 shape detection (jolt-t34, prototype): a struct type whose key set is
-;; exactly {:r :g :b}. The back end represents such maps as shape tuples, so a
-;; lookup on a value PROVEN to be this shape can read by bare index with no
-;; runtime check. Scoped to the one shape for the prototype.
-(defn- vec3-shape? [t]
-  (and (struct-type? t)
-       (let [fs (sfields t)]
-         (and (get fs :r) (get fs :g) (get fs :b) (= 3 (count (keys fs)))))))
-;; the structural hint for a subject: :shape when provably the vec3 shape (bare
-;; indexed read), else :struct when raw-get-safe.
-(defn- struct-hint [t] (if (vec3-shape? t) :shape :struct))
+;; Shape (hidden class, jolt-t34). A struct type built from a map LITERAL carries
+;; its complete layout — :shape, the canonical (str-sorted) key vector. The back
+;; end represents such a map as a shape tuple and reads a field by bare index.
+;; A struct type from a JOIN or from field-access inference has no :shape
+;; (incomplete: the full key set isn't proven), so it keeps the dynamic path —
+;; never a bare index. No shape is hardcoded; any constant key set is one.
+(defn- shape-order
+  "Canonical key order for a shape: keys sorted by their string form, so two
+  literals with the same keys in any order intern to the same shape."
+  [ks] (vec (sort (fn [a b] (compare (str a) (str b))) ks)))
+(defn- type-shape [t] (get t :shape))
 ;; tag a node (any expression, not just a :local) so the back end can specialize
 ;; a lookup whose SUBJECT is that node — this is what makes nested access work:
 ;; (:direction ray) is tagged struct, so (:r (:direction ray)) drops its guard.
 (defn- mark-hint [node h] (assoc node :hint h))
+;; tag a lookup subject as a struct, carrying the complete shape when known
+;; (so the back end bare-indexes) — jolt-t34
+(defn- mark-struct [node t]
+  (let [n (assoc node :hint :struct)]
+    (if (get t :shape) (assoc n :shape (get t :shape)) n)))
 ;; a value provably neither nil nor false — the back end only builds a struct
 ;; (vs a phm) when every value is non-nil/non-false, so a map literal is a struct
 ;; only when all its values have such a type. Collections are non-nil.
@@ -940,7 +945,8 @@
       (let [t (get tenv (get node :name))]
         [(if t t :any)
          (cond
-           (struct-safe? t) (assoc node :hint (struct-hint t))
+           (struct-safe? t) (let [n (assoc node :hint :struct)]
+                              (if (type-shape t) (assoc n :shape (type-shape t)) n))
            (vec-type? t) (assoc node :hint :vector)
            :else node)])
       (= op :map)
@@ -953,10 +959,14 @@
             struct? (and (> (count res) 0)
                          (every? (fn [pr] (scalar-const? (nth pr 0))) pairs)
                          (every? (fn [r] (truthy-type? (nth r 2))) res))
-            t (if struct?
-                (cap (mk-struct (reduce (fn [m r] (assoc m (nth r 3) (nth r 2))) {} res)) type-depth)
-                :any)]
-        [t (assoc node :pairs (mapv (fn [r] [(nth r 0) (nth r 1)]) res))])
+            base (when struct?
+                   (cap (mk-struct (reduce (fn [m r] (assoc m (nth r 3) (nth r 2))) {} res)) type-depth))
+            ;; a literal is a COMPLETE shape: carry its sorted key vector so the
+            ;; back end can lay it out and bare-index lookups (jolt-t34)
+            shp (when (and base (struct-type? base)) (shape-order (keys (sfields base))))
+            t (if base (if shp (assoc base :shape shp) base) :any)
+            node' (assoc node :pairs (mapv (fn [r] [(nth r 0) (nth r 1)]) res))]
+        [t (if shp (assoc node' :shape shp) node')])
       (= op :vector)
       (let [irs (mapv (fn [x] (infer x tenv)) (get node :items))
             ets (mapv (fn [r] (nth r 0)) irs)
@@ -998,7 +1008,7 @@
           (and (= :const (get fnode :op)) (keyword? (get fnode :val)) (>= n 1) (<= n 2))
           (let [mr (infer (nth args 0) tenv)
                 mt (nth mr 0)
-                msub (if (struct-safe? mt) (mark-hint (nth mr 1) (struct-hint mt)) (nth mr 1))
+                msub (if (struct-safe? mt) (mark-struct (nth mr 1) mt) (nth mr 1))
                 ft (field-type mt (get fnode :val))
                 dr (when (= n 2) (infer (nth args 1) tenv))]
             [(if dr (join ft (nth dr 0)) ft)
@@ -1009,7 +1019,7 @@
                (>= n 2) (= :const (get (nth args 1) :op)) (keyword? (get (nth args 1) :val)))
           (let [mr (infer (nth args 0) tenv)
                 mt (nth mr 0)
-                msub (if (struct-safe? mt) (mark-hint (nth mr 1) (struct-hint mt)) (nth mr 1))
+                msub (if (struct-safe? mt) (mark-struct (nth mr 1) mt) (nth mr 1))
                 kr (infer (nth args 1) tenv)
                 ft (field-type mt (get (nth args 1) :val))
                 dr (when (= n 3) (infer (nth args 2) tenv))]

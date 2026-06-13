@@ -355,15 +355,13 @@
 #   - ^:struct / ^Record hinted subject: skip the guard, bare get (~20 vs ~36ns).
 #   - hinted + JOLT_CHECK_HINTS: keep the guard but THROW on the tagged arm, so a
 #     lying hint surfaces a clear error (dev aid; off by default, no perf cost).
-# vec3 shape layout: descriptor at 0, then sorted keys [:b :g :r] at 1,2,3 (jolt-t34)
-(def- vec3-shape-idx {:b 1 :g 2 :r 3})
 (defn- emit-kw-lookup [subj-node m-expr k d-expr]
   # the subject is a struct (raw-get-safe) when hinted so — by an explicit
   # ^:struct/^Record hint on a local, OR by inference tagging ANY subject
   # expression it proved to be a struct (jolt-d6u/RFC 0005), which is what lets
   # nested access like (:r (:direction ray)) drop its guard.
-  (def hinted (and subj-node (or (= :struct (subj-node :hint)) (= :shape (subj-node :hint)))))
-  (def checked (and (= :struct (subj-node :hint)) (os/getenv "JOLT_CHECK_HINTS")))
+  (def hinted (and subj-node (= :struct (subj-node :hint))))
+  (def checked (and hinted (os/getenv "JOLT_CHECK_HINTS")))
   (def m (if (symbol? m-expr) m-expr (jsym)))
   (def wrap (fn [body] (if (symbol? m-expr) body ['let [m m-expr] body])))
   (def err (when checked
@@ -371,14 +369,22 @@
                              k " " (subj-node :name) ") — value carries :jolt/type "
                              "(a phm/sorted/transient/lazy-seq), not the plain "
                              "struct/record the ^:struct/^Record hint asserts")]))
-  (def sidx (and (os/getenv "JOLT_SHAPE") (get vec3-shape-idx k)))
-  # subject PROVEN to be the vec3 shape (jolt-t34): read by bare index, no check.
-  (def shaped (and sidx (= :shape (subj-node :hint))))
-  # otherwise, when JOLT_SHAPE is on and the key is a vec3 field but the shape
-  # isn't proven, runtime-check (tuple? + struct? of elem 0, inline opcodes).
+  # Subject carries a complete :shape (jolt-t34) => it is provably a shape-rec;
+  # the field reads by bare index. The shape is the inference's canonical key
+  # vector, so the index is the key's position in it, +1 for the descriptor.
+  (def sidx
+    (when (and (os/getenv "JOLT_SHAPE") subj-node (subj-node :shape))
+      (def sk (let [s (subj-node :shape)] (if (pv/pvec? s) (pv/pv->array s) s)))
+      (var pos nil) (var i 0)
+      (each kk sk (when (= kk k) (set pos i)) (++ i))
+      (when pos (+ pos 1))))
+  # sidx: complete shape proven -> bare index (fastest). Otherwise, with shapes
+  # on, a raw-get-safe value may still be a shape-rec (its :shape dropped by a
+  # join), so read the index from the value's own descriptor when it is a tuple;
+  # a real struct takes the bare get. (jolt-t34)
   (defn get-or-shape [getexpr]
-    (cond shaped ['in m sidx]
-          sidx ['if ['and ['tuple? m] ['struct? ['in m 0]]] ['in m sidx] getexpr]
+    (cond sidx ['in m sidx]
+          (os/getenv "JOLT_SHAPE") ['if ['tuple? m] ['in m ['+ 1 [[['in m 0] :idx] k]]] getexpr]
           getexpr))
   (if (nil? d-expr)
     (let [fast (get-or-shape ['get m k])]
@@ -481,17 +487,15 @@
     (unless (and (= :const (k :op))
                  (or (keyword? kv) (string? kv) (number? kv) (boolean? kv)))
       (set fast false)))
-  # Shape-record fast path (jolt-t34, JOLT_SHAPE): a vec3-shaped {:r :g :b} map
-  # literal becomes a shape tuple (≈2x cheaper than a struct). Scoped to this
-  # one shape for the prototype so other maps (hit-info/ray/material) stay
-  # structs and assoc on them is unaffected. Values are emitted in the shape's
-  # canonical (sorted-key) order; element 0 is the compile-time shape descriptor.
+  # Shape-record fast path (jolt-t34, JOLT_SHAPE): a const-key map literal the
+  # inference tagged with a complete :shape becomes a shape tuple (≈2x cheaper
+  # than a struct). The shape is the inference's canonical (str-sorted) key
+  # vector — ANY constant key set, no hardcoding. Values are emitted in that
+  # order; element 0 is the compile-time shape descriptor.
   (def shape-keys
-    (when (and fast (os/getenv "JOLT_SHAPE"))
-      (def ks @[])
-      (each pair pairs (array/push ks ((norm-node (in (vview pair) 0)) :val)))
-      (def srt (sorted ks))
-      (when (deep= srt @[:b :g :r]) srt)))
+    (when (and fast (os/getenv "JOLT_SHAPE") (node :shape))
+      (def sk (node :shape))
+      (if (pv/pvec? sk) (pv/pv->array sk) (if (or (tuple? sk) (array? sk)) sk nil))))
   (if shape-keys
     (do
       (def desc (shape-for shape-keys))
