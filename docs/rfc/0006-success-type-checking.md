@@ -213,9 +213,11 @@ smallest high-confidence table (arithmetic and seq/count/nth/first), and grow.
   user fn's body with one parameter bound to its concrete argument type; a
   diagnostic the all-`:any` body did not have means that argument is provably
   wrong. Monotonic, so still no false positives; closed-world, hence opt-in.
-- **Negative/never types.** Still open. Some "provably wrong" cases are wrong
-  arity or a non-fn called as a fn; worth including the clear ones (calling a
-  `:num`) since the inference knows function-ness.
+- **Negative/never types.** *Resolved (jolt-wwy).* Calling a provably
+  non-callable value (`:num`/`:str` — keywords/maps/vectors/sets are IFn) is
+  reported at the default level; wrong-arity to a registered single-fixed-arity
+  user fn is reported under the `JOLT_TYPE_CHECK_USER` opt-in. A union callee is
+  flagged only when every member is non-callable.
 - **Position vs intent.** *Resolved (jolt-fqy).* The reader records each list
   form's absolute offset (identity-keyed, so positions survive macroexpansion
   exactly when the user's sub-form is spliced through); the analyzer stamps it
