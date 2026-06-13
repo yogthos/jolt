@@ -326,7 +326,11 @@
   "Return [k v] pairs for a map-like value (phm/sorted-map/struct/table), else nil."
   [x]
   (cond
-    (shape-rec? x) (map (fn [k] @[k (shape-get x k nil)]) (shape-keys x))
+    # a record shape-rec returns nil so equality falls to deep=, which is
+    # type-aware (the descriptor is interned per type): a record equals only a
+    # same-type record, never a plain map — mirroring the :jolt/deftype table
+    # form below. A plain-map shape-rec compares by pairs.
+    (shape-rec? x) (if (record-tag x) nil (map (fn [k] @[k (shape-get x k nil)]) (shape-keys x)))
     (phm? x) (phm-entries x)
     # sorted-map equals any map with the same pairs (representation-agnostic, as
     # in Clojure); sorted-set is handled by the set branch of jolt-equal?
