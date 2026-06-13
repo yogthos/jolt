@@ -541,7 +541,10 @@
             result)
         (do (var result @{}) (when m (each k (keys m) (put result k (get m k))))
           (var i 0) (while (< i (length kvs)) (let [k (kvs i) v (kvs (+ i 1))] (put result k v) (+= i 2)))
-          (if (struct? m) (table/to-struct result) result))))))
+          # nil assocs to a fresh immutable map ((assoc nil :a 1) => {:a 1}); a
+          # raw table here would not count?/seq like a Clojure map (assoc-in into
+          # an absent key recurses through nil — migratus's migration maps).
+          (if (or (struct? m) (nil? m)) (table/to-struct result) result))))))
 
 (defn core-dissoc [m & ks]
   (cond
@@ -1656,6 +1659,8 @@
       (if (v :ns) (string (v :ns) "/" (v :name)) (v :name))
     (and (struct? v) (= :jolt/uuid (v :jolt/type))) (v :str)
     (and (struct? v) (= :jolt/inst (v :jolt/type))) (inst->rfc3339 v)
+    # a java.io.File renders as its path (Clojure's File.toString)
+    (and (table? v) (= :jolt/file (get v :jolt/type))) (get v :path)
     (= :jolt/namespace (get v :jolt/type)) (ns-display-name v)
     (and (table? v) (= :jolt/var (get v :jolt/type))) (var-display v)
     (number? v) (fmt-number v)
@@ -1744,6 +1749,19 @@
 (defn core-jdbc-make-stmt [w]
   @{:jolt/type :jolt/jdbc-stmt :exec (get w :exec) :cmds @[]})
 
+# java.io.File model (jolt-hjw). io/file and (File. …) build a tagged :jolt/file
+# value so (instance? File x) works and migratus's File-vs-jar branching takes
+# the filesystem path. The File method surface + nio glob live in javatime; here
+# are the constructor/predicate builtins and the path coercion str/slurp use.
+(defn core-file-path
+  "The path string of a :jolt/file, or (string x) for anything else."
+  [x]
+  (if (and (table? x) (= :jolt/file (get x :jolt/type))) (get x :path) (string x)))
+(defn core-make-file [path &opt child]
+  (def base (core-file-path path))
+  @{:jolt/type :jolt/file :path (if child (string base "/" (core-file-path child)) base)})
+(defn core-file? [x] (and (table? x) (= :jolt/file (get x :jolt/type))))
+
 # newline lives in the Clojure collection tier (core/20-coll.clj).
 
 # Clojure 1.11 string->scalar parsers: nil on malformed input, throw on a
@@ -1787,6 +1805,7 @@
 # bodies, and the jolt Ring adapter hands those over as StringReaders.
 (defn core-slurp [src & opts]
   (cond
+    (core-file? src) (string (slurp (core-file-path src)))
     (and (table? src) (string? (get src :s)) (number? (get src :pos)))
       (let [s (src :s) p (src :pos)]
         (put src :pos (length s))
@@ -1799,7 +1818,7 @@
                      (when (and (= :append (in opts i)) (in opts (+ i 1))) (set a true))
                      (+= i 2))
                    a))
-  (def f (file/open path (if append? :a :w)))
+  (def f (file/open (core-file-path path) (if append? :a :w)))
   (file/write f (str-render-one content))
   (file/close f)
   nil)
@@ -2731,6 +2750,8 @@
     "__jdbc-wrap-conn" core-jdbc-wrap-conn
     "__jdbc-conn-raw" core-jdbc-conn-raw
     "__jdbc-make-stmt" core-jdbc-make-stmt
+    "__make-file" core-make-file
+    "__file?" core-file?
     "__pr-str1" core-pr-str1
     "__make-uuid" make-uuid
     "compare" core-compare

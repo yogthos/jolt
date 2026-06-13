@@ -1197,6 +1197,13 @@
         (ns-unmap ns (if (and (struct? sym) (= :symbol (sym :jolt/type))) (sym :name) (string sym))))))
   nil)
 
+# Multimethod value -> its var. methods/get-method take the multimethod VALUE
+# (Clojure semantics) and recover the var (hence :jolt/methods) through this,
+# which works from a compiled fn in any namespace — resolving the symbol at call
+# time in the current ns did not (a bare multifn ref in its defining ns saw an
+# empty table once defmethods lived in other namespaces; migratus hit this).
+(def multi-registry @{})
+
 (defn defmulti-setup
   "(defmulti name dispatch & opts) — intern a multimethod var. A fn; name arrives
   quoted, dispatch + opts (:default key, :hierarchy h) arrive evaluated. The
@@ -1292,6 +1299,7 @@
   (put v :jolt/dispatch-cache dispatch-cache)
   (put v :jolt/default default-key)
   (when hierarchy (put v :jolt/hierarchy hierarchy))
+  (put multi-registry mm-fn v)
   (var-get v))
 
 (defn defmethod-setup
@@ -1301,9 +1309,11 @@
   [ctx mm-sym dispatch-val impl]
   (def mm-var
     (or (resolve-var ctx @{} mm-sym)
-        (let [ns (ctx-find-ns ctx (ctx-current-ns ctx))]
-          (def v (ns-intern ns (mm-sym :name) (fn [& args] nil)))
+        (let [ns (ctx-find-ns ctx (ctx-current-ns ctx))
+              stub (fn [& args] nil)]
+          (def v (ns-intern ns (mm-sym :name) stub))
           (put v :jolt/methods @{})
+          (put multi-registry stub v)
           v)))
   (def methods (or (get mm-var :jolt/methods) (let [m @{}] (put mm-var :jolt/methods m) m)))
   # nil is a legal dispatch value (ring's body-string keys a method on it);
@@ -1470,8 +1480,10 @@
       found
       (when auto-create?
         (def ns (ctx-find-ns ctx (ctx-current-ns ctx)))
-        (def nv (ns-intern ns (mm-sym :name) (fn [& args] nil)))
+        (def stub (fn [& args] nil))
+        (def nv (ns-intern ns (mm-sym :name) stub))
         (put nv :jolt/methods @{})
+        (put multi-registry stub nv)
         nv))))
   (def clear-dispatch-cache! (fn [mm-var]
     (let [dc (get mm-var :jolt/dispatch-cache)]
@@ -1510,16 +1522,21 @@
     (fn [mm-sym]
       (def mm-var (mm-var-of mm-sym false))
       (or (and mm-var (get mm-var :jolt/prefers)) {})))
+  # methods/get-method receive the multimethod VALUE (Clojure semantics): map it
+  # back to its var via multi-registry. A symbol arg still works (mm-var-of), for
+  # any caller that passes one.
+  (def mm-var-of-val (fn [mm]
+    (if (function? mm) (get multi-registry mm) (mm-var-of mm false))))
   (ns-intern core "get-method-setup"
-    (fn [mm-sym dval]
+    (fn [mm dval]
       (def dval (if (nil? dval) :jolt/nil-sentinel dval))
-      (def mm-var (mm-var-of mm-sym false))
+      (def mm-var (mm-var-of-val mm))
       (when mm-var
         (let [methods (get mm-var :jolt/methods)]
           (or (get methods dval) (get methods :default))))))
   (ns-intern core "methods-setup"
-    (fn [mm-sym]
-      (def mm-var (mm-var-of mm-sym false))
+    (fn [mm]
+      (def mm-var (mm-var-of-val mm))
       (when mm-var
         # a jolt map, not the live host table (and phm so vector dispatch
         # values look up by value, same reason build-eval-map promotes)
@@ -1588,6 +1605,10 @@
           # branch, so the wrapped conn must answer true here.
           "Connection" (and (table? val) (= :jolt/jdbc-conn (get val :jolt/type)))
           "java.sql.Connection" (and (table? val) (= :jolt/jdbc-conn (get val :jolt/type)))
+          # java.io.File model (jolt-hjw): io/file and (File. …) build :jolt/file,
+          # so migratus's (instance? File migration-dir) takes the filesystem path.
+          "File" (and (table? val) (= :jolt/file (get val :jolt/type)))
+          "java.io.File" (and (table? val) (= :jolt/file (get val :jolt/type)))
           # JVM char[] class — (Class/forName "[C"); jolt char arrays are Janet
           # arrays of char structs
           "[C" (and (array? val)

@@ -537,6 +537,15 @@
   # that walks Thread/currentThread doesn't crash.
   (register-tagged-methods! :jolt/thread
     @{"getContextClassLoader" (fn [self] @{:jolt/type :jolt/classloader})})
+  # ClassLoader degrade (jolt-hjw): there is no classpath, so getResource returns
+  # nil and migratus's find-migration-dir falls through to the filesystem branch
+  # (resources/<dir>). getSystemClassLoader yields the same stub.
+  (each nm ["ClassLoader" "java.lang.ClassLoader"]
+    (register-class-statics! nm @{"getSystemClassLoader" (fn [] @{:jolt/type :jolt/classloader})}))
+  (register-tagged-methods! :jolt/classloader
+    @{"getResource" (fn [self path] nil)
+      "getResources" (fn [self path] nil)
+      "getResourceAsStream" (fn [self path] nil)})
   # next.jdbc host shims (paired with the __jdbc-* builtins in core.janet and the
   # instance? Connection case in evaluator.janet). The wrapped connection carries
   # a clj :exec callback (run one SQL string) and a :close callback.
@@ -563,7 +572,85 @@
                        (def out @[])
                        (each c (get self :cmds) (array/push out ((get self :exec) c)))
                        out)
-      "close" (fn [self] nil)}))
+      "close" (fn [self] nil)})
+  # java.io.File model (jolt-hjw). A :jolt/file carries its path; io/file and the
+  # File. ctor build it (see core.janet's __make-file). The method surface below
+  # is backed by os/ and file/. listFiles returns child :jolt/file values so
+  # file-seq (File-aware) yields :jolt/file leaves migratus can call methods on.
+  (defn- jfile-path [x]
+    (if (and (table? x) (= :jolt/file (get x :jolt/type))) (get x :path) (string x)))
+  (defn- make-jfile [path &opt child]
+    @{:jolt/type :jolt/file
+      :path (if child (string (jfile-path path) "/" (jfile-path child)) (jfile-path path))})
+  (defn- last-slash [p]
+    (var idx nil) (var i 0)
+    (while (< i (length p)) (when (= (p i) 47) (set idx i)) (++ i))
+    idx)
+  (defn- jfile-name [p]
+    (if-let [i (last-slash p)] (string/slice p (+ i 1)) p))
+  (defn- jfile-abs [p]
+    (if (string/has-prefix? "/" p) p (string (os/cwd) "/" p)))
+  (each nm ["File" "java.io.File"]
+    (register-class-ctor! nm make-jfile))
+  (register-tagged-methods! :jolt/file
+    @{"getPath" (fn [self] (get self :path))
+      "toString" (fn [self] (get self :path))
+      "getName" (fn [self] (jfile-name (get self :path)))
+      "getParent" (fn [self] (let [p (get self :path)]
+                               (if-let [i (last-slash p)] (string/slice p 0 i) nil)))
+      "getAbsolutePath" (fn [self] (jfile-abs (get self :path)))
+      "getCanonicalPath" (fn [self] (jfile-abs (get self :path)))
+      "getAbsoluteFile" (fn [self] (make-jfile (jfile-abs (get self :path))))
+      "exists" (fn [self] (not (nil? (os/stat (get self :path)))))
+      "isFile" (fn [self] (= :file (os/stat (get self :path) :mode)))
+      "isDirectory" (fn [self] (= :directory (os/stat (get self :path) :mode)))
+      "canRead" (fn [self] (not (nil? (os/stat (get self :path)))))
+      # listFiles: child File values, or nil when not a directory (Clojure null)
+      "listFiles" (fn [self]
+                    (let [p (get self :path)]
+                      (when (= :directory (os/stat p :mode))
+                        (map (fn [e] (make-jfile p e)) (os/dir p)))))
+      "list" (fn [self]
+               (let [p (get self :path)]
+                 (when (= :directory (os/stat p :mode)) (os/dir p))))
+      "toPath" (fn [self] @{:jolt/type :jolt/nio-path :s (get self :path)})
+      "toURI" (fn [self] (string "file:" (jfile-abs (get self :path))))
+      "toURL" (fn [self] @{:jolt/type :jolt/url :url (string "file:" (jfile-abs (get self :path)))})
+      "delete" (fn [self] (let [r (protect (os/rm (get self :path)))] (truthy? (r 0))))
+      "mkdir" (fn [self] (truthy? ((protect (os/mkdir (get self :path))) 0)))
+      "mkdirs" (fn [self] (truthy? ((protect (os/mkdir (get self :path))) 0)))
+      "createNewFile" (fn [self]
+                        (let [p (get self :path)]
+                          (if (os/stat p) false
+                            (do (def f (file/open p :w)) (file/close f) true))))
+      "equals" (fn [self o] (and (table? o) (= (get self :path) (get o :path))))
+      "hashCode" (fn [self] (hash (get self :path)))})
+  # java.nio.file degrade for migratus's script-excluded? glob check: just enough
+  # of Path / FileSystem / PathMatcher to match a filename against a glob, with a
+  # simple recursive * / ? matcher (no path-segment semantics — filenames only).
+  (defn- glob-matches? [glob s]
+    (defn m [gi si]
+      (cond
+        (= gi (length glob)) (= si (length s))
+        (= (glob gi) 42) # *
+          (or (m (+ gi 1) si)
+              (and (< si (length s)) (m gi (+ si 1))))
+        (and (< si (length s))
+             (or (= (glob gi) 63) (= (glob gi) (s si)))) # ? or literal
+          (m (+ gi 1) (+ si 1))
+        false))
+    (m 0 0))
+  (register-tagged-methods! :jolt/nio-path
+    @{"getFileSystem" (fn [self] @{:jolt/type :jolt/nio-fs})
+      "toString" (fn [self] (get self :s))})
+  (register-tagged-methods! :jolt/nio-fs
+    @{"getPath" (fn [self s & _] @{:jolt/type :jolt/nio-path :s s})
+      "getPathMatcher" (fn [self spec]
+                         @{:jolt/type :jolt/nio-matcher
+                           :glob (if (string/has-prefix? "glob:" spec)
+                                   (string/slice spec 5) spec)})})
+  (register-tagged-methods! :jolt/nio-matcher
+    @{"matches" (fn [self path] (glob-matches? (get self :glob) (get path :s)))}))
 
 (install!)
 (install-io!)
