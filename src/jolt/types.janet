@@ -590,3 +590,57 @@
   (let [registry (get (ctx :env) :type-registry)
         type-impls (get registry type-tag)]
     (if (and type-impls (get type-impls protocol-name)) true false)))
+
+# --- shape records (hidden classes, jolt-t34) -------------------------------
+# A "shape record" is a cheap fixed-layout representation for a map literal
+# whose keys are a known compile-time set (e.g. a vec3 {:r :g :b}). It is a
+# Janet tuple [SHAPE v0 v1 ...] where SHAPE is an interned descriptor struct
+# {:jolt/shape KEYS :idx {k->pos}}. Construction is a tuple (≈2x cheaper than a
+# struct), const-keyword lookup compiles to an index, and general map ops below
+# recognize it via shape-rec? and treat it as a map — so it is transparent
+# wherever it flows. Created only by the backend when JOLT_SHAPE is on and the
+# inference proves the shape; the runtime support here is always present so a
+# shape value is handled correctly regardless.
+(def- shape-cache @{})   # canonical-keys-tuple -> interned shape descriptor
+# Canonical key order, OWNED BY THE RUNTIME (jolt-t34): every site that builds or
+# reads a shape (shape-for, emit-map, emit-kw-lookup, build-map-literal) derives
+# the layout from this one function, so they always agree regardless of what
+# order the inference passed the keys in. Sorted by the keys' jdn print form —
+# deterministic and total across keywords/strings/numbers/bools.
+(defn shape-sort [ks]
+  (sort (array ;ks) (fn [a b] (< (string/format "%j" a) (string/format "%j" b)))))
+(defn shape-for
+  "Interned shape descriptor for a key set. Keys are canonicalized internally,
+  so callers need not pre-sort and any permutation yields the same descriptor."
+  [keyv]
+  (def sk (tuple ;(shape-sort keyv)))
+  (or (get shape-cache sk)
+      (let [idx @{}]
+        (var i 0) (each k sk (put idx k i) (++ i))
+        (def desc (struct :jolt/shape sk :idx (table/to-struct idx)))
+        (put shape-cache sk desc)
+        desc)))
+(defn shape-rec? [x]
+  (and (tuple? x) (> (length x) 0)
+       (struct? (in x 0)) (not (nil? (in (in x 0) :jolt/shape)))))
+(defn shape-keys [rec] ((in rec 0) :jolt/shape))
+(defn shape-get [rec k default]
+  (def pos (get ((in rec 0) :idx) k))
+  (if (nil? pos) default (in rec (+ pos 1))))
+(defn shape-assoc [rec k v]
+  # assoc on a known key keeps the layout; a new key falls back to a struct
+  (def desc (in rec 0))
+  (def pos (get (desc :idx) k))
+  (if (nil? pos)
+    (let [t @{}] (each kk (desc :jolt/shape) (put t kk (shape-get rec kk nil))) (put t k v) (table/to-struct t))
+    (let [a (array ;rec)] (put a (+ pos 1) v) (tuple ;a))))
+(defn shape-count [rec] (- (length rec) 1))
+(defn shape-contains? [rec k] (not (nil? (get ((in rec 0) :idx) k))))
+(defn shape-vals [rec] (tuple/slice rec 1))
+# a struct snapshot of a shape-rec — the reusable bridge for ops that already
+# handle structs (dissoc, vals, seq, equality, print, ...) without per-op code
+(defn shape->struct [rec]
+  (def desc (in rec 0)) (def t @{})
+  (each kk (desc :jolt/shape) (put t kk (in rec (+ 1 (get (desc :idx) kk)))))
+  (table/to-struct t))
+

@@ -122,6 +122,7 @@
   (cond
     # nil is an empty seq in Clojure — iterating it yields nothing.
     (nil? c) @[]
+    (shape-rec? c) (map (fn [k] (tuple k (shape-get c k nil))) (shape-keys c))
     (pvec? c) (pv->array c)
     (plist? c) (pl->array c)
     (set? c) (phs-seq c)
@@ -208,7 +209,8 @@
 # Tagged structs (symbols/chars/uuids — anything with :jolt/type) are VALUES,
 # not maps. (sorted-map? is defined later, so the table check is inlined.)
 (defn core-map? [x]
-  (or (phm? x)
+  (or (shape-rec? x)
+      (phm? x)
       (and (struct? x) (nil? (get x :jolt/type)))
       (and (table? x)
            (or (not (nil? (get x :jolt/deftype)))
@@ -311,6 +313,8 @@
   an array; otherwise nil. Lets = compare across tuple/array/lazy-seq."
   [x]
   (cond
+    # a shape-rec is a MAP, not a sequence, even though it is a tuple
+    (shape-rec? x) nil
     (lazy-seq? x) (realize-for-iteration x)
     (pvec? x) (pv->array x)
     (plist? x) (pl->array x)
@@ -322,6 +326,7 @@
   "Return [k v] pairs for a map-like value (phm/sorted-map/struct/table), else nil."
   [x]
   (cond
+    (shape-rec? x) (map (fn [k] @[k (shape-get x k nil)]) (shape-keys x))
     (phm? x) (phm-entries x)
     # sorted-map equals any map with the same pairs (representation-agnostic, as
     # in Clojure); sorted-set is handled by the set branch of jolt-equal?
@@ -495,42 +500,6 @@
                 (error "Vector arg to map conj must be a pair")))
             result)))))))))))))
 
-# --- shape records (hidden classes, jolt-t34) -------------------------------
-# A "shape record" is a cheap fixed-layout representation for a map literal
-# whose keys are a known compile-time set (e.g. a vec3 {:r :g :b}). It is a
-# Janet tuple [SHAPE v0 v1 ...] where SHAPE is an interned descriptor struct
-# {:jolt/shape KEYS :idx {k->pos}}. Construction is a tuple (≈2x cheaper than a
-# struct), const-keyword lookup compiles to an index, and general map ops below
-# recognize it via shape-rec? and treat it as a map — so it is transparent
-# wherever it flows. Created only by the backend when JOLT_SHAPE is on and the
-# inference proves the shape; the runtime support here is always present so a
-# shape value is handled correctly regardless.
-(def- shape-cache @{})   # sorted-keys-tuple -> interned shape descriptor
-(defn shape-for
-  "Interned shape descriptor for an ordered key vector (keys in layout order)."
-  [keyv]
-  (def kk (tuple ;keyv))
-  (or (get shape-cache kk)
-      (let [idx @{}]
-        (var i 0) (each k keyv (put idx k i) (++ i))
-        (def desc (struct :jolt/shape kk :idx (table/to-struct idx)))
-        (put shape-cache kk desc)
-        desc)))
-(defn shape-rec? [x]
-  (and (tuple? x) (> (length x) 0)
-       (struct? (in x 0)) (not (nil? (in (in x 0) :jolt/shape)))))
-(defn shape-keys [rec] ((in rec 0) :jolt/shape))
-(defn shape-get [rec k default]
-  (def pos (get ((in rec 0) :idx) k))
-  (if (nil? pos) default (in rec (+ pos 1))))
-(defn shape-assoc [rec k v]
-  # assoc on a known key keeps the layout; a new key falls back to a struct
-  (def desc (in rec 0))
-  (def pos (get (desc :idx) k))
-  (if (nil? pos)
-    (let [t @{}] (each kk (desc :jolt/shape) (put t kk (shape-get rec kk nil))) (put t k v) (table/to-struct t))
-    (let [a (array ;rec)] (put a (+ pos 1) v) (tuple ;a))))
-
 (defn core-assoc [m & kvs]
   (when (odd? (length kvs))
     (error "assoc expects an even number of key/value arguments"))
@@ -589,6 +558,8 @@
 (defn core-dissoc [m & ks]
   (cond
     (nil? m) nil
+    # dissoc loses a key -> the shape changes; bridge through a struct (cold op)
+    (shape-rec? m) (core-dissoc (shape->struct m) ;ks)
     (core-sorted-map? m) ((sorted-op m :dissoc) m ks)
     (phm? m) (do (var result m) (each k ks (set result (phm-dissoc result k))) result)
     # reject clearly non-map values (scalars, sequences, sets, symbol/char structs)
@@ -633,6 +604,7 @@
 (defn jolt-call [f & args]
   (cond
     (or (function? f) (cfunction? f)) (apply f args)
+    (shape-rec? f) (core-get f (get args 0) (get args 1))
     (keyword? f) (core-get (get args 0) f (get args 1))
     (and (struct? f) (= :symbol (f :jolt/type))) (core-get (get args 0) f (get args 1))
     (core-sorted? f) ((sorted-op f :get) f (get args 0) (get args 1))
@@ -673,6 +645,7 @@
 # get-in now lives in the Clojure collection tier (core/20-coll.clj).
 
 (defn core-contains? [coll key]
+  (if (shape-rec? coll) (shape-contains? coll key)
   (if (core-sorted? coll) (if ((sorted-op coll :contains) coll key) true false)
   (if (core-transient? coll)
     (case (coll :kind)
@@ -685,7 +658,7 @@
         (if (table? coll) (not (nil? (coll key)))
           (if (or (tuple? coll) (array? coll))
             (and (number? key) (>= key 0) (< key (length coll)))
-            false)))))))))
+            false))))))))))
 
 # Coerce a Clojure IFn value to a Janet-callable fn for higher-order fns
 # (map/filter/sort-by/group-by/...). Janet functions pass through; a keyword or
@@ -708,6 +681,7 @@
 (defn core-count [coll]
   (cond
     (nil? coll) 0
+    (shape-rec? coll) (shape-count coll)
     (core-transient? coll) (length (if (= :vector (coll :kind)) (coll :arr) (coll :tbl)))
     (core-sorted? coll) ((sorted-op coll :count) coll)
     (lazy-seq? coll) (ls-count coll)
@@ -722,6 +696,7 @@
 
 (defn core-first [coll]
   (cond
+    (shape-rec? coll) (core-first (shape->struct coll))
     (core-sorted? coll) ((sorted-op coll :first) coll)
     (lazy-seq? coll) (ls-first coll)
     (pvec? coll) (if (= 0 (pv-count coll)) nil (pv-nth coll 0))
@@ -800,6 +775,7 @@
 
 (defn core-seq [coll]
   (cond
+    (shape-rec? coll) (tuple ;(map (fn [k] (tuple k (shape-get coll k nil))) (shape-keys coll)))
     (core-sorted? coll) ((sorted-op coll :seq) coll)
     (or (nil? coll) (and (or (tuple? coll) (array? coll)) (= 0 (length coll)))) nil
     # Cell-based emptiness, NOT (nil? (ls-first)): a lazy-seq whose first element
@@ -1655,6 +1631,8 @@
             (buffer/push-string buf (ns-display-name v))
             (buffer/push-string buf "]"))
       (and (table? v) (= :jolt/var (get v :jolt/type))) (buffer/push-string buf (var-display v))
+      (shape-rec? v) (pr-render-pairs buf
+                       (map (fn [k] [k (shape-get v k nil)]) (shape-keys v)))
       (core-sorted-map? v) (pr-render-pairs buf
                              (map (fn [e] [(vnth e 0) (vnth e 1)]) (sorted-entries-arr v)))
       (core-sorted-set? v) (pr-render-seq buf (sorted-entries-arr v) "#{" "}")

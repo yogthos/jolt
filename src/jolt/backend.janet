@@ -370,11 +370,13 @@
                              "(a phm/sorted/transient/lazy-seq), not the plain "
                              "struct/record the ^:struct/^Record hint asserts")]))
   # Subject carries a complete :shape (jolt-t34) => it is provably a shape-rec;
-  # the field reads by bare index. The shape is the inference's canonical key
-  # vector, so the index is the key's position in it, +1 for the descriptor.
+  # the field reads by bare index. The :shape is just the KEY SET; the layout
+  # comes from the runtime's canonical shape-sort (the same order shape-for and
+  # emit-map use), so construction and lookup always agree.
   (def sidx
     (when (and (os/getenv "JOLT_SHAPE") subj-node (subj-node :shape))
-      (def sk (let [s (subj-node :shape)] (if (pv/pvec? s) (pv/pv->array s) s)))
+      (def raw (let [s (subj-node :shape)] (if (pv/pvec? s) (pv/pv->array s) s)))
+      (def sk (shape-sort raw))
       (var pos nil) (var i 0)
       (each kk sk (when (= kk k) (set pos i)) (++ i))
       (when pos (+ pos 1))))
@@ -487,15 +489,20 @@
     (unless (and (= :const (k :op))
                  (or (keyword? kv) (string? kv) (number? kv) (boolean? kv)))
       (set fast false)))
-  # Shape-record fast path (jolt-t34, JOLT_SHAPE): a const-key map literal the
-  # inference tagged with a complete :shape becomes a shape tuple (≈2x cheaper
-  # than a struct). The shape is the inference's canonical (str-sorted) key
-  # vector — ANY constant key set, no hardcoding. Values are emitted in that
-  # order; element 0 is the compile-time shape descriptor.
+  # Shape-record representation (jolt-t34, JOLT_SHAPE): EVERY constant-key map
+  # literal becomes a shape tuple (≈2x cheaper than a struct), CONSISTENTLY —
+  # not gated on the inference, so a value's representation always matches what
+  # the type system claims about it. The layout is the runtime's canonical
+  # shape-sort of the keys (the single source of truth all sites share). Values
+  # are emitted in that order; element 0 is the compile-time shape descriptor.
+  # gated on :inline? — shapes apply to USER code only, never to core or the
+  # compiler's own IR-node map literals (which the back end reads with raw
+  # keyword access and would break if turned into tuples)
   (def shape-keys
-    (when (and fast (os/getenv "JOLT_SHAPE") (node :shape))
-      (def sk (node :shape))
-      (if (pv/pvec? sk) (pv/pv->array sk) (if (or (tuple? sk) (array? sk)) sk nil))))
+    (when (and fast (os/getenv "JOLT_SHAPE") (get (ctx :env) :inline?))
+      (def ks @[])
+      (each pair pairs (array/push ks ((norm-node (in (vview pair) 0)) :val)))
+      (shape-sort ks)))
   (if shape-keys
     (do
       (def desc (shape-for shape-keys))
