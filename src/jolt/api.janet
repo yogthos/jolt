@@ -189,6 +189,10 @@
     # — that would be circular — so it reads this hook). Without it, required
     # namespaces ran interpreted-only.
     (put (ctx :env) :toplevel-eval eval-toplevel)
+    # Inter-procedural type-inference hook (jolt-767): the evaluator calls this
+    # after a unit finishes loading (optimization mode only). Installed here to
+    # avoid an evaluator->backend circular import.
+    (put (ctx :env) :infer-unit! backend/infer-unit!)
     # Stateful primitives as ctx-capturing clojure.core fns (protocol-dispatch,
     # register-method, …) — so the protocol macros compile to plain invokes. Must
     # precede the overlay (its defprotocol/extend-type expansions call these).
@@ -296,7 +300,7 @@
   # Opts land in the key via their printed form; an opt that prints unstably
   # (e.g. a closure in :namespaces) just degrades to a cache miss, never to a
   # wrong hit. Runtime knobs that shape the ctx outside opts ride along too.
-  (def key (string/format "%q|%q|%q|%q|%q|%q|%q|%q|%q"
+  (def key (string/format "%q|%q|%q|%q|%q|%q|%q|%q|%q|%q"
                           (string janet/version "-" janet/build)
                           opts
                           (os/getenv "JOLT_PATH")
@@ -305,7 +309,8 @@
                           (os/getenv "JOLT_FEATURES")
                           (os/getenv "JOLT_INTERPRET_MACROS")
                           (os/getenv "JOLT_DIRECT_LINK")
-                          (os/getenv "JOLT_NO_IR_PASSES")))
+                          (os/getenv "JOLT_NO_IR_PASSES")
+                          (os/getenv "JOLT_CHECK_HINTS")))
   (string dir "/jolt-ctx-" (band h 0x7FFFFFFF) "-" len "-" (band (hash key) 0x7FFFFFFF) ".jimg"))
 
 (defn init-cached
@@ -364,5 +369,12 @@
   Returns the result of the last form evaluated."
   [ctx s &opt file]
   (default file "<eval>")
+  # record form positions so the checker can report file:line:col (jolt-fqy).
+  # The checker is on when JOLT_TYPE_CHECK selects it, OR by default in
+  # direct-link builds (where it piggybacks on inference for free).
+  (when (or (checker-enabled?) (get (ctx :env) :inline?))
+    (track-positions! true)
+    (put (ctx :env) :tc-source s)
+    (put (ctx :env) :tc-file file))
   (eval-forms-positioned ctx (parse-all-positioned s file) file))
 

@@ -375,6 +375,18 @@
   [ctx src &opt file]
   (default file "<source>")
   (def toplevel (get (ctx :env) :toplevel-eval))
+  # a require runs nested inside an outer file's eval; save/restore the outer
+  # checker source so its later forms still convert offsets correctly (jolt-fqy)
+  (def checking (or (checker-enabled?) (get (ctx :env) :inline?)))
+  (def saved-src (and checking (get (ctx :env) :tc-source)))
+  (def saved-file (and checking (get (ctx :env) :tc-file)))
+  (when checking
+    (track-positions! true)
+    (put (ctx :env) :tc-source src)
+    (put (ctx :env) :tc-file file))
+  (defer (when checking
+           (put (ctx :env) :tc-source saved-src)
+           (put (ctx :env) :tc-file saved-file))
   (each [f line] (parse-all-positioned src file)
     (try
       (if toplevel (toplevel ctx f) (eval-form ctx @{} f))
@@ -388,7 +400,7 @@
         (when (nil? (get env :error-loading)) (put env :error-loading @[]))
         (def chain (get env :error-loading))
         (when (not= (last chain) file) (array/push chain file))
-        (propagate err fib)))))
+        (propagate err fib))))))
 
 (defn- maybe-require-ns
   "If namespace ns-name isn't populated yet, load its source — from a file on the
@@ -421,6 +433,14 @@
             (if path
               (load-ns-source ctx (slurp path) path)
               (load-ns-source ctx embedded (string ns-name " (stdlib)")))
+            # Inter-procedural collection-type inference (jolt-767): once the whole
+            # unit is loaded, run the closed-world fixpoint + recompile so param-
+            # dependent lookups specialize. Only in optimization mode; best-effort
+            # (a failure here must not break loading). Hook installed by the api to
+            # avoid an evaluator->backend circular import.
+            (when (get (ctx :env) :inline?)
+              (when-let [iu (get (ctx :env) :infer-unit!)]
+                (protect (iu ctx ns-name))))
             # Record load order for tooling (uberscript): a dependency finishes
             # loading before its requirer, so this is topological. Skip the
             # baked-in stdlib — it's part of the runtime, not something to bundle.

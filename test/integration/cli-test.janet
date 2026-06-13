@@ -45,6 +45,12 @@
 (check "arith error message rewritten"
        (run-err "-e" `(+ 1 "a")`)
        (has `Cannot add 1 and "a"`))
+# unary arithmetic (inc/dec) on a non-number: the host error has no "or :r"
+# clause, which used to crash the rewriter itself — handle it (jolt audit)
+(check "unary arith error does not crash the rewriter"
+       (run-err "-e" `(inc "x")`)
+       (fn [s] (and (string/find "expects numbers" s)
+                    (nil? (string/find "could not find method" s)))))
 (check "arity error names the fn"
        (run-err "-e" "(defn afn [x] x) (afn 1 2)")
        (has "Wrong number of args (2) passed to: user/afn"))
@@ -111,6 +117,51 @@
            (os/setenv "JOLT_DEBUG" nil)
            r)
        (has "could not find method"))
+
+# --- success checker default-on in direct-link, off in plain builds ----------
+# A provably-wrong defn (never called, so no runtime error): the checker is the
+# only thing that can flag it. Plain build = silent (no dev regression);
+# direct-link build = warns by default (free piggyback on inference).
+(def tcw (string (or (os/getenv "TMPDIR") "/tmp") "/jolt-tcwarn-" (os/time) ".clj"))
+(spit tcw "(ns tcw)\n\n(defn unused [s]\n  (inc \"definitely-not-a-number\"))\n")
+(check "plain build does not run the checker (no regression)"
+       (run-err tcw)
+       (fn [s] (nil? (string/find "type error" s))))
+(check "direct-link build warns by default (free checking)"
+       (do (os/setenv "JOLT_DIRECT_LINK" "1")
+           (def r (run-err tcw))
+           (os/setenv "JOLT_DIRECT_LINK" nil)
+           r)
+       (fn [s] (and (string/find "type error" s)
+                    (string/find "requires a number" s))))
+(check "JOLT_TYPE_CHECK=off disables it even in direct-link"
+       (do (os/setenv "JOLT_DIRECT_LINK" "1")
+           (os/setenv "JOLT_TYPE_CHECK" "off")
+           (def r (run-err tcw))
+           (os/setenv "JOLT_DIRECT_LINK" nil)
+           (os/setenv "JOLT_TYPE_CHECK" nil)
+           r)
+       (fn [s] (nil? (string/find "type error" s))))
+# negative/never types (jolt-wwy): calling a non-function is reported by default
+# in direct-link; wrong-arity to a user fn under the JOLT_TYPE_CHECK_USER opt-in
+(def tcn (string (or (os/getenv "TMPDIR") "/tmp") "/jolt-tcneg-" (os/time) ".clj"))
+(spit tcn "(ns tcn)\n\n(defn nope []\n  (let [n 5] (n 1)))\n")
+(check "direct-link reports calling a number as a function"
+       (do (os/setenv "JOLT_DIRECT_LINK" "1")
+           (def r (run-err tcn))
+           (os/setenv "JOLT_DIRECT_LINK" nil)
+           r)
+       (has "cannot call a number as a function"))
+(def tca (string (or (os/getenv "TMPDIR") "/tmp") "/jolt-tcarity-" (os/time) ".clj"))
+(spit tca "(ns tca)\n\n(defn f [x y] (+ x y))\n(defn g [] (f 1))\n")
+(check "JOLT_TYPE_CHECK_USER reports wrong arity to a user fn"
+       (do (os/setenv "JOLT_DIRECT_LINK" "1")
+           (os/setenv "JOLT_TYPE_CHECK_USER" "1")
+           (def r (run-err tca))
+           (os/setenv "JOLT_DIRECT_LINK" nil)
+           (os/setenv "JOLT_TYPE_CHECK_USER" nil)
+           r)
+       (has "wrong number of args (1) passed to `f` (expected 2)"))
 
 (if (> fails 0)
   (error (string "cli-test: " fails " failing check(s)"))

@@ -13,6 +13,7 @@
 (use ./evaluator)
 (import ./reader :as r)
 (import ./phm :as phm)
+(import ./pv :as pv)
 
 # The IR is portable data; reading its representation is a host-layer concern.
 # Most nodes are Janet structs (raw-readable), but a node carrying a nil-valued
@@ -72,13 +73,21 @@
   (when (get (ctx :env) :inline?)
     (def init (norm-node (node :init)))
     (def meta (node :meta))
-    (when (and (= :fn (init :op))
-               (not (and meta (or (get meta :redef) (get meta :dynamic)))))
-      (def arities (vview (init :arities)))
-      (when (= 1 (length arities))
-        (def ar (norm-node (in arities 0)))
-        (unless (ar :rest)
-          (put cell :inline-ir {:params (ar :params) :body (ar :body)}))))))
+    (def redefable (and meta (or (get meta :redef) (get meta :dynamic))))
+    (cond
+      redefable nil
+      (= :fn (init :op))
+      (let [arities (vview (init :arities))]
+        (when (= 1 (length arities))
+          (def ar (norm-node (in arities 0)))
+          (unless (ar :rest)
+            (put cell :inline-ir {:params (ar :params) :body (ar :body)})
+            # jolt-767: stash the whole (post-pass) :def IR so the inter-procedural
+            # pass can re-infer its body with discovered param types and re-emit it.
+            (put cell :infer-ir node))))
+      # a non-fn def: stash so the pass can infer its VALUE type (jolt-d6u), e.g.
+      # a color table used via rand-nth — its element type flows to lookups.
+      true (put cell :infer-ir node))))
 
 # Var late-binding: reads go through `(var-get cell)` with the cell embedded as a
 # constant, so compiled code sees redefinition (Janet early-binds plain symbols)
@@ -304,10 +313,69 @@
 (var- fp-counter 0)
 (defn- jsym [] (symbol "_fp$" (++ fp-counter)))
 
+# Is fnode a reference to clojure.core/get (or a host `get`)? Used to give
+# (get m :kw [d]) the same inlined keyword-lookup treatment as (:kw m [d]).
+(defn- get-head? [fnode]
+  (case (fnode :op)
+    :var (and (= "clojure.core" (fnode :ns)) (= "get" (fnode :name)))
+    :host (= "get" (fnode :name))
+    false))
+
+# Is fnode a reference to clojure.core/<name> (or host <name>)?
+(defn- core-head? [fnode name]
+  (case (fnode :op)
+    :var (and (= "clojure.core" (fnode :ns)) (= name (fnode :name)))
+    :host (= name (fnode :name))
+    false))
+
+# Is this IR node a :local the inference proved to be a vector ({:vec ...})?
+(defn- vec-hinted? [n] (and (= :local (n :op)) (= :vector (n :hint))))
+
+# Shared emit for a constant-keyword map lookup — both (:kw m [d]) and
+# (get m :kw [d]). subj-node is the subject's IR node (carries the type hint),
+# m-expr its emitted form, k the keyword, d-expr the emitted default or nil.
+#   - unhinted: GUARDED — (if (get m :jolt/type) (core-get …) (bare get)). The
+#     guard (one opcode) routes tagged reps (phm/sorted/transient/lazy-seq) to
+#     core-get; a plain struct/record (no :jolt/type) takes the bare get, which
+#     matches core-get for keyword keys.
+#   - ^:struct / ^Record hinted subject: skip the guard, bare get (~20 vs ~36ns).
+#   - hinted + JOLT_CHECK_HINTS: keep the guard but THROW on the tagged arm, so a
+#     lying hint surfaces a clear error (dev aid; off by default, no perf cost).
+(defn- emit-kw-lookup [subj-node m-expr k d-expr]
+  # the subject is a struct (raw-get-safe) when hinted so — by an explicit
+  # ^:struct/^Record hint on a local, OR by inference tagging ANY subject
+  # expression it proved to be a struct (jolt-d6u/RFC 0005), which is what lets
+  # nested access like (:r (:direction ray)) drop its guard.
+  (def hinted (and subj-node (= :struct (subj-node :hint))))
+  (def checked (and hinted (os/getenv "JOLT_CHECK_HINTS")))
+  (def m (if (symbol? m-expr) m-expr (jsym)))
+  (def wrap (fn [body] (if (symbol? m-expr) body ['let [m m-expr] body])))
+  (def err (when checked
+             ['error (string "type hint violated on `" (subj-node :name) "`: ("
+                             k " " (subj-node :name) ") — value carries :jolt/type "
+                             "(a phm/sorted/transient/lazy-seq), not the plain "
+                             "struct/record the ^:struct/^Record hint asserts")]))
+  (if (nil? d-expr)
+    (let [fast ['get m k]]
+      (wrap (cond
+              checked ['if ['get m :jolt/type] err fast]
+              hinted fast
+              ['if ['get m :jolt/type] (tuple core-get m k) fast])))
+    (let [d (if (symbol? d-expr) d-expr (jsym))
+          v (jsym)
+          fast ['let [v ['get m k]] ['if ['nil? v] d v]]
+          body (cond
+                 checked ['if ['get m :jolt/type] err fast]
+                 hinted fast
+                 ['if ['get m :jolt/type] (tuple core-get m k d) fast])
+          body (if (symbol? d-expr) body ['let [d d-expr] body])]
+      (wrap body))))
+
 (defn- emit-invoke [ctx node]
   (def fnode (norm-node (node :fn)))
   (def args (map |(emit ctx $) (vview (node :args))))
   (def nop (native-op fnode (length args)))
+  (def argnodes (vview (node :args)))
   (cond
     nop (case nop
           '++ ['+ (in args 0) 1]
@@ -326,27 +394,30 @@
     # records with direct field keys, nil, janet arrays, scalars) gets janet
     # `get` semantics, which match core-get for keyword keys. Structs never
     # store nil values (nil values force the phm rep), so present-but-nil
-    # can't be confused with missing on the fast arm.
+    # can't be confused with missing on the fast arm. A ^:struct/^Record hint on
+    # the subject skips the guard entirely (jolt-94n; see emit-kw-lookup).
     (and (= :const (fnode :op)) (keyword? (fnode :val))
          (>= 2 (length args) 1))
-    (let [k (fnode :val)
-          m-expr (in args 0)
-          # when the subject is already a janet symbol (a local), read it
-          # directly — the guard + lookup both reference it, and locals are
-          # immutable reads, so no rebinding let is needed (saves a binding
-          # per lookup in exactly the hottest shape, (:k local))
-          m (if (symbol? m-expr) m-expr (jsym))
-          wrap (fn [body] (if (symbol? m-expr) body ['let [m m-expr] body]))]
-      (if (= 1 (length args))
-        (wrap ['if ['get m :jolt/type] (tuple core-get m k) ['get m k]])
-        (let [d-expr (in args 1)
-              d (if (symbol? d-expr) d-expr (jsym))
-              v (jsym)
-              body ['if ['get m :jolt/type]
-                    (tuple core-get m k d)
-                    ['let [v ['get m k]] ['if ['nil? v] d v]]]
-              body (if (symbol? d-expr) body ['let [d d-expr] body])]
-          (wrap body))))
+    (emit-kw-lookup (norm-node (in argnodes 0)) (in args 0) (fnode :val)
+                    (when (= 2 (length args)) (in args 1)))
+    # (get m :kw) / (get m :kw default) — same inlined keyword lookup as (:kw m),
+    # so an explicit get with a constant keyword gets the guard fast path and the
+    # ^:struct/^Record hint (jolt-94n). Only when the key is a constant keyword;
+    # a variable/number/string key falls through to core-get below.
+    (and (get-head? fnode) (>= (length args) 2) (<= (length args) 3)
+         (let [a1 (norm-node (in argnodes 1))] (and (= :const (a1 :op)) (keyword? (a1 :val)))))
+    (emit-kw-lookup (norm-node (in argnodes 0)) (in args 0)
+                    ((norm-node (in argnodes 1)) :val)
+                    (when (= 3 (length args)) (in args 2)))
+    # (count v) on an inferred vector -> pv-count, skipping core-count's dispatch
+    # chain (jolt-d6u, Phase 2). Sound: a {:vec ...}-typed value is a pvec.
+    (and (core-head? fnode "count") (= 1 (length args)) (vec-hinted? (norm-node (in argnodes 0))))
+    (tuple pv/pv-count (in args 0))
+    # (nth v i default) on an inferred vector -> pv-nth. Only the 3-ARG form: the
+    # 2-arg nth ERRORS on out-of-bounds where pv-nth returns nil, so specializing
+    # it would change semantics; the 3-arg default matches pv-nth exactly.
+    (and (core-head? fnode "nth") (= 3 (length args)) (vec-hinted? (norm-node (in argnodes 0))))
+    (tuple pv/pv-nth (in args 0) (in args 1) (in args 2))
     (direct-call? ctx fnode) (tuple (emit ctx fnode) ;args)
     # Local callee (closure param, let-bound fn, defn self-name): inline the
     # function check so the overwhelmingly-common function case is a direct
@@ -542,6 +613,47 @@
   [ctx]
   (build-compiler! ctx))
 
+(defn- report-diags!
+  "Render and emit success-type diagnostics (RFC 0006) at the given strictness:
+  `warn` prints to stderr, `error` throws (failing this form's compilation).
+  file:line:col when the diagnostic carries an offset and the source is on the
+  env (jolt-fqy); else the ns."
+  [ctx diags strictness ns]
+  (def src (get (ctx :env) :tc-source))
+  (def file (or (get (ctx :env) :tc-file) (and ns (string ns))))
+  (each d diags
+    (def off (get d :pos))
+    (def loc
+      (if (and off src)
+        (let [lc (r/line-col src off)]
+          (string (or file "?") ":" (in lc 0) ":" (in lc 1)))
+        (string "in " (if ns (string ns) "?"))))
+    (def msg (string "type error " loc ": " (get d :msg)))
+    (if (= strictness "error")
+      (error msg)
+      (eprint "  " msg))))
+
+(defn type-check!
+  "Decoupled success-type check (RFC 0006): run jolt.passes/check-form as its OWN
+  inference pass over `ir` and report. Used in NON-direct-link builds, where the
+  optimization inference doesn't run — so checking costs a separate pass. (In
+  direct-link builds checking piggybacks on run-passes' inference instead, near
+  free; see analyze-form.) Protected so a checker bug never breaks compilation.
+
+  JOLT_TYPE_CHECK_USER (an orthogonal opt-in knob, jolt-zo1) additionally
+  reports calls to user functions whose concrete argument types provably make
+  the body throw — sound only under the closed-world assumption, hence opt-in."
+  [ctx ir strictness ns]
+  (def cf (ns-find (ctx-find-ns ctx "jolt.passes") "check-form"))
+  (when cf
+    (def uenv (os/getenv "JOLT_TYPE_CHECK_USER"))
+    (def strict? (and uenv (not= uenv "0") (not= uenv "off")))
+    (def r (protect ((var-get cf) ir strict?)))
+    (when (r 0)
+      (def diags (if (pv/pvec? (r 1)) (pv/pv->array (r 1)) (r 1)))
+      (when (and diags (> (length diags) 0))
+        (report-diags! ctx diags strictness ns)))))
+
 (defn analyze-form
   "Run the portable Clojure analyzer (jolt.analyzer/analyze) on a reader form,
   returning host-neutral IR."
@@ -574,14 +686,44 @@
   # Resolved lazily; absent during the pre-passes bootstrap window.
   (def pv (unless (= "1" (os/getenv "JOLT_NO_IR_PASSES"))
             (ns-find (ctx-find-ns ctx "jolt.passes") "run-passes")))
-  (if pv
-    (let [pr (protect ((var-get pv) (r 1) ctx))]
-      # the pass runs interpreted; a throw inside it unwinds past the
-      # interpreter's ns restores — put the compile ns back either way, or
-      # the REST of this compilation resolves in jolt.passes
-      (ctx-set-current-ns ctx saved-ns)
-      (if (pr 0) (pr 1) (r 1)))
-    (r 1)))
+  # Success-type checking level (RFC 0006). JOLT_TYPE_CHECK wins when set;
+  # otherwise it defaults to `warn` in direct-link builds — where the
+  # optimization inference already runs, so checking piggybacks on it for nearly
+  # free — and stays OFF for plain REPL/dev builds (no inference -> no free ride;
+  # opt in with JOLT_TYPE_CHECK there). (jolt audit)
+  (def tc (os/getenv "JOLT_TYPE_CHECK"))
+  (def tc-off (or (= tc "off") (= tc "0")))
+  (def direct-link? (if (get (ctx :env) :inline?) true false))
+  (def level (cond tc-off nil tc tc direct-link? "warn" true nil))
+  (def uenv (os/getenv "JOLT_TYPE_CHECK_USER"))
+  (def strict? (and uenv (not= uenv "0") (not= uenv "off") true))
+  # piggyback: check DURING run-passes' inference (direct-link, the cheap path)
+  (def piggyback? (and level direct-link? pv true))
+  (def scm (and piggyback? (ns-find (ctx-find-ns ctx "jolt.passes") "set-check-mode!")))
+  (when scm ((var-get scm) true strict?))
+  (def result
+    (if pv
+      (let [pr (protect ((var-get pv) (r 1) ctx))]
+        # the pass runs interpreted; a throw inside it unwinds past the
+        # interpreter's ns restores — put the compile ns back either way, or
+        # the REST of this compilation resolves in jolt.passes
+        (ctx-set-current-ns ctx saved-ns)
+        (if (pr 0) (pr 1) (r 1)))
+      (r 1)))
+  (when scm ((var-get scm) false false))
+  (cond
+    # direct-link: collect the diagnostics infer-top emitted and report them
+    piggyback?
+    (let [td (ns-find (ctx-find-ns ctx "jolt.passes") "take-diags!")]
+      (when td
+        (def raw ((var-get td)))
+        (def diags (if (pv/pvec? raw) (pv/pv->array raw) raw))
+        (when (and diags (> (length diags) 0))
+          (report-diags! ctx diags level saved-ns))))
+    # plain build with checking explicitly requested: a separate inference pass
+    (and level (not direct-link?))
+    (type-check! ctx (r 1) level saved-ns))
+  result)
 
 # The analyzer's deliberate punt signal — (uncompilable why) throws the string
 # "jolt/uncompilable: <why>". Anything else escaping the compile step is an
@@ -705,6 +847,157 @@
         (put v :defn-compiled true)
         (++ n))))
   n)
+
+# Inter-procedural collection-type inference + recompile (jolt-767, Phase 1),
+# closed-world / optimization mode. After a unit loads, every single-fixed-arity
+# fn stashed a post-pass :def IR (:infer-ir). We:
+#   1. run a whole-unit fixpoint: a fn's param types = lub of its in-unit
+#      call-site arg types (computed by jolt.passes/infer-body); a fn whose var
+#      escapes as a VALUE keeps :any params (its callers aren't all visible).
+#   2. re-infer + re-emit each fn body with its param types seeded, so
+#      param-dependent lookups specialize (drop the :jolt/type guard).
+# Recompiled bodies are semantically identical to the guarded ones, so this is
+# correct regardless of recompile order; order only affects how far a direct-
+# linked call propagates the faster callee.
+(defn- itype-join [a b]
+  (cond
+    (nil? a) b
+    (nil? b) a
+    (= a b) a
+    # compound vector types {:vec ELEM} join element-wise (jolt-d6u)
+    (and (struct? a) (struct? b) (in a :vec) (in b :vec))
+    (struct :vec (itype-join (in a :vec) (in b :vec)))
+    :any))
+
+(defn infer-unit!
+  [ctx ns-name]
+  (def pns (ctx-find-ns ctx "jolt.passes"))
+  (def f-set-rtenv (and pns (ns-find pns "set-rtenv!")))
+  (def f-set-vtypes (and pns (ns-find pns "set-vtypes!")))
+  (def f-join (and pns (ns-find pns "join-types")))
+  (def f-infer-body (and pns (ns-find pns "infer-body")))
+  (def f-reinfer (and pns (ns-find pns "reinfer-def")))
+  (def f-reset-esc (and pns (ns-find pns "reset-escapes!")))
+  (def f-get-esc (and pns (ns-find pns "collected-escapes")))
+  (def ns (ctx-find-ns ctx ns-name))
+  (def report @{})
+  (when (and ns f-set-rtenv f-set-vtypes f-join f-infer-body f-reinfer f-reset-esc f-get-esc)
+    # gather single-fixed-arity fns AND non-fn defs that stashed a :def IR
+    (def fns @[])
+    (def defs @[])
+    (def by-key @{})
+    (def vtypes @{})   # var VALUE types: fns -> :truthy (non-nil), defs -> inferred
+    (each nm (keys (ns :mappings))
+      (def v (get (ns :mappings) nm))
+      (when (and (table? v) (get v :infer-ir))
+        (def d (norm-node (get v :infer-ir)))
+        (def init (norm-node (d :init)))
+        (def key (string ns-name "/" nm))
+        (if (= :fn (init :op))
+          (let [ars (vview (init :arities))]
+            (when (= 1 (length ars))
+              (def ar (norm-node (in ars 0)))
+              (unless (ar :rest)
+                (def pv (vview (ar :params)))
+                (def rec @{:key key :cell v :def d :params (ar :params) :body (ar :body)
+                           :np (length pv) :pt (array/new-filled (length pv)) :ret nil})
+                (array/push fns rec)
+                (put by-key key rec)
+                # a fn value is non-nil -> :truthy (sealed root in opt mode)
+                (put vtypes key :truthy))))
+          # non-fn def: its value type is inferred from its init (jolt-d6u)
+          (array/push defs @{:key key :init (d :init) :vt nil}))))
+    (when (or (> (length fns) 0) (> (length defs) 0))
+      ((var-get f-reset-esc))
+      # --- param/return/value-type fixpoint (chaotic iteration to LEAST fixpoint) ---
+      # Param types are RECOMPUTED FRESH each iteration, not accumulated: :any is
+      # the lattice top, so a join with an early-iteration :any (a caller whose own
+      # params weren't typed yet) would poison the result permanently. Recomputing
+      # from the current state lets a param refine as its callers' types improve.
+      (var prev-rt @{})
+      (var changed true) (var iter 0)
+      (while (and changed (< iter 16))
+        ((var-get f-set-rtenv) prev-rt)
+        ((var-get f-set-vtypes) vtypes)
+        # type every fn body once under current param types; stash ret + calls
+        (each f fns
+          (def tenv @{})
+          (def pv (vview (f :params)))
+          (for i 0 (f :np) (when (in (f :pt) i) (put tenv (in pv i) (in (f :pt) i))))
+          (def res (vview ((var-get f-infer-body) (f :body) tenv)))
+          (put f :tret (in res 0))
+          (put f :tcalls (in res 2)))
+        # infer each def's VALUE type from its init
+        (each dv defs
+          (put dv :tvt (in (vview ((var-get f-infer-body) (dv :init) @{})) 0)))
+        # recompute param types FRESH (start at bottom = nil) from this round's calls
+        (def newpt @{})
+        (each f fns (put newpt (f :key) (array/new-filled (f :np))))
+        (each f fns
+          (each c (vview (f :tcalls))
+            (def cv (vview c))
+            (def npa (get newpt (in cv 0)))
+            (when npa
+              (def callee (get by-key (in cv 0)))
+              (def ats (vview (in cv 1)))
+              (def lim (min (length ats) (callee :np)))
+              (for i 0 lim (put npa i ((var-get f-join) (in npa i) (in ats i)))))))
+        # commit + detect change
+        (set changed false)
+        (def nrt @{})
+        (each f fns
+          (def np (get newpt (f :key)))
+          (for i 0 (f :np) (when (not= (in np i) (in (f :pt) i)) (set changed true)))
+          (when (not= (f :tret) (f :ret)) (set changed true))
+          (put f :pt np)
+          (put f :ret (f :tret))
+          (when (f :tret) (put nrt (f :key) (f :tret))))
+        (each dv defs
+          (when (not= (dv :tvt) (dv :vt)) (set changed true))
+          (put dv :vt (dv :tvt))
+          (when (dv :tvt) (put vtypes (dv :key) (dv :tvt))))
+        (set prev-rt nrt)
+        (++ iter))
+      # --- escaped fns: var used as a value -> params untrustworthy -> skip ---
+      (def esc @{})
+      (each k (vview ((var-get f-get-esc))) (put esc k true))
+      # install the FINAL return + value types so reinfer-def sees them
+      (def final-rt @{})
+      (each f fns (when (f :ret) (put final-rt (f :key) (f :ret))))
+      ((var-get f-set-rtenv) final-rt)
+      ((var-get f-set-vtypes) vtypes)
+      # --- re-emit the WHOLE unit, callees first (jolt-d6u) -------------------
+      # Re-inference alone only rebinds a fn's own var, but the hot path runs
+      # through callee bodies INLINED / direct-linked into callers at first
+      # compile. Re-emitting in callee-first (reverse-topological) order makes
+      # each caller re-embed its now-recompiled callees, and re-infers its body
+      # (typing locals via return inference) — so the specialization propagates,
+      # and a call site compiled AFTER this pass (the -e entry) links the whole
+      # recompiled chain. Every fn is re-emitted, not just those with concrete
+      # params, so the embedding refreshes even where a fn gained no param type.
+      (def order @[])
+      (def seen @{})
+      (defn visit [k]
+        (unless (get seen k)
+          (put seen k true)
+          (def f (get by-key k))
+          (when f
+            (each c (vview (f :tcalls)) (visit (in (vview c) 0)))
+            (array/push order f))))
+      (each f fns (visit (f :key)))
+      (each f order
+        (put report (f :key) (f :pt))
+        (def ptmap @{})
+        # escaped fn: its param types are untrustworthy (callers not all visible),
+        # so re-emit it WITHOUT seeding params (still re-embeds recompiled callees).
+        (unless (get esc (f :key))
+          (def pv (vview (f :params)))
+          (for i 0 (f :np)
+            (def t (in (f :pt) i))
+            (when (and t (not= t :any)) (put ptmap (in pv i) t))))
+        (def def2 ((var-get f-reinfer) (f :def) ptmap))
+        (protect (eval (emit-ir ctx def2) (ctx-janet-env ctx))))))
+  report)
 
 (defn ensure-macros-compiled!
   "Called once the overlay is fully loaded (api/load-core-overlay!): ensure the

@@ -83,6 +83,16 @@ checks → UNVERIFIED (rows to add).
 - S12a. `^:kw form` ≡ `^{:kw true} form`; `^Sym form` ≡ `^{:tag Sym} form`;
   `^"str"` ≡ `^{:tag "str"} form`. Multiple `^` stack, rightmost innermost,
   merged left-over-right.
+- S12b. Type hints are semantically transparent: a hint MUST NOT change a
+  program's result. Hints parse in every position they do in Clojure (params,
+  `let` bindings, `def` names, return position, arbitrary forms) and are
+  otherwise inert. As a non-normative optimization, jolt recognizes two hints
+  on a local as an assertion that a constant-keyword lookup may skip its
+  runtime representation guard: `^:struct` (a plain struct/record map) and
+  `^Name` where `Name` is a `defrecord`/`deftype`. The assertion is the
+  programmer's (an inaccurate hint yields a wrong lookup, like a wrong Clojure
+  `^String`); `JOLT_CHECK_HINTS=1` turns a violated hint into an error at no
+  cost to unchecked builds. See RFC 0004.
 - S13a. `#'ns/sym` MUST denote the same var as `(var ns/sym)`:
   `(= (var clojure.core/str) #'clojure.core/str)` is true.
 
