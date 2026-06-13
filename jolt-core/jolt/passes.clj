@@ -860,7 +860,7 @@
 (def ^:private elem-fns #{"rand-nth" "first" "peek" "last" "nth" "fnext" "second"})
 
 ;; the checker's emission points, defined after infer but referenced from it
-(declare check-invoke check-user-call register-user-fn!)
+(declare check-invoke check-user-call register-user-fn! not-callable? type-name)
 
 (defn- var-key [fnode] (str (get fnode :ns) "/" (get fnode :name)))
 
@@ -1044,7 +1044,12 @@
           ;; everything else: type args, collect the call (var callee), use the
           ;; declared/estimated return type. range produces a numeric vector.
           :else
-          (let [fnode' (if iscall-var fnode (nth (infer fnode tenv) 1))
+          (let [fr (when (not iscall-var) (infer fnode tenv))
+                fnode' (if iscall-var fnode (nth fr 1))
+                ;; the callee's value type: a var's from vtype-box (a fn is
+                ;; :truthy, a def carries its inferred type), else the inferred
+                ;; type of the callee expression (jolt-wwy)
+                callee-t (if iscall-var (get @vtype-box (var-key fnode)) (nth fr 0))
                 ares (mapv (fn [a] (infer a tenv)) args)]
             (when iscall-var
               (swap! calls-box conj [(var-key fnode) (mapv (fn [r] (nth r 0)) ares)]))
@@ -1054,6 +1059,11 @@
             (when @checking?
               (let [ats (mapv (fn [r] (nth r 0)) ares) pos (get node :pos)]
                 (when cn (check-invoke cn args ats pos))
+                ;; calling a provably non-function (jolt-wwy)
+                (when (not-callable? callee-t)
+                  (swap! diag-box conj
+                         {:op :call :type (type-name callee-t) :pos pos
+                          :msg (str "cannot call " (type-name callee-t) " as a function")}))
                 (when (and @strict-box iscall-var)
                   (let [k (var-key fnode) usig (get @user-sig-box k)]
                     (when usig (check-user-call k usig ats pos))))))
@@ -1127,6 +1137,15 @@
   (if (union-type? t)
     (every? not-seqable? (umembers t))
     (or (= t :num) (= t :kw))))
+
+;; concrete non-callable values (jolt-wwy): calling them throws "Cannot call X
+;; as a function". Only :num and :str — keywords/maps/vectors/sets are IFn,
+;; :truthy/:any/:nil are ambiguous (accepted). A union is non-callable only when
+;; every member is.
+(defn- not-callable? [t]
+  (if (union-type? t)
+    (every? not-callable? (umembers t))
+    (or (= t :num) (= t :str))))
 
 ;; arithmetic / numeric ops: EVERY argument must be a number.
 (def ^:private num-ops
@@ -1213,11 +1232,13 @@
                       :params (get ar :params) :body (get ar :body)}))))))))
 
 (defn- check-user-call
-  "Strict mode: report a call whose concrete argument type provably makes the
-  callee body throw. For each concrete arg, re-check the body with ONLY that
-  parameter bound to its arg type (others :any); a diagnostic the all-:any body
-  did not already have means the argument alone is provably wrong. Monotonic —
-  binding a concrete type can only ADD error-domain hits — so no false positive.
+  "Strict mode: report a call to a registered user fn that provably throws —
+  either a WRONG ARITY (the registered fn has one fixed arity, so a different
+  arg count always throws, jolt-wwy) or an argument whose concrete type the body
+  rejects. For the latter, re-check the body with ONLY that parameter bound to
+  its arg type (others :any); a diagnostic the all-:any body did not already
+  have means the argument alone is provably wrong. Monotonic — binding a
+  concrete type can only ADD error-domain hits — so no false positive.
   Cycle-guarded so mutually recursive fns terminate."
   [key sig arg-types pos]
   (when (not (contains? @checking-box key))
@@ -1225,23 +1246,30 @@
       (reset! checking-box (conj prev key))
       (let [params (:params sig)
             body (:body sig)
-            base (isolated-diag-count body (all-any-env params))
             npar (count params)
-            nargs (count arg-types)
-            np (if (< npar nargs) npar nargs)]
-        (reduce
-          (fn [_ i]
-            (let [at (nth arg-types i)]
-              (when (and (not= at :any) (not= at :truthy))
-                (let [pe (assoc (all-any-env params) (nth params i) at)]
-                  (when (> (isolated-diag-count body pe) base)
-                    (swap! diag-box conj
-                           {:op :user-call :argpos i :type (type-name at) :pos pos
-                            :msg (str "argument " (inc i) " to `" (:name sig)
-                                      "` is " (type-name at)
-                                      ", which its body provably rejects")})))))
-            nil)
-          nil (range np)))
+            nargs (count arg-types)]
+        (if (not= npar nargs)
+          ;; arity is provably wrong regardless of types — report and stop (the
+          ;; per-arg type re-check would bind params positionally, meaningless
+          ;; under a mismatch)
+          (swap! diag-box conj
+                 {:op :user-call :type :arity :pos pos
+                  :msg (str "wrong number of args (" nargs ") passed to `"
+                            (:name sig) "` (expected " npar ")")})
+          (let [base (isolated-diag-count body (all-any-env params))]
+            (reduce
+              (fn [_ i]
+                (let [at (nth arg-types i)]
+                  (when (and (not= at :any) (not= at :truthy))
+                    (let [pe (assoc (all-any-env params) (nth params i) at)]
+                      (when (> (isolated-diag-count body pe) base)
+                        (swap! diag-box conj
+                               {:op :user-call :argpos i :type (type-name at) :pos pos
+                                :msg (str "argument " (inc i) " to `" (:name sig)
+                                          "` is " (type-name at)
+                                          ", which its body provably rejects")})))))
+                nil)
+              nil (range npar)))))
       (reset! checking-box prev))))
 
 ;; --- Inter-procedural driver API (jolt-767) consumed by the back end --------

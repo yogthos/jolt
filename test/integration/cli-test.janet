@@ -142,6 +142,26 @@
            (os/setenv "JOLT_TYPE_CHECK" nil)
            r)
        (fn [s] (nil? (string/find "type error" s))))
+# negative/never types (jolt-wwy): calling a non-function is reported by default
+# in direct-link; wrong-arity to a user fn under the JOLT_TYPE_CHECK_USER opt-in
+(def tcn (string (or (os/getenv "TMPDIR") "/tmp") "/jolt-tcneg-" (os/time) ".clj"))
+(spit tcn "(ns tcn)\n\n(defn nope []\n  (let [n 5] (n 1)))\n")
+(check "direct-link reports calling a number as a function"
+       (do (os/setenv "JOLT_DIRECT_LINK" "1")
+           (def r (run-err tcn))
+           (os/setenv "JOLT_DIRECT_LINK" nil)
+           r)
+       (has "cannot call a number as a function"))
+(def tca (string (or (os/getenv "TMPDIR") "/tmp") "/jolt-tcarity-" (os/time) ".clj"))
+(spit tca "(ns tca)\n\n(defn f [x y] (+ x y))\n(defn g [] (f 1))\n")
+(check "JOLT_TYPE_CHECK_USER reports wrong arity to a user fn"
+       (do (os/setenv "JOLT_DIRECT_LINK" "1")
+           (os/setenv "JOLT_TYPE_CHECK_USER" "1")
+           (def r (run-err tca))
+           (os/setenv "JOLT_DIRECT_LINK" nil)
+           (os/setenv "JOLT_TYPE_CHECK_USER" nil)
+           r)
+       (has "wrong number of args (1) passed to `f` (expected 2)"))
 
 (if (> fails 0)
   (error (string "cli-test: " fails " failing check(s)"))

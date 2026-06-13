@@ -45,6 +45,23 @@
 (assert (= 0 (nd "(inc (count [1 2 3]))")) "count of vector + inc of :num both fine")
 (assert (= 0 (nd "(inc (first [1 2 3]))")) "first of vector -> :num, inc fine")
 
+# --- calling a non-function (jolt-wwy): :num and :str are not callable --------
+(assert (= 1 (nd "(5 1)")) "calling a number is reported")
+(assert (= 1 (nd "(\"hi\" 0)")) "calling a string is reported")
+(assert (= 1 (nd "((+ 1 2) :k)")) "calling an arithmetic result (a :num) is reported")
+(assert (= 1 (nd "(let [n 5] (n 1))")) "calling a let-bound number is reported")
+(assert (= 1 (nd "(let [s \"x\"] (s 0))")) "calling a let-bound string is reported")
+# (a var holding a number, e.g. (def nn 5) (nn 1), is caught in direct-link
+# mode via vtype-box; the standalone checker has no var value types)
+# callable values: keyword/map/vector/set as IFn — NOT reported
+(assert (= 0 (nd "(:k {:k 1})")) "keyword call is fine")
+(assert (= 0 (nd "({:a 1} :a)")) "map call is fine")
+(assert (= 0 (nd "([10 20] 1)")) "vector call is fine")
+(assert (= 0 (nd "(#{1 2} 1)")) "set call is fine")
+(assert (= 0 (nd "(fn [c] ((if c 1 :k) 0))")) "union {:num | :kw} callee accepted (:kw is callable)")
+(assert (= 0 (nd "(fn [f] (f 1))")) "calling an unknown (:any) param accepted")
+(assert (= 1 (nd "(fn [c] ((if c 1 \"x\") 0))")) "union {:num | :str} callee — both non-callable — reported")
+
 # --- bounded unions (jolt-pz5): report only when EVERY member is in the error
 # domain; accept when any member is valid. Differing branches used to collapse
 # to :any (accepted); now they form {:union #{...}} and are checked per-member.
@@ -85,6 +102,18 @@
         "strict: a ^:redef fn is not a stable requirement, not reported")
 (assert (= 1 (nds "(do (defn ufrec [x] (ufrec (+ x 1))) (ufrec \"s\"))"))
         "strict: self-recursion terminates (cycle guard) and the (+ x 1) on a string is reported once")
+# wrong arity to a user fn (jolt-wwy), strict mode: the registered fixed arity
+# makes a mismatched call provably throw, regardless of argument types
+(assert (= 1 (nds "(do (defn uar [x y] (+ x y)) (uar 1))"))
+        "strict: 2-arg fn called with 1 arg is reported")
+(assert (= 1 (nds "(do (defn uar2 [x] x) (uar2 1 2 3))"))
+        "strict: 1-arg fn called with 3 args is reported")
+(assert (= 0 (nds "(do (defn uar3 [x y] (+ x y)) (uar3 1 2))"))
+        "strict: correct arity accepted")
+(assert (= 0 (nd "(do (defn uar4 [x y] (+ x y)) (uar4 1))"))
+        "default level does NOT report user-fn arity (closed-world, opt-in)")
+(assert (= 0 (nds "(do (defn ^:redef uar5 [x y] (+ x y)) (uar5 1))"))
+        "strict: ^:redef fn arity not checked (could be redefined)")
 
 # --- the diagnostic carries op + type + a message ----------------------------
 (def one (in (diags "(inc \"x\")") 0))
