@@ -782,7 +782,14 @@
     (= a b) a
     (nil? a) b
     (nil? b) a
-    (and (struct-type? a) (struct-type? b)) (mk-struct (merge-fields (sfields a) (sfields b)))
+    (and (struct-type? a) (struct-type? b))
+      (let [merged (mk-struct (merge-fields (sfields a) (sfields b)))]
+        ;; joining two values of the SAME complete shape preserves it — the
+        ;; merged struct has the same key set (jolt-t34 R2). Different shapes
+        ;; (or an incomplete side) drop it, as the layout is no longer proven.
+        (if (and (get a :shape) (= (get a :shape) (get b :shape)))
+          (assoc merged :shape (get a :shape))
+          merged))
     (and (vec-type? a) (vec-type? b)) (mk-vec (join-t (velem a) (velem b)))
     (and (set-type? a) (set-type? b)) (mk-set (join-t (selem a) (selem b)))
     ;; differing kinds: form a scalar union when both sides reduce to scalars
@@ -797,8 +804,14 @@
 (defn- cap [t d]
   (cond
     (<= d 0) (if (or (struct-type? t) (vec-type? t) (set-type? t)) :any t)
-    (struct-type? t) (mk-struct (reduce (fn [m k] (assoc m k (cap (get (sfields t) k) (dec d))))
-                                        {} (keys (sfields t))))
+    (struct-type? t)
+      ;; capping truncates VALUES below depth d, but the KEY SET is unchanged, so
+      ;; a complete :shape survives — keep it so nested/container field reads can
+      ;; still bare-index (jolt-t34 R2). cap recurses into fields, so a nested
+      ;; shaped value (a vec3 inside a hit-info) keeps its own :shape too.
+      (let [capped (mk-struct (reduce (fn [m k] (assoc m k (cap (get (sfields t) k) (dec d))))
+                                      {} (keys (sfields t))))]
+        (if (get t :shape) (assoc capped :shape (get t :shape)) capped))
     (vec-type? t) (mk-vec (cap (velem t) (dec d)))
     (set-type? t) (mk-set (cap (selem t) (dec d)))
     :else t))
