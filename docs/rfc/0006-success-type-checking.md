@@ -1,6 +1,9 @@
 # RFC 0006 — Compile-time detection of provably-wrong code (success typing)
 
-- **Status**: Draft
+- **Status**: Implemented (jolt-y3b), first table. Core-fn error domains
+  (arithmetic on non-numbers, count/first/rest/next/seq/nth on non-seqable
+  scalars), `JOLT_TYPE_CHECK=off|warn|error`, decoupled from specialization.
+  Precise source locations (file:line:col) remain follow-up work.
 - **Champions**: jolt maintainers
 - **Created**: 2026-06-13
 - **Depends on**: RFC 0005 (structural collection-type inference)

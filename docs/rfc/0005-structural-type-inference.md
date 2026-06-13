@@ -1,6 +1,7 @@
 # RFC 0005 — Structural collection-type inference
 
-- **Status**: Draft
+- **Status**: Implemented (jolt-5uj). Ray tracer 12.8s to 11.0s hint-free,
+  matching the explicit `^:struct` version; render checksum unchanged.
 - **Champions**: jolt maintainers
 - **Created**: 2026-06-13
 
