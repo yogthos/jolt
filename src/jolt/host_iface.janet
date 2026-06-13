@@ -194,6 +194,10 @@
 # with it would recurse forever.
 (defn h-ref-get [tab key] (get tab key))
 
+# Absolute source offset of a list FORM (jolt-fqy), or nil. The analyzer stamps
+# it onto :invoke nodes so the success checker can report file:line:col.
+(defn h-form-position [form] (rdr/form-pos form))
+
 # ---------------------------------------------------------------------------
 # Inline registry (jolt-87f, Route 1 AOT escape analysis). The inline pass
 # (jolt.passes) is portable Clojure and can't read Janet var cells, so it asks
@@ -246,7 +250,7 @@
    "form-syntax-quote-lower" h-syntax-quote-lower
    "host-intern!" h-intern!
    "inline-enabled?" h-inline-enabled? "inline-ir" h-inline-ir
-   "record-type?" h-record-type?})
+   "record-type?" h-record-type? "form-position" h-form-position})
 
 (defn install! [ctx]
   (def ns (ctx-find-ns ctx "jolt.host"))

@@ -112,6 +112,10 @@
   (load-ns ctx filepath) → namespace symbol string"
   [ctx filepath]
   (def source (slurp filepath))
+  (when (checker-enabled?)
+    (track-positions! true)
+    (put (ctx :env) :tc-source source)
+    (put (ctx :env) :tc-file filepath))
   (def pairs (parse-all-positioned source filepath))
   (var ns-name nil)
   (each [form _] pairs

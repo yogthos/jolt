@@ -633,9 +633,20 @@
     (when (r 0)
       (def diags (if (pv/pvec? (r 1)) (pv/pv->array (r 1)) (r 1)))
       (when (and diags (> (length diags) 0))
-        (def loc (if ns (string ns) "?"))
+        # source + file for offset -> line:col (jolt-fqy). The loader stashes the
+        # current file's source + path on the env when checking is on.
+        (def src (get (ctx :env) :tc-source))
+        (def file (or (get (ctx :env) :tc-file) (and ns (string ns))))
         (each d diags
-          (def msg (string "type error in " loc ": " (get d :msg)))
+          (def off (get d :pos))
+          # precise: file:line:col of the offending form when its offset and the
+          # source are both available; else the ns (no worse than before)
+          (def loc
+            (if (and off src)
+              (let [lc (r/line-col src off)]
+                (string (or file "?") ":" (in lc 0) ":" (in lc 1)))
+              (string "in " (if ns (string ns) "?"))))
+          (def msg (string "type error " loc ": " (get d :msg)))
           (if (= strictness "error")
             (error msg)
             (eprint "  " msg)))))))

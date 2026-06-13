@@ -369,5 +369,10 @@
   Returns the result of the last form evaluated."
   [ctx s &opt file]
   (default file "<eval>")
+  # record form positions so the checker can report file:line:col (jolt-fqy)
+  (when (checker-enabled?)
+    (track-positions! true)
+    (put (ctx :env) :tc-source s)
+    (put (ctx :env) :tc-file file))
   (eval-forms-positioned ctx (parse-all-positioned s file) file))
 

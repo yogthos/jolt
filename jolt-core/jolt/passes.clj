@@ -1133,15 +1133,16 @@
 
 (defn- check-invoke
   "If node is a core-op call whose argument type is provably in the error domain,
-  conj a diagnostic. arg-types is the vector of inferred argument types."
-  [cn args arg-types]
+  conj a diagnostic. arg-types is the vector of inferred argument types; pos is
+  the call form's source offset (jolt-fqy), carried into each diagnostic."
+  [cn args arg-types pos]
   (cond
     (contains? num-ops cn)
     (reduce (fn [_ i]
               (let [t (nth arg-types i)]
                 (when (not-number? t)
                   (swap! diag-box conj
-                         {:op cn :argpos i :type (type-name t)
+                         {:op cn :argpos i :type (type-name t) :pos pos
                           :msg (str "`" cn "` requires a number, but argument "
                                     (inc i) " is " (type-name t))})))
               nil)
@@ -1150,7 +1151,7 @@
     (let [t (nth arg-types 0)]
       (when (not-seqable? t)
         (swap! diag-box conj
-               {:op cn :argpos 0 :type (type-name t)
+               {:op cn :argpos 0 :type (type-name t) :pos pos
                 :msg (str "`" cn "` requires "
                           (if (= cn "count") "a countable collection" "a seqable")
                           ", but argument 1 is " (type-name t))})))
@@ -1200,7 +1201,7 @@
   did not already have means the argument alone is provably wrong. Monotonic —
   binding a concrete type can only ADD error-domain hits — so no false positive.
   Cycle-guarded so mutually recursive fns terminate."
-  [key sig arg-types]
+  [key sig arg-types pos]
   (when (not (contains? @checking-box key))
     (let [prev @checking-box]
       (reset! checking-box (conj prev key))
@@ -1217,7 +1218,7 @@
                 (let [pe (assoc (all-any-env params) (nth params i) at)]
                   (when (> (isolated-diag-count body pe) base)
                     (swap! diag-box conj
-                           {:op :user-call :argpos i :type (type-name at)
+                           {:op :user-call :argpos i :type (type-name at) :pos pos
                             :msg (str "argument " (inc i) " to `" (:name sig)
                                       "` is " (type-name at)
                                       ", which its body provably rejects")})))))
@@ -1240,9 +1241,10 @@
                    (str (get fnode :ns) "/" (get fnode :name)))
             usig (when (and @strict-box ukey) (get @user-sig-box ukey))]
         (when (or cn usig)
-          (let [ats (mapv (fn [a] (nth (infer a tenv) 0)) args)]
-            (when cn (check-invoke cn args ats))
-            (when usig (check-user-call ukey usig ats))))
+          (let [ats (mapv (fn [a] (nth (infer a tenv) 0)) args)
+                pos (get node :pos)]
+            (when cn (check-invoke cn args ats pos))
+            (when usig (check-user-call ukey usig ats pos))))
         (check-walk fnode tenv)
         (reduce (fn [_ a] (check-walk a tenv) nil) nil args))
       (= op :let)

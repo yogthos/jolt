@@ -14,6 +14,41 @@
 # Forward declaration for mutual recursion
 (var read-form nil)
 
+# Source-position tracking for the success checker (jolt-fqy). When enabled, the
+# reader records each LIST form's absolute start offset (lists are the forms that
+# become :invoke nodes — what the checker reports on). Off by default: a flag
+# check per list is the only cost when the checker isn't running. Keyed by form
+# IDENTITY (lists are fresh arrays, never interned), so a position survives
+# macroexpansion exactly when the user's own sub-form is spliced through, and is
+# absent for macro-synthesized structure — which is what we want (fall back to
+# the call site). Not cleared between parses: nested parses (a require mid-load)
+# would otherwise drop an outer file's positions; the table is bounded by forms
+# compiled this process and only populated when the checker is on.
+(def form-pos-table @{})
+(var track-positions false)
+(var pos-base 0)   # absolute offset of the slice read-form currently sees
+
+(defn track-positions!
+  "Enable/disable list-form position recording (jolt-fqy)."
+  [on] (set track-positions on))
+
+(defn set-pos-base!
+  "Tell the reader the absolute offset of the slice it is about to read, so
+  recorded list positions are absolute (parse-all-positioned reads a shrinking
+  remainder)."
+  [b] (set pos-base b))
+
+(defn form-pos
+  "Absolute start offset recorded for a list form, or nil."
+  [form] (get form-pos-table form))
+
+(defn checker-enabled?
+  "True when JOLT_TYPE_CHECK selects a non-off level — the loaders use this to
+  decide whether to record form positions for the checker (jolt-fqy)."
+  []
+  (def tc (os/getenv "JOLT_TYPE_CHECK"))
+  (if (and tc (not= tc "off") (not= tc "0")) true false))
+
 (def whitespace-chars " \t\n\r,")
 
 (defn whitespace? [c]
@@ -624,7 +659,9 @@
           
           # list
           (= c 40)
-          (read-list s pos)
+          (let [r (read-list s pos)]
+            (when track-positions (put form-pos-table (in r 0) (+ pos-base pos)))
+            r)
           
           # unmatched closing delimiters
           (= c 41)
@@ -726,6 +763,9 @@
         (or (= c (chr " ")) (= c (chr "\t")) (= c (chr "\r")) (= c (chr ","))) (++ i)
         (= c (chr ";")) (while (and (< i n) (not= (in s i) (chr "\n"))) (++ i))
         (set scanning false)))
+    # list-form positions recorded during this parse-next are relative to s;
+    # tell the reader the slice base so they land absolute (jolt-fqy)
+    (when track-positions (set-pos-base! (- (length source) (length s))))
     (def [form rest*]
       (try (parse-next s)
         ([err fib]

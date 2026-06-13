@@ -375,6 +375,18 @@
   [ctx src &opt file]
   (default file "<source>")
   (def toplevel (get (ctx :env) :toplevel-eval))
+  # a require runs nested inside an outer file's eval; save/restore the outer
+  # checker source so its later forms still convert offsets correctly (jolt-fqy)
+  (def checking (checker-enabled?))
+  (def saved-src (and checking (get (ctx :env) :tc-source)))
+  (def saved-file (and checking (get (ctx :env) :tc-file)))
+  (when checking
+    (track-positions! true)
+    (put (ctx :env) :tc-source src)
+    (put (ctx :env) :tc-file file))
+  (defer (when checking
+           (put (ctx :env) :tc-source saved-src)
+           (put (ctx :env) :tc-file saved-file))
   (each [f line] (parse-all-positioned src file)
     (try
       (if toplevel (toplevel ctx f) (eval-form ctx @{} f))
@@ -388,7 +400,7 @@
         (when (nil? (get env :error-loading)) (put env :error-loading @[]))
         (def chain (get env :error-loading))
         (when (not= (last chain) file) (array/push chain file))
-        (propagate err fib)))))
+        (propagate err fib))))))
 
 (defn- maybe-require-ns
   "If namespace ns-name isn't populated yet, load its source — from a file on the

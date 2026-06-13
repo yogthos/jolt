@@ -10,6 +10,7 @@
 (print "Success-type checking (jolt-y3b)...")
 
 (os/setenv "JOLT_DIRECT_LINK" "1")
+(reader/track-positions! true)   # record form positions (jolt-fqy)
 (def ctx (api/init {:compile? true}))
 (def pns (types/ctx-find-ns ctx "jolt.passes"))
 (def check (types/var-get (types/ns-find pns "check-form")))
@@ -89,6 +90,11 @@
 (def one (in (diags "(inc \"x\")") 0))
 (assert (= "inc" (get one :op)) "diagnostic names the op")
 (assert (string/find "number" (get one :msg)) "message says a number is required")
+# --- the diagnostic carries the offending form's source offset (jolt-fqy) -----
+(assert (= 0 (get one :pos)) "diagnostic carries :pos (offset 0 for a single form)")
+(def nested (in (diags "(do 1 2 (inc :k))") 0))
+(assert (= 8 (get nested :pos))
+        "the inner (inc :k) form is positioned at its own offset, not the do's")
 
 # --- end-to-end: strictness drives compilation (decoupled from :inline?) -----
 # error mode aborts a provably-wrong form's compilation; a correct form compiles.

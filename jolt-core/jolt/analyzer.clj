@@ -23,7 +23,7 @@
                                form-map-pairs form-set-items form-special? compile-ns
                                form-macro? form-expand-1 resolve-global
                                form-sym-meta host-intern! form-syntax-quote-lower
-                               record-type?]]))
+                               record-type? form-position]]))
 
 (declare analyze)
 
@@ -250,8 +250,13 @@
           (and (form-sym? head) (not shadowed) (form-macro? ctx head))
             (analyze ctx (form-expand-1 ctx form) env)
           :else
-            (invoke (analyze ctx head env)
-                    (mapv #(analyze ctx % env) (rest items))))))))
+            ;; stamp the list form's source offset onto the :invoke (jolt-fqy)
+            ;; so the success checker can report file:line:col. nil when the
+            ;; reader did not record it (synthetic/macro-built forms).
+            (let [n (invoke (analyze ctx head env)
+                            (mapv #(analyze ctx % env) (rest items)))
+                  p (form-position form)]
+              (if p (assoc n :pos p) n)))))))
 
 (defn analyze
   ([ctx form] (analyze ctx form (empty-env)))
