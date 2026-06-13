@@ -706,18 +706,131 @@
                          :finally (when (get node :finally) (scalar-replace (get node :finally))))
       :else node)))
 
+;; ---------------------------------------------------------------------------
+;; Collection-type inference (jolt-99x), Phase 0: intra-procedural. A forward,
+;; soft-typing-style pass (simplified HM: monovariant, never-fails, lattice top
+;; = :any) that types expressions from literals/arithmetic and flows the type
+;; through let bindings and if-joins. Where a keyword-lookup subject is PROVEN a
+;; plain struct map it sets :hint :struct (the same channel a manual hint uses,
+;; so the back end drops the guard); where the type is :any it leaves the
+;; dynamic guard in place. Sound by construction: a concrete type is assigned
+;; only when proven, so a wrong bare get is impossible.
+;;
+;; Lattice values: :struct-map (raw-get-safe), :phm-map, :vector, :set, :truthy
+;; (a provably non-nil/non-false scalar — numbers, strings, keywords), :any (top).
+(defn- join [a b] (if (= a b) a :any))
+(defn- struct-safe? [t] (= t :struct-map))
+;; a value whose type guarantees it is neither nil nor false — the back end only
+;; builds a struct (vs a phm) when every value is truthy, so a map literal is a
+;; struct only when all its values have a truthy type.
+(defn- truthy-type? [t]
+  (or (= t :truthy) (= t :struct-map) (= t :phm-map) (= t :vector) (= t :set)))
+
+(def ^:private truthy-ret-fns
+  #{"+" "-" "*" "/" "inc" "dec" "mod" "rem" "quot" "min" "max" "abs"
+    "bit-and" "bit-or" "bit-xor" "count"})
+(def ^:private vector-ret-fns #{"vec" "vector" "mapv" "filterv" "subvec"})
+
+(defn- call-ret-type [fnode]
+  (let [nm (cond
+             (and (= :var (get fnode :op)) (= "clojure.core" (get fnode :ns))) (get fnode :name)
+             (= :host (get fnode :op)) (get fnode :name)
+             :else nil)]
+    (cond
+      (nil? nm) :any
+      (contains? truthy-ret-fns nm) :truthy
+      (contains? vector-ret-fns nm) :vector
+      :else :any)))
+
+(defn- infer
+  "Returns [type node'] — the inferred type of node and node with struct-safe
+  :local references annotated :hint :struct. tenv maps in-scope local names to
+  inferred types."
+  [node tenv]
+  (let [op (get node :op)]
+    (cond
+      (= op :const)
+      [(let [v (get node :val)] (if (or (nil? v) (= false v)) :any :truthy)) node]
+      (= op :local)
+      (let [t (get tenv (get node :name))]
+        [(if t t :any) (if (struct-safe? t) (assoc node :hint :struct) node)])
+      (= op :map)
+      (let [res (mapv (fn [pr]
+                        (let [kr (infer (nth pr 0) tenv)
+                              vr (infer (nth pr 1) tenv)]
+                          [(nth kr 1) (nth vr 1) (nth vr 0)]))
+                      (get node :pairs))
+            t (if (and (> (count res) 0)
+                       (every? (fn [pr] (scalar-const? (nth pr 0))) (get node :pairs))
+                       (every? (fn [r] (truthy-type? (nth r 2))) res))
+                :struct-map :any)]
+        [t (assoc node :pairs (mapv (fn [r] [(nth r 0) (nth r 1)]) res))])
+      (= op :vector)
+      [:vector (assoc node :items (mapv (fn [x] (nth (infer x tenv) 1)) (get node :items)))]
+      (= op :set)
+      [:set (assoc node :items (mapv (fn [x] (nth (infer x tenv) 1)) (get node :items)))]
+      (= op :if)
+      (let [tr (infer (get node :test) tenv)
+            thn (infer (get node :then) tenv)
+            els (infer (get node :else) tenv)]
+        [(join (nth thn 0) (nth els 0))
+         (assoc node :test (nth tr 1) :then (nth thn 1) :else (nth els 1))])
+      (= op :do)
+      (let [stmts (mapv (fn [s] (nth (infer s tenv) 1)) (get node :statements))
+            r (infer (get node :ret) tenv)]
+        [(nth r 0) (assoc node :statements stmts :ret (nth r 1))])
+      (= op :throw)
+      [:any (assoc node :expr (nth (infer (get node :expr) tenv) 1))]
+      (= op :invoke)
+      (let [fr (infer (get node :fn) tenv)
+            args (mapv (fn [a] (nth (infer a tenv) 1)) (get node :args))]
+        [(call-ret-type (get node :fn)) (assoc node :fn (nth fr 1) :args args)])
+      (= op :let)
+      (let [res (reduce (fn [acc b]
+                          (let [te (nth acc 0) binds (nth acc 1)
+                                ir (infer (nth b 1) te)]
+                            [(assoc te (nth b 0) (nth ir 0)) (conj binds [(nth b 0) (nth ir 1)])]))
+                        [tenv []] (get node :bindings))
+            br (infer (get node :body) (nth res 0))]
+        [(nth br 0) (assoc node :bindings (nth res 1) :body (nth br 1))])
+      (= op :loop)
+      ;; conservative + sound: loop bindings join across recur, which we don't
+      ;; track in Phase 0, so they stay :any. Still descend to annotate any
+      ;; known-type lookups inside the body.
+      [:any (assoc node
+                   :bindings (mapv (fn [b] [(nth b 0) (nth (infer (nth b 1) tenv) 1)]) (get node :bindings))
+                   :body (nth (infer (get node :body) tenv) 1))]
+      (= op :recur)
+      [:any (assoc node :args (mapv (fn [a] (nth (infer a tenv) 1)) (get node :args)))]
+      (= op :fn)
+      [:any (assoc node :arities (mapv (fn [a] (assoc a :body (nth (infer (get a :body) {}) 1)))
+                                       (get node :arities)))]
+      (= op :def)
+      [:any (assoc node :init (nth (infer (get node :init) tenv) 1))]
+      (= op :try)
+      [:any (assoc node
+                   :body (nth (infer (get node :body) tenv) 1)
+                   :catch-body (when (get node :catch-body) (nth (infer (get node :catch-body) tenv) 1))
+                   :finally (when (get node :finally) (nth (infer (get node :finally) tenv) 1)))]
+      :else [:any node])))
+
+(defn- infer-top [node] (nth (infer node {}) 1))
+
 (defn run-passes
   "All passes, in order. The back end applies this to every analyzed form. When
   inlining is enabled for the unit (user code under direct-linking, jolt-87f),
   run inline + flatten + scalar-replace + const-fold to a capped fixpoint —
   inlining exposes map literals to lookups, scalar-replace collapses them, which
-  may expose more. Otherwise (core + bootstrap) just const-fold, as before."
+  may expose more — then a collection-type inference pass (jolt-99x) that
+  auto-drops the lookup guard where the type is proven. Otherwise (core +
+  bootstrap) just const-fold, as before."
   [node ctx]
   (if (inline-enabled? ctx)
-    (loop [i 0 n (const-fold node)]
-      (reset! dirty false)
-      (let [n2 (const-fold (scalar-replace (flatten-lets (inline-node n ctx))))]
-        (if (and @dirty (< i 8))
-          (recur (inc i) n2)
-          n2)))
+    (let [opt (loop [i 0 n (const-fold node)]
+                (reset! dirty false)
+                (let [n2 (const-fold (scalar-replace (flatten-lets (inline-node n ctx))))]
+                  (if (and @dirty (< i 8))
+                    (recur (inc i) n2)
+                    n2)))]
+      (infer-top opt))
     (const-fold node)))
