@@ -737,6 +737,40 @@
 (defn- mk-vec [t] {:vec (if t t :any)})
 (defn- mk-set [t] {:set (if t t :any)})
 (defn- mk-struct [fs] {:struct fs})
+
+;; Bounded union types (RFC 0006 / jolt-pz5). A union {:union #{T...}} records
+;; that a value is provably one of a small, fixed set of SCALAR types — what
+;; differing if-branches used to collapse to :any. It exists so the success
+;; checker can reject a use where EVERY member is in the op's error domain
+;; ((inc (if c "a" :k))) while still accepting one where any member is valid
+;; ((inc (if c 1 "x"))). Scalars only, capped cardinality: the member space is
+;; the five scalar tags, so the lattice stays finite and the inter-procedural
+;; fixpoint terminates. A union is opaque to every STRUCTURAL predicate
+;; (struct-type?/vec-type?/set-type? key on :struct/:vec/:set, which a union
+;; lacks), so specialization treats it exactly like :any — codegen is
+;; unchanged; only the checker reads inside it.
+(def ^:private union-cap 4)
+(defn- scalar-t? [t] (or (= t :num) (= t :str) (= t :kw) (= t :truthy) (= t :phm)))
+(defn- union-type? [t] (some? (get t :union)))
+(defn- umembers [t] (get t :union))
+(defn- union-of
+  "Normalize a seq of member types into a lattice value: flatten nested unions,
+  keep only scalars (any non-scalar member collapses the whole thing to :any,
+  the conservative top), then return the lone member if one, {:union #{...}}
+  for 2..cap distinct scalars, or :any past the cap."
+  [ts]
+  (let [flat (reduce (fn [acc t]
+                       (if (union-type? t)
+                         (reduce conj acc (umembers t))
+                         (conj acc t)))
+                     #{} ts)]
+    (cond
+      (not (every? scalar-t? flat)) :any
+      (= 0 (count flat)) :any
+      (= 1 (count flat)) (first flat)
+      (> (count flat) union-cap) :any
+      :else {:union flat})))
+
 (declare join-t)
 (defn- merge-fields
   "Per-field join of two field maps (a key in only one side joins with :any)."
@@ -751,7 +785,11 @@
     (and (struct-type? a) (struct-type? b)) (mk-struct (merge-fields (sfields a) (sfields b)))
     (and (vec-type? a) (vec-type? b)) (mk-vec (join-t (velem a) (velem b)))
     (and (set-type? a) (set-type? b)) (mk-set (join-t (selem a) (selem b)))
-    :else :any))
+    ;; differing kinds: form a scalar union when both sides reduce to scalars
+    ;; (or scalar unions); anything compound on either side stays :any (jolt-pz5)
+    :else (let [ma (cond (union-type? a) (umembers a) (scalar-t? a) #{a} :else nil)
+                mb (cond (union-type? b) (umembers b) (scalar-t? b) #{b} :else nil)]
+            (if (and ma mb) (union-of (reduce conj ma mb)) :any))))
 (defn- join [a b] (join-t a b))
 ;; depth cap (RFC 0005): truncate a type below depth d to :any, so recursive data
 ;; can't make an infinite type and the inter-procedural fixpoint stays finite.
@@ -1043,15 +1081,22 @@
 ;; there are no false positives. The table is curated to genuinely-throwing
 ;; cases; lenient ops ((get 5 :k) -> nil, (:k 5) -> nil) are NOT listed.
 
-;; concrete non-numbers: arithmetic provably throws on these.
+;; concrete non-numbers: arithmetic provably throws on these. A union is in the
+;; error domain only when EVERY member is (jolt-pz5) — if any member is an
+;; accepted type the call is accepted (no false positive).
 (defn- not-number? [t]
-  (or (= t :str) (= t :kw) (= t :phm)
-      (struct-type? t) (vec-type? t) (set-type? t)))
+  (if (union-type? t)
+    (every? not-number? (umembers t))
+    (or (= t :str) (= t :kw) (= t :phm)
+        (struct-type? t) (vec-type? t) (set-type? t))))
 
 ;; concrete non-seqable scalars: seq/count/first/nth provably throw on these.
 ;; (Strings and collections ARE seqable/countable; :truthy is ambiguous; :nil
-;; and :any are accepted.)
-(defn- not-seqable? [t] (or (= t :num) (= t :kw)))
+;; and :any are accepted.) A union throws only when every member does.
+(defn- not-seqable? [t]
+  (if (union-type? t)
+    (every? not-seqable? (umembers t))
+    (or (= t :num) (= t :kw))))
 
 ;; arithmetic / numeric ops: EVERY argument must be a number.
 (def ^:private num-ops
@@ -1063,7 +1108,10 @@
 (defn- type-name
   "Render an inferred type for an error message."
   [t]
-  (cond (struct-type? t) "a map"
+  (cond (union-type? t)
+          (reduce (fn [s m] (if (= s "") (type-name m) (str s " or " (type-name m))))
+                  "" (umembers t))
+        (struct-type? t) "a map"
         (vec-type? t) "a vector"
         (set-type? t) "a set"
         (= t :str) "a string"

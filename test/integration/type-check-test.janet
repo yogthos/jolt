@@ -40,6 +40,26 @@
 (assert (= 0 (nd "(inc (count [1 2 3]))")) "count of vector + inc of :num both fine")
 (assert (= 0 (nd "(inc (first [1 2 3]))")) "first of vector -> :num, inc fine")
 
+# --- bounded unions (jolt-pz5): report only when EVERY member is in the error
+# domain; accept when any member is valid. Differing branches used to collapse
+# to :any (accepted); now they form {:union #{...}} and are checked per-member.
+(assert (= 1 (nd "(fn [c] (inc (if c \"a\" :k)))"))
+        "inc of {:str | :kw} — every member non-number — reported")
+(assert (= 0 (nd "(fn [c] (inc (if c 1 \"x\")))"))
+        "inc of {:num | :str} — :num is fine — still accepted")
+(assert (= 1 (nd "(fn [c] (count (if c :k 5)))"))
+        "count of {:kw | :num} — both non-seqable — reported")
+(assert (= 0 (nd "(fn [c] (count (if c :k \"ab\")))"))
+        "count of {:kw | :str} — :str is seqable — accepted")
+(assert (= 1 (nd "(fn [c] (inc (if c \"a\" (if c :k :j))))"))
+        "inc of nested all-non-number union reported")
+(assert (= 0 (nd "(fn [c] (inc (if c \"a\" (if c :k 1))))"))
+        "inc of union with a buried :num member accepted")
+# a union is opaque to structural specialization — it keeps the dynamic guard,
+# exactly like :any, so a keyword lookup over it is never mis-specialized.
+(assert (= 0 (nd "(fn [c] (:r (if c {:r 1} {:g 2})))"))
+        "keyword lookup over a struct union is accepted (no false positive)")
+
 # --- the diagnostic carries op + type + a message ----------------------------
 (def one (in (diags "(inc \"x\")") 0))
 (assert (= "inc" (get one :op)) "diagnostic names the op")
