@@ -259,18 +259,24 @@
   [msg]
   (def msg (string msg))
   (cond
-    # janet polymorphic arithmetic: could not find method :+ for 1 or :r+ for "a"
+    # janet polymorphic arithmetic. Binary: "could not find method :+ for 1 or
+    # :r+ for "a"". Unary (inc/dec/-): "could not find method :+ for "x"" — no
+    # "or :r" clause, so orpos is nil; handle both without crashing the reporter.
     (string/has-prefix? "could not find method :" msg)
     (let [rest* (string/slice msg (length "could not find method :"))
           sp (string/find " " rest*)
           op (string/slice rest* 0 sp)
           tail (string/slice rest* (+ sp (length " for ")))
-          orpos (string/find " or :r" tail)
-          a (string/slice tail 0 orpos)
-          forpos (string/find " for " tail (+ orpos 1))
-          b (string/slice tail (+ forpos 5))]
-      (string "Cannot " (get op-words op op) " " a " and " b
-              " — " op " expects numbers"))
+          orpos (string/find " or :r" tail)]
+      (if (nil? orpos)
+        # unary form: one operand
+        (string "Cannot " (get op-words op op) " " tail
+                " — " op " expects numbers")
+        (let [a (string/slice tail 0 orpos)
+              forpos (string/find " for " tail (+ orpos 1))
+              b (string/slice tail (+ forpos 5))]
+          (string "Cannot " (get op-words op op) " " a " and " b
+                  " — " op " expects numbers"))))
     # janet fixed-arity: <function _r$ns/f--N> called with 2 arguments, expected 1
     (and (string/has-prefix? "<function " msg) (string/find "> called with " msg))
     (let [nm-end (string/find ">" msg)

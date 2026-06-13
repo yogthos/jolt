@@ -45,6 +45,12 @@
 (check "arith error message rewritten"
        (run-err "-e" `(+ 1 "a")`)
        (has `Cannot add 1 and "a"`))
+# unary arithmetic (inc/dec) on a non-number: the host error has no "or :r"
+# clause, which used to crash the rewriter itself — handle it (jolt audit)
+(check "unary arith error does not crash the rewriter"
+       (run-err "-e" `(inc "x")`)
+       (fn [s] (and (string/find "expects numbers" s)
+                    (nil? (string/find "could not find method" s)))))
 (check "arity error names the fn"
        (run-err "-e" "(defn afn [x] x) (afn 1 2)")
        (has "Wrong number of args (2) passed to: user/afn"))
