@@ -421,6 +421,14 @@
             (if path
               (load-ns-source ctx (slurp path) path)
               (load-ns-source ctx embedded (string ns-name " (stdlib)")))
+            # Inter-procedural collection-type inference (jolt-767): once the whole
+            # unit is loaded, run the closed-world fixpoint + recompile so param-
+            # dependent lookups specialize. Only in optimization mode; best-effort
+            # (a failure here must not break loading). Hook installed by the api to
+            # avoid an evaluator->backend circular import.
+            (when (get (ctx :env) :inline?)
+              (when-let [iu (get (ctx :env) :infer-unit!)]
+                (protect (iu ctx ns-name))))
             # Record load order for tooling (uberscript): a dependency finishes
             # loading before its requirer, so this is topological. Skip the
             # baked-in stdlib — it's part of the runtime, not something to bundle.

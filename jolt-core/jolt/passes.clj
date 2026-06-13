@@ -731,15 +731,31 @@
     "bit-and" "bit-or" "bit-xor" "count"})
 (def ^:private vector-ret-fns #{"vec" "vector" "mapv" "filterv" "subvec"})
 
+;; Inter-procedural state (jolt-767, Phase 1). The Janet orchestrator (backend
+;; infer-unit!) drives a whole-unit fixpoint: before typing a fn body it installs
+;; the current return-type estimates of all unit fns here, and after typing it
+;; reads back the call sites this body made (callee + inferred arg types) to
+;; propagate into callee param types. Both are plain module state, like `dirty`.
+(def ^:private rtenv-box (atom {}))   ;; "ns/name" -> inferred return type
+(def ^:private calls-box (atom []))   ;; collected [ "ns/name" [arg-types...] ]
+(def ^:private escapes-box (atom #{})) ;; var-keys used as a VALUE (not a call head)
+
+(defn- var-key [fnode] (str (get fnode :ns) "/" (get fnode :name)))
+
 (defn- call-ret-type [fnode]
-  (let [nm (cond
-             (and (= :var (get fnode :op)) (= "clojure.core" (get fnode :ns))) (get fnode :name)
-             (= :host (get fnode :op)) (get fnode :name)
-             :else nil)]
+  (let [op (get fnode :op)]
     (cond
-      (nil? nm) :any
-      (contains? truthy-ret-fns nm) :truthy
-      (contains? vector-ret-fns nm) :vector
+      ;; a user fn whose return type the fixpoint has estimated
+      (= op :var) (let [r (get @rtenv-box (var-key fnode))]
+                    (if r r (let [nm (and (= "clojure.core" (get fnode :ns)) (get fnode :name))]
+                              (cond (nil? nm) :any
+                                    (contains? truthy-ret-fns nm) :truthy
+                                    (contains? vector-ret-fns nm) :vector
+                                    :else :any))))
+      (= op :host) (let [nm (get fnode :name)]
+                     (cond (contains? truthy-ret-fns nm) :truthy
+                           (contains? vector-ret-fns nm) :vector
+                           :else :any))
       :else :any)))
 
 (defn- infer
@@ -781,10 +797,19 @@
         [(nth r 0) (assoc node :statements stmts :ret (nth r 1))])
       (= op :throw)
       [:any (assoc node :expr (nth (infer (get node :expr) tenv) 1))]
+      ;; a :var reached HERE is in value position (an arg, a let init, ...), not
+      ;; a call head — so the fn it names escapes and its params can't be inferred.
+      (= op :var) (do (swap! escapes-box conj (var-key node)) [:any node])
       (= op :invoke)
-      (let [fr (infer (get node :fn) tenv)
-            args (mapv (fn [a] (nth (infer a tenv) 1)) (get node :args))]
-        [(call-ret-type (get node :fn)) (assoc node :fn (nth fr 1) :args args)])
+      (let [fnode (get node :fn)
+            iscall-var (= :var (get fnode :op))
+            ;; a :var in call-head position is a call, NOT an escape — so don't
+            ;; route it through infer (which would record it as escaped).
+            fnode' (if iscall-var fnode (nth (infer fnode tenv) 1))
+            ares (mapv (fn [a] (infer a tenv)) (get node :args))]
+        (when iscall-var
+          (swap! calls-box conj [(var-key fnode) (mapv (fn [r] (nth r 0)) ares)]))
+        [(call-ret-type fnode) (assoc node :fn fnode' :args (mapv (fn [r] (nth r 1)) ares))])
       (= op :let)
       (let [res (reduce (fn [acc b]
                           (let [te (nth acc 0) binds (nth acc 1)
@@ -803,8 +828,15 @@
       (= op :recur)
       [:any (assoc node :args (mapv (fn [a] (nth (infer a tenv) 1)) (get node :args)))]
       (= op :fn)
-      [:any (assoc node :arities (mapv (fn [a] (assoc a :body (nth (infer (get a :body) {}) 1)))
-                                       (get node :arities)))]
+      ;; a closure inherits the enclosing tenv so CAPTURED locals keep their
+      ;; types (e.g. a reduce closure that calls (f captured-struct ...)); its own
+      ;; params/rest shadow to :any (unknown until Phase 1 types them via callers).
+      [:any (assoc node :arities
+                   (mapv (fn [a]
+                           (let [pe (reduce (fn [e p] (assoc e p :any)) tenv (get a :params))
+                                 pe (if (get a :rest) (assoc pe (get a :rest) :any) pe)]
+                             (assoc a :body (nth (infer (get a :body) pe) 1))))
+                         (get node :arities)))]
       (= op :def)
       [:any (assoc node :init (nth (infer (get node :init) tenv) 1))]
       (= op :try)
@@ -815,6 +847,39 @@
       :else [:any node])))
 
 (defn- infer-top [node] (nth (infer node {}) 1))
+
+;; --- Inter-procedural driver API (jolt-767) consumed by the back end --------
+(defn set-rtenv!
+  "Install the current return-type estimates (a map \"ns/name\" -> type) used to
+  type call results during the fixpoint."
+  [m] (reset! rtenv-box m))
+
+(defn reset-escapes! [] (reset! escapes-box #{}))
+(defn collected-escapes [] (vec @escapes-box))
+
+(defn infer-body
+  "Type `body` under tenv (local-name -> type). Returns [ret-type node' calls],
+  where calls is the [[\"ns/name\" [arg-types...]] ...] this body invokes (for
+  propagating into callee param types). Also accumulates escapes (read with
+  collected-escapes after a full sweep)."
+  [body tenv]
+  (reset! calls-box [])
+  (let [r (infer body tenv)]
+    [(nth r 0) (nth r 1) @calls-box]))
+
+(defn reinfer-def
+  "Re-run inference on a stashed :def's fn arity bodies with param types seeded
+  (ptmap: param-name -> type), returning the def with annotated bodies. The back
+  end emits the result directly (no further passes), so the param-typed lookups
+  keep their specialization. Used by the inter-procedural recompile."
+  [def-node ptmap]
+  (let [fnode (get def-node :init)]
+    (if (= :fn (get fnode :op))
+      (assoc def-node :init
+             (assoc fnode :arities
+                    (mapv (fn [a] (assoc a :body (nth (infer (get a :body) ptmap) 1)))
+                          (get fnode :arities))))
+      def-node)))
 
 (defn run-passes
   "All passes, in order. The back end applies this to every analyzed form. When

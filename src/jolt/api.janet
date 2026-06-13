@@ -189,6 +189,10 @@
     # — that would be circular — so it reads this hook). Without it, required
     # namespaces ran interpreted-only.
     (put (ctx :env) :toplevel-eval eval-toplevel)
+    # Inter-procedural type-inference hook (jolt-767): the evaluator calls this
+    # after a unit finishes loading (optimization mode only). Installed here to
+    # avoid an evaluator->backend circular import.
+    (put (ctx :env) :infer-unit! backend/infer-unit!)
     # Stateful primitives as ctx-capturing clojure.core fns (protocol-dispatch,
     # register-method, …) — so the protocol macros compile to plain invokes. Must
     # precede the overlay (its defprotocol/extend-type expansions call these).
