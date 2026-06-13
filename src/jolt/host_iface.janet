@@ -219,6 +219,18 @@
                (not (let [m (cell :meta)] (and m (get m :redef)))))
       (cell :inline-ir))))
 
+# Is `name` (a bare type-name string, e.g. "Vec3") a defrecord/deftype? Both
+# expand to define a ->Name positional constructor var (30-macros.clj), so its
+# presence is the marker. Lets the analyzer resolve a ^Record type hint to the
+# struct fast path: record instances are tables tagged :jolt/deftype (NOT
+# :jolt/type), so a raw keyword get is correct for them (jolt-94n).
+(defn h-record-type? [ctx name]
+  (def ctor (string "->" name))
+  (def cns (ctx-find-ns ctx (h-current-ns ctx)))
+  (if (or (and cns (ns-find cns ctor))
+          (ns-find (ctx-find-ns ctx "clojure.core") ctor))
+    true false))
+
 (def- exports
   {"form-sym?" h-sym? "form-sym-name" h-sym-name "form-sym-ns" h-sym-ns
    "ref-put!" h-ref-put!
@@ -233,7 +245,8 @@
    "form-expand-1" h-expand-1 "resolve-global" h-resolve-global
    "form-syntax-quote-lower" h-syntax-quote-lower
    "host-intern!" h-intern!
-   "inline-enabled?" h-inline-enabled? "inline-ir" h-inline-ir})
+   "inline-enabled?" h-inline-enabled? "inline-ir" h-inline-ir
+   "record-type?" h-record-type?})
 
 (defn install! [ctx]
   (def ns (ctx-find-ns ctx "jolt.host"))

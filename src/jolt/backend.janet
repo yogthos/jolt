@@ -304,10 +304,55 @@
 (var- fp-counter 0)
 (defn- jsym [] (symbol "_fp$" (++ fp-counter)))
 
+# Is fnode a reference to clojure.core/get (or a host `get`)? Used to give
+# (get m :kw [d]) the same inlined keyword-lookup treatment as (:kw m [d]).
+(defn- get-head? [fnode]
+  (case (fnode :op)
+    :var (and (= "clojure.core" (fnode :ns)) (= "get" (fnode :name)))
+    :host (= "get" (fnode :name))
+    false))
+
+# Shared emit for a constant-keyword map lookup — both (:kw m [d]) and
+# (get m :kw [d]). subj-node is the subject's IR node (carries the type hint),
+# m-expr its emitted form, k the keyword, d-expr the emitted default or nil.
+#   - unhinted: GUARDED — (if (get m :jolt/type) (core-get …) (bare get)). The
+#     guard (one opcode) routes tagged reps (phm/sorted/transient/lazy-seq) to
+#     core-get; a plain struct/record (no :jolt/type) takes the bare get, which
+#     matches core-get for keyword keys.
+#   - ^:struct / ^Record hinted subject: skip the guard, bare get (~20 vs ~36ns).
+#   - hinted + JOLT_CHECK_HINTS: keep the guard but THROW on the tagged arm, so a
+#     lying hint surfaces a clear error (dev aid; off by default, no perf cost).
+(defn- emit-kw-lookup [subj-node m-expr k d-expr]
+  (def hinted (and subj-node (= :local (subj-node :op)) (= :struct (subj-node :hint))))
+  (def checked (and hinted (os/getenv "JOLT_CHECK_HINTS")))
+  (def m (if (symbol? m-expr) m-expr (jsym)))
+  (def wrap (fn [body] (if (symbol? m-expr) body ['let [m m-expr] body])))
+  (def err (when checked
+             ['error (string "type hint violated on `" (subj-node :name) "`: ("
+                             k " " (subj-node :name) ") — value carries :jolt/type "
+                             "(a phm/sorted/transient/lazy-seq), not the plain "
+                             "struct/record the ^:struct/^Record hint asserts")]))
+  (if (nil? d-expr)
+    (let [fast ['get m k]]
+      (wrap (cond
+              checked ['if ['get m :jolt/type] err fast]
+              hinted fast
+              ['if ['get m :jolt/type] (tuple core-get m k) fast])))
+    (let [d (if (symbol? d-expr) d-expr (jsym))
+          v (jsym)
+          fast ['let [v ['get m k]] ['if ['nil? v] d v]]
+          body (cond
+                 checked ['if ['get m :jolt/type] err fast]
+                 hinted fast
+                 ['if ['get m :jolt/type] (tuple core-get m k d) fast])
+          body (if (symbol? d-expr) body ['let [d d-expr] body])]
+      (wrap body))))
+
 (defn- emit-invoke [ctx node]
   (def fnode (norm-node (node :fn)))
   (def args (map |(emit ctx $) (vview (node :args))))
   (def nop (native-op fnode (length args)))
+  (def argnodes (vview (node :args)))
   (cond
     nop (case nop
           '++ ['+ (in args 0) 1]
@@ -326,34 +371,21 @@
     # records with direct field keys, nil, janet arrays, scalars) gets janet
     # `get` semantics, which match core-get for keyword keys. Structs never
     # store nil values (nil values force the phm rep), so present-but-nil
-    # can't be confused with missing on the fast arm.
+    # can't be confused with missing on the fast arm. A ^:struct/^Record hint on
+    # the subject skips the guard entirely (jolt-94n; see emit-kw-lookup).
     (and (= :const (fnode :op)) (keyword? (fnode :val))
          (>= 2 (length args) 1))
-    (let [k (fnode :val)
-          m-expr (in args 0)
-          # ^:struct hint (jolt-dad): the subject IR local asserts a plain
-          # struct/record map, so skip the :jolt/type guard entirely and emit a
-          # bare get (~20ns vs ~36ns guarded). Programmer-asserted, like a
-          # Clojure type hint — a lie just makes the raw get return the wrong
-          # thing, same contract as ^String. Only for a :local subject.
-          subj (norm-node (in (vview (node :args)) 0))
-          hinted (and (= :local (subj :op)) (= :struct (subj :hint)))
-          # when the subject is already a janet symbol (a local), read it
-          # directly — the guard + lookup both reference it, and locals are
-          # immutable reads, so no rebinding let is needed (saves a binding
-          # per lookup in exactly the hottest shape, (:k local))
-          m (if (symbol? m-expr) m-expr (jsym))
-          wrap (fn [body] (if (symbol? m-expr) body ['let [m m-expr] body]))]
-      (if (= 1 (length args))
-        (let [fast ['get m k]]
-          (wrap (if hinted fast ['if ['get m :jolt/type] (tuple core-get m k) fast])))
-        (let [d-expr (in args 1)
-              d (if (symbol? d-expr) d-expr (jsym))
-              v (jsym)
-              fast ['let [v ['get m k]] ['if ['nil? v] d v]]
-              body (if hinted fast ['if ['get m :jolt/type] (tuple core-get m k d) fast])
-              body (if (symbol? d-expr) body ['let [d d-expr] body])]
-          (wrap body))))
+    (emit-kw-lookup (norm-node (in argnodes 0)) (in args 0) (fnode :val)
+                    (when (= 2 (length args)) (in args 1)))
+    # (get m :kw) / (get m :kw default) — same inlined keyword lookup as (:kw m),
+    # so an explicit get with a constant keyword gets the guard fast path and the
+    # ^:struct/^Record hint (jolt-94n). Only when the key is a constant keyword;
+    # a variable/number/string key falls through to core-get below.
+    (and (get-head? fnode) (>= (length args) 2) (<= (length args) 3)
+         (let [a1 (norm-node (in argnodes 1))] (and (= :const (a1 :op)) (keyword? (a1 :val)))))
+    (emit-kw-lookup (norm-node (in argnodes 0)) (in args 0)
+                    ((norm-node (in argnodes 1)) :val)
+                    (when (= 3 (length args)) (in args 2)))
     (direct-call? ctx fnode) (tuple (emit ctx fnode) ;args)
     # Local callee (closure param, let-bound fn, defn self-name): inline the
     # function check so the overwhelmingly-common function case is a direct

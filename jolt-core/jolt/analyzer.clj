@@ -22,7 +22,8 @@
                                form-literal? form-elements form-vec-items
                                form-map-pairs form-set-items form-special? compile-ns
                                form-macro? form-expand-1 resolve-global
-                               form-sym-meta host-intern! form-syntax-quote-lower]]))
+                               form-sym-meta host-intern! form-syntax-quote-lower
+                               record-type?]]))
 
 (declare analyze)
 
@@ -44,13 +45,19 @@
 (defn- add-locals [env names] (update env :locals #(reduce conj % names)))
 (defn- with-recur [env name] (assoc env :recur name))
 
-;; Type hints (jolt-dad). The reader keeps ^hint metadata on the binding symbol;
-;; we recognize ^:struct, which asserts the value is a plain struct/record map so
-;; a constant-keyword lookup can skip the :jolt/type guard and emit a bare get.
-;; Other hints parse and are ignored, as before.
-(defn- hint-of [sym]
+;; Type hints (jolt-94n). The reader keeps ^hint metadata on the binding symbol.
+;; Two hints resolve to the :struct fast path (a constant-keyword lookup skips
+;; the :jolt/type guard and emits a bare get): ^:struct (a plain struct/record
+;; map) and ^TypeName where TypeName is a defrecord/deftype (its instances are
+;; tagged :jolt/deftype, not :jolt/type, so a raw get is correct). Every other
+;; hint (^String, ^long, ...) parses and is ignored, as before.
+(defn- hint-of [ctx sym]
   (let [m (form-sym-meta sym)]
-    (when (and m (get m :struct)) :struct)))
+    (cond
+      (nil? m) nil
+      (get m :struct) :struct
+      :else (let [t (get m :tag)]
+              (when (and t (record-type? ctx t)) :struct)))))
 (defn- add-hint [env nm h]
   (if h (assoc env :hints (assoc (:hints env) nm h)) env))
 
@@ -69,11 +76,11 @@
         (when-not (form-sym? bsym) (uncompilable "destructuring binding"))
         (let [nm (form-sym-name bsym)
               init (analyze ctx (nth bvec (inc i)) env)]
-          (recur (+ i 2) (add-hint (add-locals env [nm]) nm (hint-of bsym))
+          (recur (+ i 2) (add-hint (add-locals env [nm]) nm (hint-of ctx bsym))
                  (conj pairs [nm init]))))
       [pairs env])))
 
-(defn- parse-params [pvec]
+(defn- parse-params [ctx pvec]
   ;; :hints is a vector of [name hint] pairs (vector, not a map, so the caller
   ;; folds it with a plain reduce — no reduce-over-map in the kernel subset).
   (loop [i 0 fixed [] rest-name nil hints []]
@@ -84,13 +91,13 @@
           (let [r (nth pvec (inc i))]
             (when-not (form-sym? r) (uncompilable "destructuring fn rest"))
             (recur (+ i 2) fixed (form-sym-name r) hints))
-          (let [nm (form-sym-name p) h (hint-of p)]
+          (let [nm (form-sym-name p) h (hint-of ctx p)]
             (recur (inc i) (conj fixed nm) rest-name
                    (if h (conj hints [nm h]) hints)))))
       {:fixed fixed :rest rest-name :hints hints})))
 
 (defn- analyze-arity [ctx pvec body env fn-name]
-  (let [pp (parse-params (vec (form-vec-items pvec)))
+  (let [pp (parse-params ctx (vec (form-vec-items pvec)))
         fixed (:fixed pp)
         rst (:rest pp)
         ;; Always a recur target, variadic included: the back end gives the rest
