@@ -619,11 +619,17 @@
   bug never breaks compilation, then reports each diagnostic per strictness:
   `warn` prints to stderr, `error` throws (failing this form's compilation).
   Because the checker only fires on PROVABLY-wrong code, a correct program has
-  nothing to report under either level."
+  nothing to report under either level.
+
+  JOLT_TYPE_CHECK_USER (an orthogonal opt-in knob, jolt-zo1) additionally
+  reports calls to user functions whose concrete argument types provably make
+  the body throw — sound only under the closed-world assumption, hence opt-in."
   [ctx ir strictness ns]
   (def cf (ns-find (ctx-find-ns ctx "jolt.passes") "check-form"))
   (when cf
-    (def r (protect ((var-get cf) ir)))
+    (def uenv (os/getenv "JOLT_TYPE_CHECK_USER"))
+    (def strict? (and uenv (not= uenv "0") (not= uenv "off")))
+    (def r (protect ((var-get cf) ir strict?)))
     (when (r 0)
       (def diags (if (pv/pvec? (r 1)) (pv/pv->array (r 1)) (r 1)))
       (when (and diags (> (length diags) 0))

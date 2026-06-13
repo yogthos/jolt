@@ -838,6 +838,17 @@
 ;; The orchestrator populates this from sealed (opt-mode) cell roots + def inits.
 (def ^:private vtype-box (atom {}))   ;; "ns/name" -> value type
 
+;; User-function error domains (jolt-zo1), opt-in. As the checker walks defs it
+;; registers each non-redefinable single-fixed-arity user fn's {:params :body}
+;; here, keyed "ns/name". At a later call site (strict mode only) the body is
+;; re-checked with ONE parameter bound to its concrete argument type — if that
+;; alone produces a diagnostic the all-:any body did not, that argument is
+;; provably wrong and the CALL is reported. Module state, like rtenv-box: a def
+;; must precede its call (the same closed-world ordering RFC 0005 assumes).
+(def ^:private user-sig-box (atom {}))      ;; "ns/name" -> {:params [..] :body ir}
+(def ^:private checking-box (atom #{}))     ;; keys mid-recheck — cycle guard
+(def ^:private strict-box (atom false))     ;; report against user-fn domains?
+
 ;; fns that RETURN an element of their (first) collection arg, so a lookup on the
 ;; result of (rand-nth coll-of-structs) etc. types as the element.
 (def ^:private elem-fns #{"rand-nth" "first" "peek" "last" "nth" "fnext" "second"})
@@ -1145,6 +1156,75 @@
                           ", but argument 1 is " (type-name t))})))
     :else nil))
 
+(declare check-walk)
+
+;; --- user-function error domains (jolt-zo1), opt-in --------------------------
+(defn- all-any-env
+  "tenv binding every param name to :any (the all-ambiguous baseline)."
+  [params]
+  (reduce (fn [e p] (assoc e p :any)) {} params))
+
+(defn- isolated-diag-count
+  "Count of diagnostics check-walk produces for body under tenv, with the shared
+  diag-box saved and restored so this probe never leaks into the real report."
+  [body tenv]
+  (let [saved @diag-box]
+    (reset! diag-box [])
+    (check-walk body tenv)
+    (let [n (count @diag-box)]
+      (reset! diag-box saved)
+      n)))
+
+(defn- register-user-fn!
+  "Record a (def name (fn [params] body)) — single fixed arity, not redefinable —
+  for later user-fn call checking. Redefinable/dynamic and multi/variadic fns are
+  skipped (their body is not a stable requirement)."
+  [node]
+  (let [init (get node :init)
+        m (get node :meta)
+        redefable (and m (or (get m :redef) (get m :dynamic)))]
+    (when (and (not redefable) (= :fn (get init :op)))
+      (let [arities (get init :arities)]
+        (when (= 1 (count arities))
+          (let [ar (first arities)]
+            (when (not (get ar :rest))
+              (swap! user-sig-box assoc
+                     (str (get node :ns) "/" (get node :name))
+                     {:name (get node :name)
+                      :params (get ar :params) :body (get ar :body)}))))))))
+
+(defn- check-user-call
+  "Strict mode: report a call whose concrete argument type provably makes the
+  callee body throw. For each concrete arg, re-check the body with ONLY that
+  parameter bound to its arg type (others :any); a diagnostic the all-:any body
+  did not already have means the argument alone is provably wrong. Monotonic —
+  binding a concrete type can only ADD error-domain hits — so no false positive.
+  Cycle-guarded so mutually recursive fns terminate."
+  [key sig arg-types]
+  (when (not (contains? @checking-box key))
+    (let [prev @checking-box]
+      (reset! checking-box (conj prev key))
+      (let [params (:params sig)
+            body (:body sig)
+            base (isolated-diag-count body (all-any-env params))
+            npar (count params)
+            nargs (count arg-types)
+            np (if (< npar nargs) npar nargs)]
+        (reduce
+          (fn [_ i]
+            (let [at (nth arg-types i)]
+              (when (and (not= at :any) (not= at :truthy))
+                (let [pe (assoc (all-any-env params) (nth params i) at)]
+                  (when (> (isolated-diag-count body pe) base)
+                    (swap! diag-box conj
+                           {:op :user-call :argpos i :type (type-name at)
+                            :msg (str "argument " (inc i) " to `" (:name sig)
+                                      "` is " (type-name at)
+                                      ", which its body provably rejects")})))))
+            nil)
+          nil (range np)))
+      (reset! checking-box prev))))
+
 (defn- check-walk
   "Walk the IR, inferring argument types and recording diagnostics for
   provably-wrong core-fn calls. Threads tenv through binders exactly like infer."
@@ -1155,9 +1235,14 @@
       (let [fnode (get node :fn)
             args (get node :args)
             cn (when (and (= :var (get fnode :op)) (= "clojure.core" (get fnode :ns)))
-                 (get fnode :name))]
-        (when cn
-          (check-invoke cn args (mapv (fn [a] (nth (infer a tenv) 0)) args)))
+                 (get fnode :name))
+            ukey (when (= :var (get fnode :op))
+                   (str (get fnode :ns) "/" (get fnode :name)))
+            usig (when (and @strict-box ukey) (get @user-sig-box ukey))]
+        (when (or cn usig)
+          (let [ats (mapv (fn [a] (nth (infer a tenv) 0)) args)]
+            (when cn (check-invoke cn args ats))
+            (when usig (check-user-call ukey usig ats))))
         (check-walk fnode tenv)
         (reduce (fn [_ a] (check-walk a tenv) nil) nil args))
       (= op :let)
@@ -1185,7 +1270,7 @@
           (check-walk (get node :body) tenv))
       (= op :recur)
       (reduce (fn [_ a] (check-walk a tenv) nil) nil (get node :args))
-      (= op :def) (check-walk (get node :init) tenv)
+      (= op :def) (do (register-user-fn! node) (check-walk (get node :init) tenv))
       (= op :throw) (check-walk (get node :expr) tenv)
       (= op :vector) (reduce (fn [_ x] (check-walk x tenv) nil) nil (get node :items))
       (= op :set) (reduce (fn [_ x] (check-walk x tenv) nil) nil (get node :items))
@@ -1219,13 +1304,22 @@
 
 (defn check-form
   "Success-type check a single analyzed form (RFC 0006). Returns a vector of
-  diagnostics [{:op :argpos :type :msg} ...] for provably-wrong core-fn calls;
-  empty when nothing is provably wrong. Runs independently of specialization so
-  it is usable in normal builds (the decoupled checking path)."
-  [node]
-  (reset! diag-box [])
-  (check-walk node {})
-  (vec @diag-box))
+  diagnostics [{:op :argpos :type :msg} ...] for provably-wrong calls; empty
+  when nothing is provably wrong. Runs independently of specialization so it is
+  usable in normal builds (the decoupled checking path).
+
+  With strict? true, also reports calls to registered user functions whose
+  concrete argument types provably make the body throw (jolt-zo1, opt-in,
+  closed-world). user-sig-box accumulates registered defs across forms, so a
+  def must precede its call — the same ordering RFC 0005 already assumes."
+  ([node] (check-form node false))
+  ([node strict?]
+   (reset! strict-box (if strict? true false))
+   (reset! checking-box #{})
+   (reset! diag-box [])
+   (check-walk node {})
+   (reset! strict-box false)
+   (vec @diag-box)))
 
 (defn infer-body
   "Type `body` under tenv (local-name -> type). Returns [ret-type node' calls],

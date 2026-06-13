@@ -18,6 +18,10 @@
 (defn diags [src]
   (api/normalize-pvecs (check (backend/analyze-form ctx (reader/parse-string src)))))
 (defn nd [src] (length (diags src)))
+# strict mode (jolt-zo1): also report provably-wrong calls to user fns
+(defn nds [src]
+  (length (api/normalize-pvecs
+            (check (backend/analyze-form ctx (reader/parse-string src)) true))))
 
 # --- provably wrong: REPORTED ------------------------------------------------
 (assert (= 1 (nd "(inc \"x\")")) "inc on a string")
@@ -59,6 +63,27 @@
 # exactly like :any, so a keyword lookup over it is never mis-specialized.
 (assert (= 0 (nd "(fn [c] (:r (if c {:r 1} {:g 2})))"))
         "keyword lookup over a struct union is accepted (no false positive)")
+
+# --- user-function error domains (jolt-zo1), opt-in strict mode --------------
+# A call passing a provably-wrong type to a user fn whose body requires
+# otherwise is reported ONLY in strict mode; the default level never fires on
+# user fns (closed-world soundness boundary).
+(assert (= 0 (nd  "(do (defn ufa [x] (+ x 1)) (ufa \"s\"))"))
+        "user-fn wrong call NOT reported at the default level")
+(assert (= 1 (nds "(do (defn ufa [x] (+ x 1)) (ufa \"s\"))"))
+        "strict: arithmetic fn called with a string is reported")
+(assert (= 0 (nds "(do (defn ufb [x] (+ x 1)) (ufb 5))"))
+        "strict: same fn called with a number is accepted")
+(assert (= 0 (nds "(do (defn ufc [x] (:k x)) (ufc \"s\"))"))
+        "strict: a body that uses the param leniently is not reported")
+# cross-form: a def registered by an earlier check is visible to a later call
+(nds "(defn ufd [x] (count x))")
+(assert (= 1 (nds "(ufd 42)"))
+        "strict: cross-form call to a seq-only fn with a number is reported")
+(assert (= 0 (nds "(do (defn ^:redef ufe [x] (+ x 1)) (ufe \"s\"))"))
+        "strict: a ^:redef fn is not a stable requirement, not reported")
+(assert (= 1 (nds "(do (defn ufrec [x] (ufrec (+ x 1))) (ufrec \"s\"))"))
+        "strict: self-recursion terminates (cycle guard) and the (+ x 1) on a string is reported once")
 
 # --- the diagnostic carries op + type + a message ----------------------------
 (def one (in (diags "(inc \"x\")") 0))
