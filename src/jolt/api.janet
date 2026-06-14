@@ -193,6 +193,7 @@
     # after a unit finishes loading (optimization mode only). Installed here to
     # avoid an evaluator->backend circular import.
     (put (ctx :env) :infer-unit! backend/infer-unit!)
+    (put (ctx :env) :infer-program! backend/infer-program!)   # jolt-t34 whole-program
     # Stateful primitives as ctx-capturing clojure.core fns (protocol-dispatch,
     # register-method, …) — so the protocol macros compile to plain invokes. Must
     # precede the overlay (its defprotocol/extend-type expansions call these).
@@ -223,6 +224,22 @@
     # the inline pass only inlines targets that won't be redefined, the same
     # safety the direct-linking flag asserts (jolt-87f).
     (put (ctx :env) :inline? (if (get (ctx :env) :direct-linking?) true false))
+    # jolt-t34. Two shape gates:
+    #  :shapes?     — shape-recs are active. Records use declared-shape layout +
+    #                 bare-index reads here. ON wherever the inference that proves
+    #                 reads runs = direct-linking. JOLT_NO_SHAPE force-disables.
+    #  :map-shapes? — also shape generic const-key MAP literals. Opt-in (JOLT_SHAPE)
+    #                 because shaping maps net-loses on unproven reads; records win.
+    (put (ctx :env) :shapes?
+      (and (get (ctx :env) :direct-linking?) (not (os/getenv "JOLT_NO_SHAPE"))))
+    (put (ctx :env) :map-shapes?
+      (and (os/getenv "JOLT_SHAPE") (not (os/getenv "JOLT_NO_SHAPE"))))
+    # Whole-program (Stalin) mode (jolt-t34): opt-in, closed-world. Defers the
+    # per-ns inference and runs one fixpoint over all units at the end (main, or a
+    # harness calling infer-program!). Needs direct-linking (the closed-world
+    # assumption); slow/memory-heavy builds are the documented trade-off.
+    (put (ctx :env) :whole-program?
+      (and (os/getenv "JOLT_WHOLE_PROGRAM") (get (ctx :env) :direct-linking?)))
     ctx))
 
 # --- Context snapshot/fork (cheap isolated copies) --------------------------
@@ -300,7 +317,7 @@
   # Opts land in the key via their printed form; an opt that prints unstably
   # (e.g. a closure in :namespaces) just degrades to a cache miss, never to a
   # wrong hit. Runtime knobs that shape the ctx outside opts ride along too.
-  (def key (string/format "%q|%q|%q|%q|%q|%q|%q|%q|%q|%q"
+  (def key (string/format "%q|%q|%q|%q|%q|%q|%q|%q|%q|%q|%q|%q"
                           (string janet/version "-" janet/build)
                           opts
                           (os/getenv "JOLT_PATH")
@@ -310,7 +327,11 @@
                           (os/getenv "JOLT_INTERPRET_MACROS")
                           (os/getenv "JOLT_DIRECT_LINK")
                           (os/getenv "JOLT_NO_IR_PASSES")
-                          (os/getenv "JOLT_CHECK_HINTS")))
+                          (os/getenv "JOLT_CHECK_HINTS")
+                          # :shapes? is baked into the image; key on every input
+                          # to it so a cache hit never carries a wrong shape state
+                          (os/getenv "JOLT_SHAPE")
+                          (os/getenv "JOLT_NO_SHAPE")))
   (string dir "/jolt-ctx-" (band h 0x7FFFFFFF) "-" len "-" (band (hash key) 0x7FFFFFFF) ".jimg"))
 
 (defn init-cached

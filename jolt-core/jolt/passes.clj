@@ -782,7 +782,14 @@
     (= a b) a
     (nil? a) b
     (nil? b) a
-    (and (struct-type? a) (struct-type? b)) (mk-struct (merge-fields (sfields a) (sfields b)))
+    (and (struct-type? a) (struct-type? b))
+      (let [merged (mk-struct (merge-fields (sfields a) (sfields b)))]
+        ;; joining two values of the SAME complete shape preserves it — the
+        ;; merged struct has the same key set (jolt-t34 R2). Different shapes
+        ;; (or an incomplete side) drop it, as the layout is no longer proven.
+        (if (and (get a :shape) (= (get a :shape) (get b :shape)))
+          (assoc merged :shape (get a :shape))
+          merged))
     (and (vec-type? a) (vec-type? b)) (mk-vec (join-t (velem a) (velem b)))
     (and (set-type? a) (set-type? b)) (mk-set (join-t (selem a) (selem b)))
     ;; differing kinds: form a scalar union when both sides reduce to scalars
@@ -797,8 +804,14 @@
 (defn- cap [t d]
   (cond
     (<= d 0) (if (or (struct-type? t) (vec-type? t) (set-type? t)) :any t)
-    (struct-type? t) (mk-struct (reduce (fn [m k] (assoc m k (cap (get (sfields t) k) (dec d))))
-                                        {} (keys (sfields t))))
+    (struct-type? t)
+      ;; capping truncates VALUES below depth d, but the KEY SET is unchanged, so
+      ;; a complete :shape survives — keep it so nested/container field reads can
+      ;; still bare-index (jolt-t34 R2). cap recurses into fields, so a nested
+      ;; shaped value (a vec3 inside a hit-info) keeps its own :shape too.
+      (let [capped (mk-struct (reduce (fn [m k] (assoc m k (cap (get (sfields t) k) (dec d))))
+                                      {} (keys (sfields t))))]
+        (if (get t :shape) (assoc capped :shape (get t :shape)) capped))
     (vec-type? t) (mk-vec (cap (velem t) (dec d)))
     (set-type? t) (mk-set (cap (selem t) (dec d)))
     :else t))
@@ -806,10 +819,26 @@
 ;; k, if known, else :any.
 (defn- struct-safe? [t] (struct-type? t))
 (defn- field-type [t k] (if (struct-type? t) (get (sfields t) k :any) :any))
+;; Shape (hidden class, jolt-t34). A struct type built from a map LITERAL carries
+;; its complete layout — :shape, the canonical (str-sorted) key vector. The back
+;; end represents such a map as a shape tuple and reads a field by bare index.
+;; A struct type from a JOIN or from field-access inference has no :shape
+;; (incomplete: the full key set isn't proven), so it keeps the dynamic path —
+;; never a bare index. No shape is hardcoded; any constant key set is one.
+(defn- shape-order
+  "Canonical key order for a shape: keys sorted by their string form, so two
+  literals with the same keys in any order intern to the same shape."
+  [ks] (vec (sort (fn [a b] (compare (str a) (str b))) ks)))
+(defn- type-shape [t] (get t :shape))
 ;; tag a node (any expression, not just a :local) so the back end can specialize
 ;; a lookup whose SUBJECT is that node — this is what makes nested access work:
 ;; (:direction ray) is tagged struct, so (:r (:direction ray)) drops its guard.
 (defn- mark-hint [node h] (assoc node :hint h))
+;; tag a lookup subject as a struct, carrying the complete shape when known
+;; (so the back end bare-indexes) — jolt-t34
+(defn- mark-struct [node t]
+  (let [n (assoc node :hint :struct)]
+    (if (get t :shape) (assoc n :shape (get t :shape)) n)))
 ;; a value provably neither nil nor false — the back end only builds a struct
 ;; (vs a phm) when every value is non-nil/non-false, so a map literal is a struct
 ;; only when all its values have such a type. Collections are non-nil.
@@ -846,6 +875,15 @@
 ;; provably wrong and the CALL is reported. Module state, like rtenv-box: a def
 ;; must precede its call (the same closed-world ordering RFC 0005 assumes).
 (def ^:private user-sig-box (atom {}))      ;; "ns/name" -> {:params [..] :body ir}
+;; jolt-t34: a record constructor's return shape. "ns/->Name" -> [field-kw ...]
+;; in DECLARED order (the runtime lays records out in declared field order, so
+;; the back end bare-indexes by that order). A call (->Point a b) types as a
+;; struct of this shape, so field reads on the result bare-index — declared
+;; shapes are clean fuel: a lookup, not fragile inference.
+(def ^:private record-shapes-box (atom {}))
+;; jolt-t34: whether to shape generic const-key MAP literals (opt-in, JOLT_SHAPE).
+;; Records are shaped regardless; maps only when this is on.
+(def ^:private map-shapes-box (atom false))
 (def ^:private checking-box (atom #{}))     ;; keys mid-recheck — cycle guard
 (def ^:private strict-box (atom false))     ;; report against user-fn domains?
 ;; When true, `infer` emits success-type diagnostics as it types (jolt audit).
@@ -868,12 +906,18 @@
   (let [op (get fnode :op)]
     (cond
       ;; a user fn whose return type the fixpoint has estimated
-      (= op :var) (let [r (get @rtenv-box (var-key fnode))]
-                    (if r r (let [nm (and (= "clojure.core" (get fnode :ns)) (get fnode :name))]
-                              (cond (nil? nm) :any
-                                    (contains? num-ret-fns nm) :num
-                                    (contains? vector-ret-fns nm) (mk-vec :any)
-                                    :else :any))))
+      (= op :var) (let [rs (get @record-shapes-box (var-key fnode))]
+                    (if rs
+                      ;; record ctor -> struct of declared shape (jolt-t34); :shape
+                      ;; is the DECLARED field order, which the back end indexes by
+                      (assoc (mk-struct (reduce (fn [m k] (assoc m k :any)) {} rs))
+                             :shape (vec rs))
+                      (let [r (get @rtenv-box (var-key fnode))]
+                        (if r r (let [nm (and (= "clojure.core" (get fnode :ns)) (get fnode :name))]
+                                  (cond (nil? nm) :any
+                                        (contains? num-ret-fns nm) :num
+                                        (contains? vector-ret-fns nm) (mk-vec :any)
+                                        :else :any))))))
       (= op :host) (let [nm (get fnode :name)]
                      (cond (contains? num-ret-fns nm) :num
                            (contains? vector-ret-fns nm) (mk-vec :any)
@@ -929,7 +973,8 @@
       (let [t (get tenv (get node :name))]
         [(if t t :any)
          (cond
-           (struct-safe? t) (assoc node :hint :struct)
+           (struct-safe? t) (let [n (assoc node :hint :struct)]
+                              (if (type-shape t) (assoc n :shape (type-shape t)) n))
            (vec-type? t) (assoc node :hint :vector)
            :else node)])
       (= op :map)
@@ -942,10 +987,14 @@
             struct? (and (> (count res) 0)
                          (every? (fn [pr] (scalar-const? (nth pr 0))) pairs)
                          (every? (fn [r] (truthy-type? (nth r 2))) res))
-            t (if struct?
-                (cap (mk-struct (reduce (fn [m r] (assoc m (nth r 3) (nth r 2))) {} res)) type-depth)
-                :any)]
-        [t (assoc node :pairs (mapv (fn [r] [(nth r 0) (nth r 1)]) res))])
+            base (when struct?
+                   (cap (mk-struct (reduce (fn [m r] (assoc m (nth r 3) (nth r 2))) {} res)) type-depth))
+            ;; a literal is a COMPLETE shape: carry its sorted key vector so the
+            ;; back end can lay it out and bare-index lookups (jolt-t34)
+            shp (when (and @map-shapes-box base (struct-type? base)) (shape-order (keys (sfields base))))
+            t (if base (if shp (assoc base :shape shp) base) :any)
+            node' (assoc node :pairs (mapv (fn [r] [(nth r 0) (nth r 1)]) res))]
+        [t (if shp (assoc node' :shape shp) node')])
       (= op :vector)
       (let [irs (mapv (fn [x] (infer x tenv)) (get node :items))
             ets (mapv (fn [r] (nth r 0)) irs)
@@ -987,7 +1036,7 @@
           (and (= :const (get fnode :op)) (keyword? (get fnode :val)) (>= n 1) (<= n 2))
           (let [mr (infer (nth args 0) tenv)
                 mt (nth mr 0)
-                msub (if (struct-safe? mt) (mark-hint (nth mr 1) :struct) (nth mr 1))
+                msub (if (struct-safe? mt) (mark-struct (nth mr 1) mt) (nth mr 1))
                 ft (field-type mt (get fnode :val))
                 dr (when (= n 2) (infer (nth args 1) tenv))]
             [(if dr (join ft (nth dr 0)) ft)
@@ -998,7 +1047,7 @@
                (>= n 2) (= :const (get (nth args 1) :op)) (keyword? (get (nth args 1) :val)))
           (let [mr (infer (nth args 0) tenv)
                 mt (nth mr 0)
-                msub (if (struct-safe? mt) (mark-hint (nth mr 1) :struct) (nth mr 1))
+                msub (if (struct-safe? mt) (mark-struct (nth mr 1) mt) (nth mr 1))
                 kr (infer (nth args 1) tenv)
                 ft (field-type mt (get (nth args 1) :val))
                 dr (when (= n 3) (infer (nth args 2) tenv))]
@@ -1277,6 +1326,11 @@
   "Install the current return-type estimates (a map \"ns/name\" -> type) used to
   type call results during the fixpoint."
   [m] (reset! rtenv-box m))
+
+;; jolt-t34: install record-ctor shapes ("ns/->Name" -> [field-kw ...]) and the
+;; map-shaping flag (opt-in JOLT_SHAPE), both read by infer.
+(defn set-record-shapes! [m] (reset! record-shapes-box (or m {})))
+(defn set-map-shapes! [b] (reset! map-shapes-box (boolean b)))
 
 (defn set-vtypes!
   "Install var VALUE types (a map \"ns/name\" -> type): fn vars are :truthy

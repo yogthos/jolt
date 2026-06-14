@@ -106,6 +106,7 @@
   [coll k default]
   (cond
     (jolt-transient? coll) (transient-lookup coll k default)
+    (shape-rec? coll) (shape-get coll k default)
     # sorted colls are tables — without this arm they fell into the raw
     # table-get branch and (:k (sorted-map ...)) was always nil (jolt-4vr spec)
     (and (table? coll) (or (= :jolt/sorted-map (coll :jolt/type))
@@ -133,6 +134,12 @@
   (cond
     (or (function? f) (cfunction? f)) (apply f args)
     (jolt-transient? f) (transient-lookup f (get args 0) (get args 1))
+    # a record shape-rec is callable: IFn impl if it has one, else map-like
+    # field access. A plain (non-record) shape-rec is just field access.
+    (shape-rec? f)
+      (let [tag (record-tag f)
+            ifn (when tag (find-protocol-method ctx tag "IFn" "-invoke"))]
+        (if ifn (apply ifn f args) (shape-get f (get args 0) (get args 1))))
     (keyword? f) (coll-lookup (get args 0) f (get args 1))
     (and (struct? f) (= :symbol (f :jolt/type)))
       (coll-lookup (get args 0) f (get args 1))
@@ -448,8 +455,15 @@
             # (a failure here must not break loading). Hook installed by the api to
             # avoid an evaluator->backend circular import.
             (when (get (ctx :env) :inline?)
-              (when-let [iu (get (ctx :env) :infer-unit!)]
-                (protect (iu ctx ns-name))))
+              (if (get (ctx :env) :whole-program?)
+                # whole-program (jolt-t34): defer — record the ns and run ONE
+                # fixpoint over all units later (the closed-world pass sees every
+                # caller, so cross-ns param types propagate)
+                (let [lst (or (get (ctx :env) :inferred-nses)
+                              (let [a @[]] (put (ctx :env) :inferred-nses a) a))]
+                  (array/push lst ns-name))
+                (when-let [iu (get (ctx :env) :infer-unit!)]
+                  (protect (iu ctx ns-name)))))
             # Record load order for tooling (uberscript): a dependency finishes
             # loading before its requirer, so this is topological. Skip the
             # baked-in stdlib — it's part of the runtime, not something to bundle.
@@ -1061,6 +1075,7 @@
     # maps: phm / plain struct / sorted / records — java.util.Map covers them
     # all in ring-style extend-protocol clauses
     (or (phm? obj)
+        (shape-rec? obj)   # plain shape maps AND records — both map-like
         (and (struct? obj) (nil? (get obj :jolt/type)))
         (and (table? obj) (or (get obj :jolt/deftype)
                               (= :jolt/sorted-map (get obj :jolt/type)))))
@@ -1084,9 +1099,8 @@
 (defn protocol-dispatch-impl [ctx proto-name method-name obj rest-args]
   # an empty jolt rest arg is NIL (Clojure semantics); janet apply needs a tuple
   (default rest-args [])
-  (def type-tag (if (and (table? obj) (get obj :jolt/deftype))
-                  (get obj :jolt/deftype)
-                  (if (get obj :jolt/protocol-methods) (get obj :jolt/deftype))))
+  (def type-tag (or (record-tag obj)
+                    (if (and (table? obj) (get obj :jolt/protocol-methods)) (get obj :jolt/deftype))))
   (if (and (table? obj) (get obj :jolt/protocol-methods))
     (let [reified-fns (get obj :jolt/protocol-methods)
           f (get reified-fns (keyword method-name))]
@@ -1361,11 +1375,23 @@
   [ctx type-name-sym field-kws]
   (def type-tag (string (ctx-current-ns ctx) "." (type-name-sym :name)))
   (def kws (d-realize field-kws))
-  (fn [& args]
-    (var inst @{:jolt/deftype type-tag})
-    (var i 0)
-    (each kw kws (put inst kw (in args i)) (++ i))
-    inst))
+  # jolt-t34: register this record's ctor return shape (DECLARED field order) so
+  # the inference types (->Name ...) as a struct of these fields and field reads
+  # on the result bare-index. Keyed by the ctor var-key "ns/->Name" to match how
+  # the IR names the call head. Harmless when records aren't shaped (sidx gated).
+  (let [rs (or (get (ctx :env) :record-shapes)
+               (let [t @{}] (put (ctx :env) :record-shapes t) t))]
+    (put rs (string (ctx-current-ns ctx) "/->" (type-name-sym :name)) (tuple ;kws)))
+  # Records are shape-recs when shapes are active (:shapes? = direct-link, where
+  # the inference proves the reads) — the whole field-access pipeline handles
+  # them; otherwise the original :jolt/deftype tables. Read at ctor-BUILD time so
+  # a type is consistently one representation or the other.
+  (if (get (ctx :env) :shapes?)
+    (fn [& args] (make-record type-tag kws args))
+    (fn [& args]
+      (var inst @{:jolt/deftype type-tag})
+      (var i 0) (each kw kws (put inst kw (in args i)) (++ i))
+      inst)))
 
 (defn install-stateful-fns!
   "Intern ctx-capturing closures for the stateful primitives into clojure.core, so
@@ -1582,10 +1608,9 @@
   # satisfies?: evaluated protocol value + instance (matches the prior arm).
   (ns-intern core "satisfies?"
     (fn [proto obj]
-      (def type-tag (if (and (table? obj) (get obj :jolt/deftype))
-                      (get obj :jolt/deftype)
-                      (if (get obj :jolt/protocol-methods)
-                        (get obj :jolt/deftype))))
+      (def type-tag (or (record-tag obj)
+                        (if (and (table? obj) (get obj :jolt/protocol-methods))
+                          (get obj :jolt/deftype))))
       (if type-tag
         (let [pn (proto :name)
               pn-str (if (struct? pn) (pn :name) pn)]
@@ -1595,8 +1620,8 @@
   # evaluate to values on jolt); the value arg arrives evaluated.
   (ns-intern core "instance-check"
     (fn [type-sym val]
-      (if (get val :jolt/deftype)
-        (let [type-tag (val :jolt/deftype)
+      (if (record-tag val)
+        (let [type-tag (record-tag val)
               type-name (type-sym :name)]
           (or (= type-tag type-name)
               (and (> (length type-tag) (length type-name))
@@ -2323,19 +2348,20 @@
                   (if m
                     (m target ;args)
                     (error (string "Unsupported method ." field-name " on " (string (get target :jolt/type))))))
-              (if (target :jolt/deftype)
+              (if (record-tag target)
                 # deftype/reify methods live in the protocol registry (or the
-                # instance's reified-fns table), not on the instance
+                # instance's reified-fns table), not on the instance. get is safe
+                # on a shape-rec tuple (returns nil for the method/protocol keys).
                 (let [method-key (keyword field-name)
                       own (get target method-key)
                       reified (get (get target :jolt/protocol-methods) method-key)
                       m (cond
                           (or (function? own) (cfunction? own)) own
                           (or (function? reified) (cfunction? reified)) reified
-                          (find-method-any-protocol ctx (target :jolt/deftype) field-name))]
+                          (find-method-any-protocol ctx (record-tag target) field-name))]
                   (if m
                     (apply m target args)
-                    (error (string "No method ." field-name " on " (target :jolt/deftype)))))
+                    (error (string "No method ." field-name " on " (record-tag target)))))
                 # Janet-native interop: try field lookup + call
                 (if (or (table? target) (struct? target))
                   (let [method (get target (keyword field-name))]
@@ -2370,16 +2396,18 @@
                      (get tagged-methods (get target :jolt/type))
                      (get (get tagged-methods (get target :jolt/type)) field-name))
               ((get (get tagged-methods (get target :jolt/type)) field-name) target)
-            (let [v (get target (keyword field-name))]
+            (let [v (if (record-tag target)
+                      (coll-lookup target (keyword field-name) nil)
+                      (get target (keyword field-name)))]
               (if (and (struct? member-raw) (= :symbol (member-raw :jolt/type))
                        (not (string/has-prefix? "-" member-name)))
                 (cond
                   (or (function? v) (cfunction? v)) (v target)
                   # zero-arg deftype/reify method via the protocol registry
-                  (and (table? target) (target :jolt/deftype))
+                  (record-tag target)
                     (let [reified (get (get target :jolt/protocol-methods) (keyword field-name))
                           m (if (or (function? reified) (cfunction? reified)) reified
-                              (find-method-any-protocol ctx (target :jolt/deftype) field-name))]
+                              (find-method-any-protocol ctx (record-tag target) field-name))]
                       (if m (m target) v))
                   # value stored as an unevaluated fn* form: compile then call
                   (array? v) (let [f (eval-form ctx bindings v)]

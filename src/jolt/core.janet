@@ -122,6 +122,7 @@
   (cond
     # nil is an empty seq in Clojure — iterating it yields nothing.
     (nil? c) @[]
+    (shape-rec? c) (map (fn [k] (tuple k (shape-get c k nil))) (shape-keys c))
     (pvec? c) (pv->array c)
     (plist? c) (pl->array c)
     (set? c) (phs-seq c)
@@ -208,7 +209,8 @@
 # Tagged structs (symbols/chars/uuids — anything with :jolt/type) are VALUES,
 # not maps. (sorted-map? is defined later, so the table check is inlined.)
 (defn core-map? [x]
-  (or (phm? x)
+  (or (shape-rec? x)
+      (phm? x)
       (and (struct? x) (nil? (get x :jolt/type)))
       (and (table? x)
            (or (not (nil? (get x :jolt/deftype)))
@@ -311,6 +313,8 @@
   an array; otherwise nil. Lets = compare across tuple/array/lazy-seq."
   [x]
   (cond
+    # a shape-rec is a MAP, not a sequence, even though it is a tuple
+    (shape-rec? x) nil
     (lazy-seq? x) (realize-for-iteration x)
     (pvec? x) (pv->array x)
     (plist? x) (pl->array x)
@@ -322,6 +326,11 @@
   "Return [k v] pairs for a map-like value (phm/sorted-map/struct/table), else nil."
   [x]
   (cond
+    # a record shape-rec returns nil so equality falls to deep=, which is
+    # type-aware (the descriptor is interned per type): a record equals only a
+    # same-type record, never a plain map — mirroring the :jolt/deftype table
+    # form below. A plain-map shape-rec compares by pairs.
+    (shape-rec? x) (if (record-tag x) nil (map (fn [k] @[k (shape-get x k nil)]) (shape-keys x)))
     (phm? x) (phm-entries x)
     # sorted-map equals any map with the same pairs (representation-agnostic, as
     # in Clojure); sorted-set is handled by the set branch of jolt-equal?
@@ -504,6 +513,10 @@
             (and (struct? m) (get m :jolt/type)))
     (error (string "assoc requires a map or vector, got " (type m))))
   (cond
+    (shape-rec? m)
+      (do (var result m) (var i 0)
+        (while (< i (length kvs)) (set result (shape-assoc result (kvs i) (kvs (+ i 1)))) (+= i 2))
+        result)
     (core-sorted-map? m) ((sorted-op m :assoc) m kvs)
     (phm? m)
       (do (var result m) (var i 0) (while (< i (length kvs)) (set result (phm-assoc result (kvs i) (kvs (+ i 1)))) (+= i 2)) result)
@@ -549,6 +562,8 @@
 (defn core-dissoc [m & ks]
   (cond
     (nil? m) nil
+    # dissoc loses a key -> the shape changes; bridge through a struct (cold op)
+    (shape-rec? m) (core-dissoc (shape->struct m) ;ks)
     (core-sorted-map? m) ((sorted-op m :dissoc) m ks)
     (phm? m) (do (var result m) (each k ks (set result (phm-dissoc result k))) result)
     # reject clearly non-map values (scalars, sequences, sets, symbol/char structs)
@@ -563,6 +578,9 @@
 (defn core-get [m k &opt default]
   (default default nil)
   (if (nil? m) default
+    # inline the shape check (no fn call) so non-shape gets pay only a tuple? test
+    (if (and (tuple? m) (> (length m) 0) (struct? (in m 0)) (not (nil? (in (in m 0) :jolt/shape))))
+      (shape-get m k default)
     (if (core-sorted? m) ((sorted-op m :get) m k default)
     (if (core-transient? m)
       (case (m :kind)
@@ -583,13 +601,14 @@
         # (get "a:b" 1) was nil.
         (if (and (or (string? m) (buffer? m)) (number? k) (>= k 0) (< k (length m)))
           (make-char (in m k))
-          default))))))))))
+          default)))))))))))
 
 # Runtime invoke dispatch for COMPILED code (interpreter uses evaluator's
 # jolt-invoke). Handles real functions plus Clojure IFn collections.
 (defn jolt-call [f & args]
   (cond
     (or (function? f) (cfunction? f)) (apply f args)
+    (shape-rec? f) (core-get f (get args 0) (get args 1))
     (keyword? f) (core-get (get args 0) f (get args 1))
     (and (struct? f) (= :symbol (f :jolt/type))) (core-get (get args 0) f (get args 1))
     (core-sorted? f) ((sorted-op f :get) f (get args 0) (get args 1))
@@ -630,6 +649,7 @@
 # get-in now lives in the Clojure collection tier (core/20-coll.clj).
 
 (defn core-contains? [coll key]
+  (if (shape-rec? coll) (shape-contains? coll key)
   (if (core-sorted? coll) (if ((sorted-op coll :contains) coll key) true false)
   (if (core-transient? coll)
     (case (coll :kind)
@@ -642,7 +662,7 @@
         (if (table? coll) (not (nil? (coll key)))
           (if (or (tuple? coll) (array? coll))
             (and (number? key) (>= key 0) (< key (length coll)))
-            false)))))))))
+            false))))))))))
 
 # Coerce a Clojure IFn value to a Janet-callable fn for higher-order fns
 # (map/filter/sort-by/group-by/...). Janet functions pass through; a keyword or
@@ -665,6 +685,7 @@
 (defn core-count [coll]
   (cond
     (nil? coll) 0
+    (shape-rec? coll) (shape-count coll)
     (core-transient? coll) (length (if (= :vector (coll :kind)) (coll :arr) (coll :tbl)))
     (core-sorted? coll) ((sorted-op coll :count) coll)
     (lazy-seq? coll) (ls-count coll)
@@ -679,6 +700,7 @@
 
 (defn core-first [coll]
   (cond
+    (shape-rec? coll) (core-first (shape->struct coll))
     (core-sorted? coll) ((sorted-op coll :first) coll)
     (lazy-seq? coll) (ls-first coll)
     (pvec? coll) (if (= 0 (pv-count coll)) nil (pv-nth coll 0))
@@ -757,6 +779,7 @@
 
 (defn core-seq [coll]
   (cond
+    (shape-rec? coll) (tuple ;(map (fn [k] (tuple k (shape-get coll k nil))) (shape-keys coll)))
     (core-sorted? coll) ((sorted-op coll :seq) coll)
     (or (nil? coll) (and (or (tuple? coll) (array? coll)) (= 0 (length coll)))) nil
     # Cell-based emptiness, NOT (nil? (ls-first)): a lazy-seq whose first element
@@ -1612,6 +1635,15 @@
             (buffer/push-string buf (ns-display-name v))
             (buffer/push-string buf "]"))
       (and (table? v) (= :jolt/var (get v :jolt/type))) (buffer/push-string buf (var-display v))
+      (shape-rec? v)
+        (let [rtag (record-tag v)
+              pairs (map (fn [k] [k (shape-get v k nil)]) (shape-keys v))]
+          (cond
+            # a record shape-rec prints Clojure-style: #ns.Type{:k v, ...}
+            (and rtag print-method-cb (print-method-cb v (fn [piece] (buffer/push-string buf piece)))) nil
+            rtag (do (buffer/push-string buf (string "#" rtag))
+                     (pr-render-pairs buf pairs))
+            (pr-render-pairs buf pairs)))
       (core-sorted-map? v) (pr-render-pairs buf
                              (map (fn [e] [(vnth e 0) (vnth e 1)]) (sorted-entries-arr v)))
       (core-sorted-set? v) (pr-render-seq buf (sorted-entries-arr v) "#{" "}")

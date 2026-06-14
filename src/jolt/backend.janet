@@ -355,7 +355,7 @@
 #   - ^:struct / ^Record hinted subject: skip the guard, bare get (~20 vs ~36ns).
 #   - hinted + JOLT_CHECK_HINTS: keep the guard but THROW on the tagged arm, so a
 #     lying hint surfaces a clear error (dev aid; off by default, no perf cost).
-(defn- emit-kw-lookup [subj-node m-expr k d-expr]
+(defn- emit-kw-lookup [ctx subj-node m-expr k d-expr]
   # the subject is a struct (raw-get-safe) when hinted so — by an explicit
   # ^:struct/^Record hint on a local, OR by inference tagging ANY subject
   # expression it proved to be a struct (jolt-d6u/RFC 0005), which is what lets
@@ -369,15 +369,42 @@
                              k " " (subj-node :name) ") — value carries :jolt/type "
                              "(a phm/sorted/transient/lazy-seq), not the plain "
                              "struct/record the ^:struct/^Record hint asserts")]))
+  # Subject carries a complete :shape (jolt-t34) => it is provably a shape-rec;
+  # the field reads by bare index. The :shape vector is ALREADY in layout order —
+  # declared order for records (record-shape-for), str-sorted for map literals
+  # (the inference's shape-order, matching emit-map) — so the field's position in
+  # :shape IS its slot. (:shapes? = shapes active = direct-link.)
+  (def sidx
+    (when (and (get (ctx :env) :shapes?) subj-node (subj-node :shape))
+      (def raw (let [s (subj-node :shape)] (if (pv/pvec? s) (pv/pv->array s) s)))
+      (var pos nil) (var i 0)
+      (each kk raw (when (= kk k) (set pos i)) (++ i))
+      (when pos (+ pos 1))))
+  # sidx => proven complete shape: bare index (fastest). Otherwise a raw-get-safe
+  # value may still be a shape-rec (its :shape dropped by a join, or an unproven
+  # param). Read it INLINE from its own descriptor — a shape-rec is a tuple whose
+  # head is a descriptor struct; index the present field directly. A missing key
+  # (incl. the virtual :jolt/deftype) falls to core-get, which is nil-safe and
+  # shape-aware; a struct/other takes the bare get. The inline read matters: a
+  # core-get fn call per field read is ~2.5x slower on map-through-fn code.
+  # NOT gated on compile-time shapes — core is baked without the flag but still
+  # receives user shape-recs, so this must hold in baked core too. (jolt-t34)
+  (defn get-or-shape [getexpr]
+    (if sidx ['in m sidx]
+      (let [pos (jsym)]
+        ['if ['and ['tuple? m] ['struct? ['get m 0]]]
+          ['let [pos ['get [['get m 0] :idx] k]]
+            ['if ['nil? pos] (tuple core-get m k nil) ['in m ['+ 1 pos]]]]
+          getexpr])))
   (if (nil? d-expr)
-    (let [fast ['get m k]]
+    (let [fast (get-or-shape ['get m k])]
       (wrap (cond
               checked ['if ['get m :jolt/type] err fast]
               hinted fast
               ['if ['get m :jolt/type] (tuple core-get m k) fast])))
     (let [d (if (symbol? d-expr) d-expr (jsym))
           v (jsym)
-          fast ['let [v ['get m k]] ['if ['nil? v] d v]]
+          fast ['let [v (get-or-shape ['get m k])] ['if ['nil? v] d v]]
           body (cond
                  checked ['if ['get m :jolt/type] err fast]
                  hinted fast
@@ -412,7 +439,7 @@
     # the subject skips the guard entirely (jolt-94n; see emit-kw-lookup).
     (and (= :const (fnode :op)) (keyword? (fnode :val))
          (>= 2 (length args) 1))
-    (emit-kw-lookup (norm-node (in argnodes 0)) (in args 0) (fnode :val)
+    (emit-kw-lookup ctx (norm-node (in argnodes 0)) (in args 0) (fnode :val)
                     (when (= 2 (length args)) (in args 1)))
     # (get m :kw) / (get m :kw default) — same inlined keyword lookup as (:kw m),
     # so an explicit get with a constant keyword gets the guard fast path and the
@@ -420,7 +447,7 @@
     # a variable/number/string key falls through to core-get below.
     (and (get-head? fnode) (>= (length args) 2) (<= (length args) 3)
          (let [a1 (norm-node (in argnodes 1))] (and (= :const (a1 :op)) (keyword? (a1 :val)))))
-    (emit-kw-lookup (norm-node (in argnodes 0)) (in args 0)
+    (emit-kw-lookup ctx (norm-node (in argnodes 0)) (in args 0)
                     ((norm-node (in argnodes 1)) :val)
                     (when (= 3 (length args)) (in args 2)))
     # (count v) on an inferred vector -> pv-count, skipping core-count's dispatch
@@ -470,6 +497,32 @@
     (unless (and (= :const (k :op))
                  (or (keyword? kv) (string? kv) (number? kv) (boolean? kv)))
       (set fast false)))
+  # Shape-record representation (jolt-t34, JOLT_SHAPE): EVERY constant-key map
+  # literal becomes a shape tuple (≈2x cheaper than a struct), CONSISTENTLY —
+  # not gated on the inference, so a value's representation always matches what
+  # the type system claims about it. The layout is the runtime's canonical
+  # shape-sort of the keys (the single source of truth all sites share). Values
+  # are emitted in that order; element 0 is the compile-time shape descriptor.
+  # gated on :inline? — shapes apply to USER code only, never to core or the
+  # compiler's own IR-node map literals (which the back end reads with raw
+  # keyword access and would break if turned into tuples)
+  (def shape-keys
+    (when (and fast (get (ctx :env) :map-shapes?) (get (ctx :env) :inline?))
+      (def ks @[])
+      (each pair pairs (array/push ks ((norm-node (in (vview pair) 0)) :val)))
+      (shape-sort ks)))
+  (if shape-keys
+    (do
+      (def desc (shape-for shape-keys))
+      (def by-key @{})
+      (each pair pairs
+        (def p (vview pair))
+        (put by-key ((norm-node (in p 0)) :val) (emit ctx (in p 1))))
+      # quote the descriptor: it is a struct constant, and its keys are a parens
+      # tuple — unquoted in code position Janet would try to CALL it ((:b :g))
+      (def out @['tuple ['quote desc]])
+      (each k shape-keys (array/push out (get by-key k)))
+      (tuple/slice out))
   (if fast
     (do
       (def binds @[])
@@ -499,7 +552,7 @@
         (def p (vview pair))
         (array/push args (emit ctx (in p 0)))
         (array/push args (emit ctx (in p 1))))
-      (tuple/slice args))))
+      (tuple/slice args)))))
 
 # A set literal: build (make-phs e1 e2 …) so each element is evaluated at runtime
 # then the persistent set is constructed — mirrors compiler.janet's emit-set-expr.
@@ -884,7 +937,12 @@
     :any))
 
 (defn infer-unit!
-  [ctx ns-name]
+  # ns-names-arg is one ns-name (per-namespace pass, the default) or a LIST of
+  # ns-names (whole-program pass, jolt-t34): gathering all units into ONE fixpoint
+  # propagates param types across namespace boundaries, which the per-ns pass
+  # can't (a fn's callers in another ns aren't visible when its own ns is typed).
+  [ctx ns-names-arg]
+  (def ns-names (if (indexed? ns-names-arg) ns-names-arg [ns-names-arg]))
   (def pns (ctx-find-ns ctx "jolt.passes"))
   (def f-set-rtenv (and pns (ns-find pns "set-rtenv!")))
   (def f-set-vtypes (and pns (ns-find pns "set-vtypes!")))
@@ -892,37 +950,45 @@
   (def f-infer-body (and pns (ns-find pns "infer-body")))
   (def f-reinfer (and pns (ns-find pns "reinfer-def")))
   (def f-reset-esc (and pns (ns-find pns "reset-escapes!")))
+  (def f-set-rshapes (and pns (ns-find pns "set-record-shapes!")))   # jolt-t34
+  (def f-set-mshapes (and pns (ns-find pns "set-map-shapes!")))      # jolt-t34
   (def f-get-esc (and pns (ns-find pns "collected-escapes")))
-  (def ns (ctx-find-ns ctx ns-name))
   (def report @{})
-  (when (and ns f-set-rtenv f-set-vtypes f-join f-infer-body f-reinfer f-reset-esc f-get-esc)
-    # gather single-fixed-arity fns AND non-fn defs that stashed a :def IR
+  (when (and f-set-rtenv f-set-vtypes f-join f-infer-body f-reinfer f-reset-esc f-get-esc)
+    # gather single-fixed-arity fns AND non-fn defs that stashed a :def IR, across
+    # every ns in ns-names (one ns for the per-unit pass, all for whole-program)
     (def fns @[])
     (def defs @[])
     (def by-key @{})
     (def vtypes @{})   # var VALUE types: fns -> :truthy (non-nil), defs -> inferred
-    (each nm (keys (ns :mappings))
-      (def v (get (ns :mappings) nm))
-      (when (and (table? v) (get v :infer-ir))
-        (def d (norm-node (get v :infer-ir)))
-        (def init (norm-node (d :init)))
-        (def key (string ns-name "/" nm))
-        (if (= :fn (init :op))
-          (let [ars (vview (init :arities))]
-            (when (= 1 (length ars))
-              (def ar (norm-node (in ars 0)))
-              (unless (ar :rest)
-                (def pv (vview (ar :params)))
-                (def rec @{:key key :cell v :def d :params (ar :params) :body (ar :body)
-                           :np (length pv) :pt (array/new-filled (length pv)) :ret nil})
-                (array/push fns rec)
-                (put by-key key rec)
-                # a fn value is non-nil -> :truthy (sealed root in opt mode)
-                (put vtypes key :truthy))))
-          # non-fn def: its value type is inferred from its init (jolt-d6u)
-          (array/push defs @{:key key :init (d :init) :vt nil}))))
+    (each ns-name ns-names
+      (def ns (ctx-find-ns ctx ns-name))
+      (when ns
+        (each nm (keys (ns :mappings))
+          (def v (get (ns :mappings) nm))
+          (when (and (table? v) (get v :infer-ir))
+            (def d (norm-node (get v :infer-ir)))
+            (def init (norm-node (d :init)))
+            (def key (string ns-name "/" nm))
+            (if (= :fn (init :op))
+              (let [ars (vview (init :arities))]
+                (when (= 1 (length ars))
+                  (def ar (norm-node (in ars 0)))
+                  (unless (ar :rest)
+                    (def pv (vview (ar :params)))
+                    (def rec @{:key key :cell v :def d :params (ar :params) :body (ar :body)
+                               :np (length pv) :pt (array/new-filled (length pv)) :ret nil})
+                    (array/push fns rec)
+                    (put by-key key rec)
+                    # a fn value is non-nil -> :truthy (sealed root in opt mode)
+                    (put vtypes key :truthy))))
+              # non-fn def: its value type is inferred from its init (jolt-d6u)
+              (array/push defs @{:key key :init (d :init) :vt nil}))))))
     (when (or (> (length fns) 0) (> (length defs) 0))
       ((var-get f-reset-esc))
+      # jolt-t34: feed record-ctor shapes + the map-shaping flag to the inference
+      (when f-set-rshapes ((var-get f-set-rshapes) (or (get (ctx :env) :record-shapes) @{})))
+      (when f-set-mshapes ((var-get f-set-mshapes) (get (ctx :env) :map-shapes?)))
       # --- param/return/value-type fixpoint (chaotic iteration to LEAST fixpoint) ---
       # Param types are RECOMPUTED FRESH each iteration, not accumulated: :any is
       # the lattice top, so a join with an early-iteration :any (a caller whose own
@@ -1012,6 +1078,19 @@
         (def def2 ((var-get f-reinfer) (f :def) ptmap))
         (protect (eval (emit-ir ctx def2) (ctx-janet-env ctx))))))
   report)
+
+(defn infer-program!
+  "Whole-program closed-world pass (jolt-t34, opt-in JOLT_WHOLE_PROGRAM): run ONE
+  inference fixpoint over every user namespace at once, so param types propagate
+  across namespace boundaries (the per-ns pass can't see a fn's callers in other
+  units). Sound only under the closed-world assumption — direct-linking, no later
+  eval/redefinition — which the flag asserts. The recorded ns list is in load
+  (topological) order; the fixpoint is order-independent but re-emit is callee-
+  first regardless."
+  [ctx]
+  (def nses (get (ctx :env) :inferred-nses))
+  (when (and nses (> (length nses) 0))
+    (infer-unit! ctx nses)))
 
 (defn ensure-macros-compiled!
   "Called once the overlay is fully loaded (api/load-core-overlay!): ensure the

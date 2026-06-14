@@ -430,6 +430,10 @@
   (try
     (do
       (load-string ctx (string "(require '[" ns-name "])"))
+      # whole-program (jolt-t34): every unit is loaded now — run the one closed-
+      # world fixpoint over all of them before -main, so cross-ns types propagate
+      (when (get (ctx :env) :whole-program?)
+        (when-let [ip (get (ctx :env) :infer-program!)] (protect (ip ctx))))
       (load-string ctx (string "(apply " ns-name "/-main *command-line-args*)")))
     ([err fib] (report-error err fib) (os/exit 1))))
 
@@ -506,6 +510,16 @@
   (when (= "1" (os/getenv "JOLT_DIRECT_LINK"))
     (put (ctx :env) :direct-linking? true)
     (put (ctx :env) :inline? true))
+  # Recompute the shape gates from the runtime env (the baked ctx computed them
+  # at build time, before JOLT_DIRECT_LINK/JOLT_SHAPE were set here). jolt-t34:
+  # :shapes? = shape-recs active (records), on with direct-linking; :map-shapes? =
+  # also shape generic maps (opt-in JOLT_SHAPE).
+  (put (ctx :env) :shapes?
+    (and (get (ctx :env) :direct-linking?) (not (os/getenv "JOLT_NO_SHAPE"))))
+  (put (ctx :env) :map-shapes?
+    (and (os/getenv "JOLT_SHAPE") (not (os/getenv "JOLT_NO_SHAPE"))))
+  (put (ctx :env) :whole-program?
+    (and (os/getenv "JOLT_WHOLE_PROGRAM") (get (ctx :env) :direct-linking?)))
   (cond
     (empty? argv) (run-repl)
     (help-flags (argv 0)) (print-help)
