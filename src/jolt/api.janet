@@ -223,11 +223,15 @@
     # the inline pass only inlines targets that won't be redefined, the same
     # safety the direct-linking flag asserts (jolt-87f).
     (put (ctx :env) :inline? (if (get (ctx :env) :direct-linking?) true false))
-    # Shape-records are OPT-IN (jolt-t34). Measurement showed shaping generic
-    # const-key maps net-loses in a bytecode VM (unproven reads can't beat a
-    # native struct-get), so shapes are not defaulted on. The win is records
-    # with declared shapes + proven reads; that path is enabled separately.
+    # jolt-t34. Two shape gates:
+    #  :shapes?     — shape-recs are active. Records use declared-shape layout +
+    #                 bare-index reads here. ON wherever the inference that proves
+    #                 reads runs = direct-linking. JOLT_NO_SHAPE force-disables.
+    #  :map-shapes? — also shape generic const-key MAP literals. Opt-in (JOLT_SHAPE)
+    #                 because shaping maps net-loses on unproven reads; records win.
     (put (ctx :env) :shapes?
+      (and (get (ctx :env) :direct-linking?) (not (os/getenv "JOLT_NO_SHAPE"))))
+    (put (ctx :env) :map-shapes?
       (and (os/getenv "JOLT_SHAPE") (not (os/getenv "JOLT_NO_SHAPE"))))
     ctx))
 

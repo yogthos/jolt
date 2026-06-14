@@ -674,10 +674,16 @@
   (let [idx @{}]
     (var i 0) (each k field-keys (put idx k i) (++ i))
     (struct :jolt/shape (tuple ;field-keys) :idx (table/to-struct idx) :type type-tag)))
+# Interned per (type-tag, field-keys): keying on the tag alone would hand back a
+# STALE descriptor after a record is redefined with different fields (a REPL
+# redefine, or two same-named records in different test cases) — the new instance
+# would carry the old layout. Old instances keep their own descriptor and stay
+# valid; new ones get the new layout. (jolt-t34)
 (defn record-shape-for [type-tag field-keys]
-  (or (get record-desc-cache type-tag)
+  (def ck (tuple type-tag (tuple ;field-keys)))
+  (or (get record-desc-cache ck)
       (let [desc (record-desc type-tag field-keys)]
-        (put record-desc-cache type-tag desc)
+        (put record-desc-cache ck desc)
         desc)))
 (defn make-record [type-tag field-keys args]
   (def out @[(record-shape-for type-tag field-keys)])

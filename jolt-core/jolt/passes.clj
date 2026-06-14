@@ -875,6 +875,15 @@
 ;; provably wrong and the CALL is reported. Module state, like rtenv-box: a def
 ;; must precede its call (the same closed-world ordering RFC 0005 assumes).
 (def ^:private user-sig-box (atom {}))      ;; "ns/name" -> {:params [..] :body ir}
+;; jolt-t34: a record constructor's return shape. "ns/->Name" -> [field-kw ...]
+;; in DECLARED order (the runtime lays records out in declared field order, so
+;; the back end bare-indexes by that order). A call (->Point a b) types as a
+;; struct of this shape, so field reads on the result bare-index — declared
+;; shapes are clean fuel: a lookup, not fragile inference.
+(def ^:private record-shapes-box (atom {}))
+;; jolt-t34: whether to shape generic const-key MAP literals (opt-in, JOLT_SHAPE).
+;; Records are shaped regardless; maps only when this is on.
+(def ^:private map-shapes-box (atom false))
 (def ^:private checking-box (atom #{}))     ;; keys mid-recheck — cycle guard
 (def ^:private strict-box (atom false))     ;; report against user-fn domains?
 ;; When true, `infer` emits success-type diagnostics as it types (jolt audit).
@@ -897,12 +906,18 @@
   (let [op (get fnode :op)]
     (cond
       ;; a user fn whose return type the fixpoint has estimated
-      (= op :var) (let [r (get @rtenv-box (var-key fnode))]
-                    (if r r (let [nm (and (= "clojure.core" (get fnode :ns)) (get fnode :name))]
-                              (cond (nil? nm) :any
-                                    (contains? num-ret-fns nm) :num
-                                    (contains? vector-ret-fns nm) (mk-vec :any)
-                                    :else :any))))
+      (= op :var) (let [rs (get @record-shapes-box (var-key fnode))]
+                    (if rs
+                      ;; record ctor -> struct of declared shape (jolt-t34); :shape
+                      ;; is the DECLARED field order, which the back end indexes by
+                      (assoc (mk-struct (reduce (fn [m k] (assoc m k :any)) {} rs))
+                             :shape (vec rs))
+                      (let [r (get @rtenv-box (var-key fnode))]
+                        (if r r (let [nm (and (= "clojure.core" (get fnode :ns)) (get fnode :name))]
+                                  (cond (nil? nm) :any
+                                        (contains? num-ret-fns nm) :num
+                                        (contains? vector-ret-fns nm) (mk-vec :any)
+                                        :else :any))))))
       (= op :host) (let [nm (get fnode :name)]
                      (cond (contains? num-ret-fns nm) :num
                            (contains? vector-ret-fns nm) (mk-vec :any)
@@ -976,7 +991,7 @@
                    (cap (mk-struct (reduce (fn [m r] (assoc m (nth r 3) (nth r 2))) {} res)) type-depth))
             ;; a literal is a COMPLETE shape: carry its sorted key vector so the
             ;; back end can lay it out and bare-index lookups (jolt-t34)
-            shp (when (and base (struct-type? base)) (shape-order (keys (sfields base))))
+            shp (when (and @map-shapes-box base (struct-type? base)) (shape-order (keys (sfields base))))
             t (if base (if shp (assoc base :shape shp) base) :any)
             node' (assoc node :pairs (mapv (fn [r] [(nth r 0) (nth r 1)]) res))]
         [t (if shp (assoc node' :shape shp) node')])
@@ -1311,6 +1326,11 @@
   "Install the current return-type estimates (a map \"ns/name\" -> type) used to
   type call results during the fixpoint."
   [m] (reset! rtenv-box m))
+
+;; jolt-t34: install record-ctor shapes ("ns/->Name" -> [field-kw ...]) and the
+;; map-shaping flag (opt-in JOLT_SHAPE), both read by infer.
+(defn set-record-shapes! [m] (reset! record-shapes-box (or m {})))
+(defn set-map-shapes! [b] (reset! map-shapes-box (boolean b)))
 
 (defn set-vtypes!
   "Install var VALUE types (a map \"ns/name\" -> type): fn vars are :truthy

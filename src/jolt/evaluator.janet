@@ -1368,11 +1368,18 @@
   [ctx type-name-sym field-kws]
   (def type-tag (string (ctx-current-ns ctx) "." (type-name-sym :name)))
   (def kws (d-realize field-kws))
-  # Records become shape-recs only under JOLT_SHAPE (jolt-t34 R3) — part of the
-  # shape feature, which the whole field-access pipeline handles. With the flag
-  # off, records are the original :jolt/deftype tables. Read the flag at ctor-
-  # BUILD time (deftype eval) so a type is consistently one rep or the other.
-  (if (os/getenv "JOLT_SHAPE")
+  # jolt-t34: register this record's ctor return shape (DECLARED field order) so
+  # the inference types (->Name ...) as a struct of these fields and field reads
+  # on the result bare-index. Keyed by the ctor var-key "ns/->Name" to match how
+  # the IR names the call head. Harmless when records aren't shaped (sidx gated).
+  (let [rs (or (get (ctx :env) :record-shapes)
+               (let [t @{}] (put (ctx :env) :record-shapes t) t))]
+    (put rs (string (ctx-current-ns ctx) "/->" (type-name-sym :name)) (tuple ;kws)))
+  # Records are shape-recs when shapes are active (:shapes? = direct-link, where
+  # the inference proves the reads) — the whole field-access pipeline handles
+  # them; otherwise the original :jolt/deftype tables. Read at ctor-BUILD time so
+  # a type is consistently one representation or the other.
+  (if (get (ctx :env) :shapes?)
     (fn [& args] (make-record type-tag kws args))
     (fn [& args]
       (var inst @{:jolt/deftype type-tag})

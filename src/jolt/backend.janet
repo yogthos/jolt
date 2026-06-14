@@ -370,15 +370,15 @@
                              "(a phm/sorted/transient/lazy-seq), not the plain "
                              "struct/record the ^:struct/^Record hint asserts")]))
   # Subject carries a complete :shape (jolt-t34) => it is provably a shape-rec;
-  # the field reads by bare index. The :shape is just the KEY SET; the layout
-  # comes from the runtime's canonical shape-sort (the same order shape-for and
-  # emit-map use), so construction and lookup always agree.
+  # the field reads by bare index. The :shape vector is ALREADY in layout order —
+  # declared order for records (record-shape-for), str-sorted for map literals
+  # (the inference's shape-order, matching emit-map) — so the field's position in
+  # :shape IS its slot. (:shapes? = shapes active = direct-link.)
   (def sidx
     (when (and (get (ctx :env) :shapes?) subj-node (subj-node :shape))
       (def raw (let [s (subj-node :shape)] (if (pv/pvec? s) (pv/pv->array s) s)))
-      (def sk (shape-sort raw))
       (var pos nil) (var i 0)
-      (each kk sk (when (= kk k) (set pos i)) (++ i))
+      (each kk raw (when (= kk k) (set pos i)) (++ i))
       (when pos (+ pos 1))))
   # sidx => proven complete shape: bare index (fastest). Otherwise a raw-get-safe
   # value may still be a shape-rec (its :shape dropped by a join, or an unproven
@@ -507,7 +507,7 @@
   # compiler's own IR-node map literals (which the back end reads with raw
   # keyword access and would break if turned into tuples)
   (def shape-keys
-    (when (and fast (get (ctx :env) :shapes?) (get (ctx :env) :inline?))
+    (when (and fast (get (ctx :env) :map-shapes?) (get (ctx :env) :inline?))
       (def ks @[])
       (each pair pairs (array/push ks ((norm-node (in (vview pair) 0)) :val)))
       (shape-sort ks)))
@@ -945,6 +945,8 @@
   (def f-infer-body (and pns (ns-find pns "infer-body")))
   (def f-reinfer (and pns (ns-find pns "reinfer-def")))
   (def f-reset-esc (and pns (ns-find pns "reset-escapes!")))
+  (def f-set-rshapes (and pns (ns-find pns "set-record-shapes!")))   # jolt-t34
+  (def f-set-mshapes (and pns (ns-find pns "set-map-shapes!")))      # jolt-t34
   (def f-get-esc (and pns (ns-find pns "collected-escapes")))
   (def ns (ctx-find-ns ctx ns-name))
   (def report @{})
@@ -976,6 +978,9 @@
           (array/push defs @{:key key :init (d :init) :vt nil}))))
     (when (or (> (length fns) 0) (> (length defs) 0))
       ((var-get f-reset-esc))
+      # jolt-t34: feed record-ctor shapes + the map-shaping flag to the inference
+      (when f-set-rshapes ((var-get f-set-rshapes) (or (get (ctx :env) :record-shapes) @{})))
+      (when f-set-mshapes ((var-get f-set-mshapes) (get (ctx :env) :map-shapes?)))
       # --- param/return/value-type fixpoint (chaotic iteration to LEAST fixpoint) ---
       # Param types are RECOMPUTED FRESH each iteration, not accumulated: :any is
       # the lattice top, so a join with an early-iteration :any (a caller whose own

@@ -506,9 +506,13 @@
   (when (= "1" (os/getenv "JOLT_DIRECT_LINK"))
     (put (ctx :env) :direct-linking? true)
     (put (ctx :env) :inline? true))
-  # Recompute :shapes? from the runtime env (the baked ctx computed it at build
-  # time, before JOLT_SHAPE was set in this process). Opt-in (jolt-t34).
+  # Recompute the shape gates from the runtime env (the baked ctx computed them
+  # at build time, before JOLT_DIRECT_LINK/JOLT_SHAPE were set here). jolt-t34:
+  # :shapes? = shape-recs active (records), on with direct-linking; :map-shapes? =
+  # also shape generic maps (opt-in JOLT_SHAPE).
   (put (ctx :env) :shapes?
+    (and (get (ctx :env) :direct-linking?) (not (os/getenv "JOLT_NO_SHAPE"))))
+  (put (ctx :env) :map-shapes?
     (and (os/getenv "JOLT_SHAPE") (not (os/getenv "JOLT_NO_SHAPE"))))
   (cond
     (empty? argv) (run-repl)
