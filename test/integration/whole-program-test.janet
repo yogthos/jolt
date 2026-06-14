@@ -13,10 +13,15 @@
   (spit (string dir "/wputil.clj")
         (string "(ns wputil)\n"
                 "(defrecord V [x y z])\n"
+                # const-link targets (jolt-rvt): a data def and a ^:redef fn are
+                # indirect (cell deref) per-ns but embedded as constants under
+                # whole-program. Soundness => both modes must give the same answer.
+                "(def scale 2.0)\n"
+                "(defn ^:redef bump [x] (+ x 1.0))\n"
                 # recursive => never inlined; params proven only whole-program
                 "(defn dot [a b n]\n"
                 "  (if (<= n 0) 0.0\n"
-                "    (+ (* (:x a) (:x b)) (* (:y a) (:y b)) (* (:z a) (:z b)) (dot a b (dec n)))))\n"))
+                "    (+ (* (:x a) (:x b)) (* (:y a) (:y b)) (* (:z a) (:z b)) (bump (* scale (dot a b (dec n)))))))\n"))
   (spit (string dir "/wpmain.clj")
         (string "(ns wpmain (:require [wputil :as v]))\n"
                 "(defn -main []\n"

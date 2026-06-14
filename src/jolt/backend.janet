@@ -123,7 +123,24 @@
   (and (get (ctx :env) :direct-linking?)
        (not (cell :dynamic))
        (not (let [m (cell :meta)] (and m (get m :redef))))
-       (function? (cell :root))))
+       (let [r (cell :root)] (or (function? r) (cfunction? r)))))
+
+# Whole-program constant-linking (closed world): under JOLT_WHOLE_PROGRAM every
+# non-dynamic var has a stable root we can embed as a CONSTANT, eliminating the
+# per-reference cell deref the indirect path pays. This covers what direct-var?
+# can't: ^:redef vars (no reloading under the flag, so redef is moot), data vars
+# (def of a number/vector/etc.), and record-type / non-fn callable roots. The
+# value is quoted at the emit site unless it's callable (a function/cfunction is
+# valid in head AND value position as-is). Dynamic vars stay indirect — thread
+# binding is a runtime mechanism, not redefinition. A nil root (a not-yet-run
+# forward def) stays indirect so the live deref picks the value up; the
+# whole-program re-emit (infer-program!, callee-first after full load) then
+# const-links it once its root is in place.
+(defn- const-link? [ctx cell]
+  (and (get (ctx :env) :whole-program?)
+       (get (ctx :env) :direct-linking?)
+       (not (cell :dynamic))
+       (not (nil? (cell :root)))))
 
 # Fresh Janet symbol for back-end-introduced bindings (arity dispatch). NOT
 # Janet's `gensym` — `(use ./core)` shadows it with Jolt's, which returns a jolt
@@ -579,6 +596,13 @@
       :var (let [cell (cell-for ctx (node :ns) (node :name))]
              (if (direct-var? ctx cell)
                (cell :root)                          # direct link: embed the fn value
+             (if (const-link? ctx cell)
+               # whole-program closed world: embed the stable root as a constant.
+               # Callable roots go in bare (valid in head/value position); any
+               # other value is quoted so Janet returns it rather than evaluating
+               # it as code (a bare tuple/struct in code position would be called).
+               (let [r (cell :root)]
+                 (if (or (function? r) (cfunction? r)) r (tuple 'quote r)))
                # Indirect: live deref, with the var-get FN CALL inlined away
                # (jolt-8sq): a non-dynamic var's value is always its root, so
                # the common case is two native table ops + a branch instead of
@@ -597,7 +621,7 @@
                (let [qcell (tuple 'quote cell)]
                  ['if ['in qcell :dynamic]
                    (tuple var-get qcell)
-                   ['in qcell :root]])))
+                   ['in qcell :root]]))))
       # (var x): the var object itself (not its value) — the embedded cell, by
       # reference. binding keys its thread-binding frame on this exact cell.
       :the-var (tuple 'quote (cell-for ctx (node :ns) (node :name)))
