@@ -355,7 +355,7 @@
 #   - ^:struct / ^Record hinted subject: skip the guard, bare get (~20 vs ~36ns).
 #   - hinted + JOLT_CHECK_HINTS: keep the guard but THROW on the tagged arm, so a
 #     lying hint surfaces a clear error (dev aid; off by default, no perf cost).
-(defn- emit-kw-lookup [subj-node m-expr k d-expr]
+(defn- emit-kw-lookup [ctx subj-node m-expr k d-expr]
   # the subject is a struct (raw-get-safe) when hinted so — by an explicit
   # ^:struct/^Record hint on a local, OR by inference tagging ANY subject
   # expression it proved to be a struct (jolt-d6u/RFC 0005), which is what lets
@@ -374,24 +374,28 @@
   # comes from the runtime's canonical shape-sort (the same order shape-for and
   # emit-map use), so construction and lookup always agree.
   (def sidx
-    (when (and (os/getenv "JOLT_SHAPE") subj-node (subj-node :shape))
+    (when (and (get (ctx :env) :shapes?) subj-node (subj-node :shape))
       (def raw (let [s (subj-node :shape)] (if (pv/pvec? s) (pv/pv->array s) s)))
       (def sk (shape-sort raw))
       (var pos nil) (var i 0)
       (each kk sk (when (= kk k) (set pos i)) (++ i))
       (when pos (+ pos 1))))
-  # sidx: complete shape proven -> bare index (fastest). Otherwise, with shapes
-  # on, a raw-get-safe value may still be a shape-rec (its :shape dropped by a
-  # join), so read the index from the value's own descriptor when it is a tuple;
-  # a real struct takes the bare get. (jolt-t34)
-  # sidx => proven complete shape, bare index (the fast path). Otherwise route a
-  # TUPLE (a possible shape-rec) to core-get, which is shape-aware and nil-safe;
-  # a struct takes the bare get. NOT gated on compile-time JOLT_SHAPE: core is
-  # baked WITHOUT the flag but still receives user shape-recs, so this must hold
-  # in baked core too. Cost on the default path is one tuple? test per
-  # non-proven keyword lookup. (jolt-t34 R3)
+  # sidx => proven complete shape: bare index (fastest). Otherwise a raw-get-safe
+  # value may still be a shape-rec (its :shape dropped by a join, or an unproven
+  # param). Read it INLINE from its own descriptor — a shape-rec is a tuple whose
+  # head is a descriptor struct; index the present field directly. A missing key
+  # (incl. the virtual :jolt/deftype) falls to core-get, which is nil-safe and
+  # shape-aware; a struct/other takes the bare get. The inline read matters: a
+  # core-get fn call per field read is ~2.5x slower on map-through-fn code.
+  # NOT gated on compile-time shapes — core is baked without the flag but still
+  # receives user shape-recs, so this must hold in baked core too. (jolt-t34)
   (defn get-or-shape [getexpr]
-    (if sidx ['in m sidx] ['if ['tuple? m] (tuple core-get m k nil) getexpr]))
+    (if sidx ['in m sidx]
+      (let [pos (jsym)]
+        ['if ['and ['tuple? m] ['struct? ['get m 0]]]
+          ['let [pos ['get [['get m 0] :idx] k]]
+            ['if ['nil? pos] (tuple core-get m k nil) ['in m ['+ 1 pos]]]]
+          getexpr])))
   (if (nil? d-expr)
     (let [fast (get-or-shape ['get m k])]
       (wrap (cond
@@ -435,7 +439,7 @@
     # the subject skips the guard entirely (jolt-94n; see emit-kw-lookup).
     (and (= :const (fnode :op)) (keyword? (fnode :val))
          (>= 2 (length args) 1))
-    (emit-kw-lookup (norm-node (in argnodes 0)) (in args 0) (fnode :val)
+    (emit-kw-lookup ctx (norm-node (in argnodes 0)) (in args 0) (fnode :val)
                     (when (= 2 (length args)) (in args 1)))
     # (get m :kw) / (get m :kw default) — same inlined keyword lookup as (:kw m),
     # so an explicit get with a constant keyword gets the guard fast path and the
@@ -443,7 +447,7 @@
     # a variable/number/string key falls through to core-get below.
     (and (get-head? fnode) (>= (length args) 2) (<= (length args) 3)
          (let [a1 (norm-node (in argnodes 1))] (and (= :const (a1 :op)) (keyword? (a1 :val)))))
-    (emit-kw-lookup (norm-node (in argnodes 0)) (in args 0)
+    (emit-kw-lookup ctx (norm-node (in argnodes 0)) (in args 0)
                     ((norm-node (in argnodes 1)) :val)
                     (when (= 3 (length args)) (in args 2)))
     # (count v) on an inferred vector -> pv-count, skipping core-count's dispatch
@@ -503,7 +507,7 @@
   # compiler's own IR-node map literals (which the back end reads with raw
   # keyword access and would break if turned into tuples)
   (def shape-keys
-    (when (and fast (os/getenv "JOLT_SHAPE") (get (ctx :env) :inline?))
+    (when (and fast (get (ctx :env) :shapes?) (get (ctx :env) :inline?))
       (def ks @[])
       (each pair pairs (array/push ks ((norm-node (in (vview pair) 0)) :val)))
       (shape-sort ks)))

@@ -223,6 +223,12 @@
     # the inline pass only inlines targets that won't be redefined, the same
     # safety the direct-linking flag asserts (jolt-87f).
     (put (ctx :env) :inline? (if (get (ctx :env) :direct-linking?) true false))
+    # Shape-records are OPT-IN (jolt-t34). Measurement showed shaping generic
+    # const-key maps net-loses in a bytecode VM (unproven reads can't beat a
+    # native struct-get), so shapes are not defaulted on. The win is records
+    # with declared shapes + proven reads; that path is enabled separately.
+    (put (ctx :env) :shapes?
+      (and (os/getenv "JOLT_SHAPE") (not (os/getenv "JOLT_NO_SHAPE"))))
     ctx))
 
 # --- Context snapshot/fork (cheap isolated copies) --------------------------
@@ -300,7 +306,7 @@
   # Opts land in the key via their printed form; an opt that prints unstably
   # (e.g. a closure in :namespaces) just degrades to a cache miss, never to a
   # wrong hit. Runtime knobs that shape the ctx outside opts ride along too.
-  (def key (string/format "%q|%q|%q|%q|%q|%q|%q|%q|%q|%q|%q"
+  (def key (string/format "%q|%q|%q|%q|%q|%q|%q|%q|%q|%q|%q|%q"
                           (string janet/version "-" janet/build)
                           opts
                           (os/getenv "JOLT_PATH")
@@ -311,8 +317,10 @@
                           (os/getenv "JOLT_DIRECT_LINK")
                           (os/getenv "JOLT_NO_IR_PASSES")
                           (os/getenv "JOLT_CHECK_HINTS")
-                          # JOLT_SHAPE shapes core's own compiled get/record paths
-                          (os/getenv "JOLT_SHAPE")))
+                          # :shapes? is baked into the image; key on every input
+                          # to it so a cache hit never carries a wrong shape state
+                          (os/getenv "JOLT_SHAPE")
+                          (os/getenv "JOLT_NO_SHAPE")))
   (string dir "/jolt-ctx-" (band h 0x7FFFFFFF) "-" len "-" (band (hash key) 0x7FFFFFFF) ".jimg"))
 
 (defn init-cached

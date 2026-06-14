@@ -506,6 +506,10 @@
   (when (= "1" (os/getenv "JOLT_DIRECT_LINK"))
     (put (ctx :env) :direct-linking? true)
     (put (ctx :env) :inline? true))
+  # Recompute :shapes? from the runtime env (the baked ctx computed it at build
+  # time, before JOLT_SHAPE was set in this process). Opt-in (jolt-t34).
+  (put (ctx :env) :shapes?
+    (and (os/getenv "JOLT_SHAPE") (not (os/getenv "JOLT_NO_SHAPE"))))
   (cond
     (empty? argv) (run-repl)
     (help-flags (argv 0)) (print-help)
